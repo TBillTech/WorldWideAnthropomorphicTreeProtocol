@@ -1,0 +1,20 @@
+# Ignore libraries
+libraries/
+
+# Ignore build directory
+build/
+
+# Ignore Visual Studio Code settings
+.vscode/
+
+# Ignore sandbox directory
+sandbox/
+
+# Ignore .pem files
+*.pem
+
+# Ignore other common files
+*.log
+*.tmp
+*.swp
+.DS_Store

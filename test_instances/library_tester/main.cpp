@@ -1,0 +1,189 @@
+#include <iostream>
+#include <memory>
+#include <string>
+
+#include "util.h"
+#include "config_base.h"
+#include "tcp_communication.h"
+#include "quic_connector.h"
+#include "quic_listener.h"
+#include <sys/mman.h>
+
+using namespace std;
+
+unique_ptr<Communication> createServerCommunication(const string& protocol, boost::asio::io_context& io_context) {
+    if (protocol == "QUIC") {
+        auto private_key_file = "../test_instances/data/private_key.pem";
+        auto cert_file = "../test_instances/data/cert.pem";
+        return make_unique<QuicListener>(io_context, private_key_file, cert_file);
+    } else if (protocol == "TCP") {
+        return make_unique<TcpCommunication>(io_context);
+    } else {
+        throw invalid_argument("Unsupported protocol");
+    }
+}
+
+unique_ptr<Communication> createClientCommunication(const string& protocol, boost::asio::io_context& io_context) {
+    if (protocol == "QUIC") {
+        auto private_key_file = "../test_instances/data/private_key.pem";
+        auto cert_file = "../test_instances/data/cert.pem";
+        return make_unique<QuicConnector>(io_context, private_key_file, cert_file);
+    } else if (protocol == "TCP") {
+        return make_unique<TcpCommunication>(io_context);
+    } else {
+        throw invalid_argument("Unsupported protocol");
+    }
+}
+
+int main() {
+    string protocol = "QUIC";
+    // string protocol = "TCP";
+    if(protocol == "QUIC")
+    {
+        auto data_path = realpath("../test_instances/data/", nullptr);
+        assert(data_path);
+        auto htdocs = std::string(data_path);
+        free(data_path);
+      
+        auto sandbox_path = realpath("../test_instances/sandbox/", nullptr);
+        assert(sandbox_path);
+        auto keylog_filename = std::string(sandbox_path) + "/keylog";
+        auto session_filename = std::string(sandbox_path) + "/session_log";
+        auto tp_filename = std::string(sandbox_path) + "/tp_log";
+        auto client_data_path = std::string(sandbox_path) + "/data.client";
+        free(sandbox_path);
+
+        // Attempt to open the client data file
+        auto fd = open(client_data_path.c_str(), O_RDONLY);
+        if (fd == -1) {
+            std::cerr << "data: Could not open file " << client_data_path << ": "
+                      << strerror(errno) << std::endl;
+            config.fd = -1;
+            config.datalen = 0;
+        } else {
+            struct stat st;
+            if (fstat(fd, &st) != 0) {
+                std::cerr << "data: Could not stat file " << client_data_path << ": "
+                          << strerror(errno) << std::endl;
+                close(fd);
+                config.fd = -1;
+                config.datalen = 0;
+            } else {
+                config.fd = fd;
+                config.datalen = st.st_size;
+                if (config.datalen) {
+                    auto addr = mmap(nullptr, config.datalen, PROT_READ, MAP_SHARED, fd, 0);
+                    if (addr == MAP_FAILED) {
+                        std::cerr << "data: Could not mmap file " << client_data_path << ": "
+                                  << strerror(errno) << std::endl;
+                        close(fd);
+                        config.fd = -1;
+                        config.datalen = 0;
+                    } else {
+                        config.data = static_cast<uint8_t *>(addr);
+                        memset(config.data, 0, config.datalen);
+                    }
+                }
+            }
+        }
+
+        // config.fd and config.datalen are for data that should be streamed to the server
+        // if and only if the client_data_path has a valid data file.
+
+        config = Config{
+            .tx_loss_prob = 0.,
+            .rx_loss_prob = 0.,
+            .fd = -1,
+            .ciphers = ngtcp2::util::crypto_default_ciphers(),
+            .groups = ngtcp2::util::crypto_default_groups(),
+            .htdocs = move(htdocs),
+            .mime_types_file = "/etc/mime.types",
+            .version = NGTCP2_PROTO_VER_V1,
+            .timeout = 30 * NGTCP2_SECONDS,
+            .session_file = move(session_filename),
+            .tp_file = move(tp_filename),
+            .keylog_filename = move(keylog_filename),
+            .http_method = "GET"sv,        
+            .max_data = 24_m,
+            .max_stream_data_bidi_local = 16_m,
+            .max_stream_data_bidi_remote = 256_k,
+            .max_stream_data_uni = 256_k,
+            .max_streams_bidi = 100,
+            .max_streams_uni = 100,
+            .max_window = 6_m,
+            .max_stream_window = 6_m,
+            .max_dyn_length = 20_m,
+            .cc_algo = NGTCP2_CC_ALGO_CUBIC,
+            .initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT,
+            .handshake_timeout = UINT64_MAX,
+            .ack_thresh = 2,
+            .initial_pkt_num = UINT32_MAX,
+          };
+    
+    }
+    boost::asio::io_context io_context;
+
+    auto server_communication = createServerCommunication(protocol, io_context);
+    server_communication->listen("localhost", "127.0.0.1", 12345);
+
+    this_thread::sleep_for(chrono::seconds(1));
+    cout << "In Main: Server should be started up" << endl;
+
+    {
+        auto prior_client_communication = createClientCommunication(protocol, io_context);
+        prior_client_communication->connect("localhost", "127.0.0.1", 12345);
+        this_thread::sleep_for(chrono::milliseconds(100));
+        // Note: this is a test of early data and reconnection:  Somewhere in the log above
+        // this shutting down line will be see QUIC handshake and "Client early data was rejected by server"
+        cout << "In Main: Shutting down prior client" << endl;
+        // On  the other hand, After this line, the early data rejected message will not appear, because the
+        // session_file is being used to re-initialize the connection.
+    }
+
+    auto client_communication = createClientCommunication(protocol, io_context);
+    client_communication->connect("localhost", "127.0.0.1", 12345);
+
+    // Add a delay to ensure the server has time to start
+    this_thread::sleep_for(chrono::milliseconds(100));
+    cout << "In Main: Client should be started up" << endl;
+
+    auto next_request_identifier = server_communication->getNextRequestIdentifier();
+    auto client_response_callback = [](const identified_request& request, const string& response) {
+        cout << "Client response received in callback: " << response << endl;
+    };
+    auto client_request = make_pair(next_request_identifier, "Hello Server!");
+    requestor_callback client_callback = make_pair(client_request, client_response_callback);
+    client_communication->requestSend(client_callback);
+
+    this_thread::sleep_for(chrono::seconds(1));
+    cout << "In Main: Client should have sent request and initialized callback" << endl;
+
+    auto received_request = server_communication->requestReceive();
+    uint64_t interval_count = 0;
+    uint64_t give_up_seconds = 5;
+    auto interval_length = chrono::milliseconds(100);
+    while(received_request == IDLE_identified_request) {
+        this_thread::sleep_for(interval_length);
+        received_request = server_communication->requestReceive();
+        interval_count++;
+        if(interval_count >= chrono::seconds(give_up_seconds)/interval_length) {
+            cout << "In Main: Waited " << interval_count*interval_length << " for request, giving up." << endl;
+            break;
+        }
+    }
+    if(received_request != IDLE_identified_request) {
+        cout << "In Main: Server request received: " << received_request.second << endl;
+        server_communication->responseSend(received_request, "Hello, Client!");
+
+        this_thread::sleep_for(chrono::milliseconds(100));
+        cout << "In Main: Server should have sent response" << endl;
+    
+        client_communication->processNextResponse();
+    
+    }
+
+    this_thread::sleep_for(chrono::milliseconds(100));
+    cout << "In Main: Client should have processed response" << endl;
+
+    return 0;
+}
