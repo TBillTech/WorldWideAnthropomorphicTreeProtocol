@@ -1,16 +1,16 @@
-# Anthropomorphic Tree Bus
+# World Wide Anthropomorphic Tree Protocol
 
-The Tree Bus is an agent communication bus. Each channel conceptually contains a "growing" tree. In general, trees can grow in several ways:
+The World Wide Anthropomorphic Tree Protocol (WWATP) is an agent communication layer on top of QUIC. Each end-point conceptually contains a "growing" tree. In general, trees can grow in several ways:
 - New branches and/or leaves.
 - Pruned branches and/or leaves.
 - Mutations of branches and/or leaves.
 
-What makes this an _anthropomorphic_ tree bus is that the description node references can be personality prompts to agents templated by the node label rule! And because queries can be agent-like string requests prompted by the Q&A of a node. Another way to look at this is to say that the literal API of clients and servers of the tree bus is infrastructure only: the content API is implicit and based around LLM friendly two way discussions about capabilities and content descriptions.
+What makes this an _anthropomorphic_ tree protocol is that the description node references can be personality prompts to agents templated by the node label rule! And because queries can be agent-like string requests prompted by the Q&A of a node. Another way to look at this is to say that the literal API of clients and servers of the tree protocol is infrastructure only: the content API is implicit and based around LLM friendly two way discussions about capabilities and content descriptions.
 
 ## Client and Server instances and ecosystem
 
-There are multiple software instances attached to the tree bus with the following typical uses:
-- **Server**: A Server instance attached to the tree bus which efficiently stores and maintains the Tree data, and connects to multiple authentication and server peer nodes. It _may_ also communicate using inter process communication to increase bandwidth if a trusted client is running on the same CPU.  It usually has a relational database back end.
+There are multiple software instances attached to the tree protocol with the following typical uses:
+- **Server**: A Server instance attached to the tree protocol which efficiently stores and maintains the Tree data, and connects to multiple authentication and server peer nodes. It _may_ also communicate using inter process communication to increase bandwidth if a trusted client is running on the same CPU.  It usually has a relational database back end.
 - **Authentication Node**: An instance whose job is to keep a version of the tree which exactly matches the authorization level of this node. No more, no less. This node has these sub trees:
   - Authorization branch: Not visible or queryable by clients.  Contains all the information necessary for this node to behave correctly.
   - Public branch: visible and queryable by all clients.
@@ -20,7 +20,7 @@ There are multiple software instances attached to the tree bus with the followin
 
 ## Tree Structure
 
-The tree bus has a tree structure, with node branches having any number of node children. A leaf is simply a node with no children. A branch is simply a node with children. A node has:
+The tree protocol has a tree structure, with node branches having any number of node children. A leaf is simply a node with no children. A branch is simply a node with children. A node has:
 - **A _unique_ global label rule**: UTF8 encoded string
 - **A description**: UTF8 encoded string OR a node reference
 - **Optional How to query**: node reference to description of how to query and unpack nodes matching the label rule (If absent, means just the point query)
@@ -37,7 +37,7 @@ The tree bus has a tree structure, with node branches having any number of node 
 
 ## Lineage Representation
 
-A common idiom is to represent lineage by the concatenation of labels by inserting '/' characters, and prepending with `tcp://<addr>:<port>/` or `udp://<addr>:<port>/`, where `<addr>` is an IP address and `<port>` is the port number. Notionally, there should NOT be more than one tree bus at any addr+port destination, because that just means there should be two sub-trees connected at the root.
+A common idiom is to represent lineage by the concatenation of labels by inserting '/' characters, and prepending with `wwatp://<addr>:<port>/` or `udp://<addr>:<port>/`, where `<addr>` is an IP address and `<port>` is the port number. Notionally, there should NOT be more than one tree protocol at any addr+port destination, because that just means there should be two sub-trees connected at the root.
 
 ## UTF8 Encoded Type Names
 
@@ -69,7 +69,7 @@ Implementations should honor several common version conflict policies:
 - **Token Ring policy**: Like the writer part of the reader-writer policy, except after each new version of the node(s), only the next Author ID in the ring has write permission. New versions that use the wrong author ID are rejected. The author ring itself is a list child of the node with reserved name "tokenring", and children author names with optional child Bytes with label "certificate". If no changes are made by an agent, then that agent should set the Author ID to itself, and leave the sequence number unchanged. The author ring also has a properties "timeout", "count" and "votes". Votes are reader-writer owned by the authors in the ring, and when the count vote has been cast, after timeout time the token will be implicitly moved to the next author in the ring. This is to prevent dead-lock.
 - **Collision Rollback Policy**: All authors can freely read/write any node. Collision depth versions of nodes and all children must be kept as history until a version is final. If two messages with the same sequence ID are seen, then all agents will roll back the node to the sequence number one prior, and all "future" history will be deleted. The snapshot will have the children states at the time the rollback sequence number was first seen. Implementations should wait a random amount of time before sending the conflicting sequence change, increasing this wait time as collisions continue to occur (similar to how ethernet works).
 
-Especially for TCP, it is recommended that only changes to the tree be sent across the bus unless an agent specifically requests the entire tree. By definition, every callback is a pending tree substitution, and note that the Callback value has the following possible values:
+It is recommended that only changes to the tree be sent across the protocol unless an agent specifically requests the entire tree. By definition, every callback is a pending tree substitution, and note that the Callback value has the following possible values:
 - Once
 - Auto
 

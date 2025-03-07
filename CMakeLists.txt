@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 # Project name
-project(TreeBus)
+project(WWATP)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 20)
@@ -87,18 +87,6 @@ add_executable(library_tester ${COMMON_SOURCES} test_instances/library_tester/ma
 
 # Include ExternalProject module
 include(ExternalProject)
-
-# quiche library
-ExternalProject_Add(
-    quiche
-    PREFIX ${CMAKE_BINARY_DIR}/quiche
-    SOURCE_DIR ${PROJECT_SOURCE_DIR}/libraries/quiche
-    BINARY_DIR ${PROJECT_SOURCE_DIR}/libraries/quiche
-    CONFIGURE_COMMAND ""
-    BUILD_COMMAND cargo build --release --features ffi
-    INSTALL_COMMAND ""
-    BUILD_BYPRODUCTS ${PROJECT_SOURCE_DIR}/libraries/quiche/target/release/libquiche.a
-)
 
 # Clone and build BoringSSL
 # git clone https://boringssl.googlesource.com/boringssl
