@@ -23,11 +23,11 @@ public:
     ~QuicListener() override {
         terminate();
     }
-    RequestIdentifier getNextRequestIdentifier() override;
-    void requestSend(const requestor_callback& request) override;
-    void processNextResponse() override;
-    identified_request requestReceive() override;
-    void responseSend(const identified_request& request, const string& response) override;
+    void resolveRequestStream(Request const &req, stream_callback_fn cb) override;
+    bool processRequestStream() override;
+    pair<StreamIdentifier, Request> listenForResponseStream() override;
+    void setupResponseStream(stream_callback& response) override;
+    bool processResponseStream() override;
     void send();
     void receive();
     void check_deadline();
@@ -36,6 +36,10 @@ public:
     void connect(const string &peer_name, const string& peer_ip_addr, int peer_port) override;
 
 private:
+    StreamIdentifier theStreamIdentifier() {
+        return StreamIdentifier{false, false, 11, 42};
+    }
+
     void terminate() {
         // Set the terminate flag
         terminate_.store(true);
@@ -59,7 +63,7 @@ private:
     string server_name;
     boost::asio::ip::tcp::socket socket;
     boost::asio::ip::tcp::endpoint endpoint;
-    RequestIdentifier currentRequestIdentifier;
+    StreamIdentifier currentRequestIdentifier;
     boost::asio::deadline_timer timer;
     bool timed_out;
     boost::asio::streambuf receive_buffer;
@@ -69,15 +73,19 @@ private:
     string received_so_far;  // This is a buffer for partially read messages
     bool is_server = false;
 
-    requestor_callback_vector newRequestQueue;
-    requestor_callback_vector requestSentQueue;
-    completed_callback_vector responseReceiveQueue;
-    identified_request_vector requestReceiveQueue;
-    identified_response_vector newResponseQueue;
-    mutex requestIdentifierLock;
-    mutex newRequestQueueMutex;
-    mutex requestSentQueueMutex;
-    mutex responseReceiveQueueMutex;
-    mutex requestReceiveQueueMutex;
-    mutex newResponseQueueMutex;
+    request_resolutions requestResolutionQueue;
+    stream_callbacks requestorQueue;
+
+    unhandled_response_queue unhandledQueue;
+    stream_callbacks responderQueue;
+
+    stream_data_chunks incomingChunks;
+    stream_data_chunks outgoingChunks;
+
+    mutex requestResolverMutex;
+    mutex requestorQueueMutex;
+    mutex unhandledQueueMutex;
+    mutex responderQueueMutex;
+    mutex incomingChunksMutex;
+    mutex outgoingChunksMutex;
 };

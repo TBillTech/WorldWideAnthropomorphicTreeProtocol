@@ -34,6 +34,7 @@
 #include <unordered_map>
 #include <string_view>
 #include <span>
+#include <iostream>
 
 #include <ngtcp2/ngtcp2.h>
 #include <nghttp3/nghttp3.h>
@@ -354,6 +355,16 @@ std::optional<uint32_t> parse_version(const std::string_view &s);
 
 } // namespace util
 
+inline bool operator<(const ngtcp2_cid &lhs, const ngtcp2_cid &rhs) {
+  // if operator== is true, then operator< must be false
+  if (ngtcp2_cid_eq(&lhs, &rhs)) {
+    return false;
+  }
+  // return the lexicographical sort of the CID data
+  return std::lexicographical_compare(lhs.data, lhs.data + lhs.datalen,
+                                      rhs.data, rhs.data + rhs.datalen);
+}
+
 std::ostream &operator<<(std::ostream &os, const ngtcp2_cid &cid);
 
 } // namespace ngtcp2
@@ -374,6 +385,6 @@ template <> struct hash<ngtcp2_cid> {
 } // namespace std
 
 inline bool operator==(const ngtcp2_cid &lhs, const ngtcp2_cid &rhs) {
-  return ngtcp2_cid_eq(&lhs, &rhs);
-}
+    return ngtcp2_cid_eq(&lhs, &rhs);
+  }  
 

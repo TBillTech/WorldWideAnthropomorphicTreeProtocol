@@ -36,8 +36,8 @@ unique_ptr<Communication> createClientCommunication(const string& protocol, boos
 }
 
 int main() {
-    string protocol = "QUIC";
-    // string protocol = "TCP";
+    //string protocol = "QUIC";
+    string protocol = "TCP";
     if(protocol == "QUIC")
     {
         auto data_path = realpath("../test_instances/data/", nullptr);
@@ -129,6 +129,7 @@ int main() {
     this_thread::sleep_for(chrono::seconds(1));
     cout << "In Main: Server should be started up" << endl;
 
+    if (protocol == "QUIC")
     {
         auto prior_client_communication = createClientCommunication(protocol, io_context);
         prior_client_communication->connect("localhost", "127.0.0.1", 12345);
@@ -147,43 +148,81 @@ int main() {
     this_thread::sleep_for(chrono::milliseconds(100));
     cout << "In Main: Client should be started up" << endl;
 
-    auto next_request_identifier = server_communication->getNextRequestIdentifier();
-    auto client_response_callback = [](const identified_request& request, const string& response) {
-        cout << "Client response received in callback: " << response << endl;
+    auto theRequest = Request{.scheme = "wwatp://", .authority = "localhost", .path = "/test"};
+    bool sentRequest = false;
+    auto theClientHandler = [&sentRequest](const StreamIdentifier& stream_id, chunks response) {
+        if (response.empty() && !sentRequest) {
+            cout << "Client is idle, so sending Hello Server! message" << endl;
+            static string hello_str = "Hello Server!";
+            std::vector<std::span<const uint8_t>> response_chunks;
+            response_chunks.emplace_back(reinterpret_cast<const uint8_t*>(hello_str.data()), hello_str.size());
+            sentRequest = true;
+            return response_chunks;
+        }
+        for (auto& chunk : response) {
+            string chunk_str = string(chunk.begin(), chunk.end());
+            cout << "Client got response received in callback: " << chunk_str << endl;
+        }
+        return chunks();
     };
-    auto client_request = make_pair(next_request_identifier, "Hello Server!");
-    requestor_callback client_callback = make_pair(client_request, client_response_callback);
-    client_communication->requestSend(client_callback);
+    client_communication->resolveRequestStream(theRequest, theClientHandler);
 
-    this_thread::sleep_for(chrono::seconds(1));
+    // Service the client communication for a while to allow the client to send the request.
+    for(int i = 0; i < 10; i++) {
+        client_communication->processRequestStream();
+        this_thread::sleep_for(chrono::milliseconds(10));
+    }
     cout << "In Main: Client should have sent request and initialized callback" << endl;
 
-    auto received_request = server_communication->requestReceive();
+    auto received_request = server_communication->listenForResponseStream();
     uint64_t interval_count = 0;
     uint64_t give_up_seconds = 5;
     auto interval_length = chrono::milliseconds(100);
-    while(received_request == IDLE_identified_request) {
+    while(received_request == IDLE_stream_listener) {
         this_thread::sleep_for(interval_length);
-        received_request = server_communication->requestReceive();
+        received_request = server_communication->listenForResponseStream();
         interval_count++;
         if(interval_count >= chrono::seconds(give_up_seconds)/interval_length) {
             cout << "In Main: Waited " << interval_count*interval_length << " for request, giving up." << endl;
             break;
         }
     }
-    if(received_request != IDLE_identified_request) {
+    if(received_request != IDLE_stream_listener) {
         cout << "In Main: Server request received: " << received_request.second << endl;
-        server_communication->responseSend(received_request, "Hello, Client!");
+        auto theServerHandler = [](const StreamIdentifier& stream_id, chunks request) {
+            for (auto& chunk : request) {
+                string chunk_str = string(chunk.begin(), chunk.end());
+                cout << "Server got request in callback: " << chunk_str << endl;
+            }
+            if (!request.empty()) {
+                static string goodbye_str = "Goodbye Client!";
+                std::vector<std::span<const uint8_t>> response_chunks;
+                response_chunks.emplace_back(reinterpret_cast<const uint8_t*>(goodbye_str.data()), goodbye_str.size());
+                return response_chunks;
+            }
+            return chunks();
+        };
+        stream_callback response_stream = std::make_pair(received_request.first, theServerHandler);
+        server_communication->setupResponseStream(response_stream);
+    }
+     
+    // Service the server communication for a while to allow the server to send the response.
+    for(int i = 0; i < 10; i++) {
+        server_communication->processResponseStream();
+        this_thread::sleep_for(chrono::milliseconds(10));
+    }
+    cout << "In Main: Server should have sent response" << endl;
 
-        this_thread::sleep_for(chrono::milliseconds(100));
-        cout << "In Main: Server should have sent response" << endl;
-    
-        client_communication->processNextResponse();
-    
+    // Service the client communication for a while to allow the client to process the response.
+    for(int i = 0; i < 10; i++) {
+        client_communication->processRequestStream();
+        this_thread::sleep_for(chrono::milliseconds(10));
     }
 
-    this_thread::sleep_for(chrono::milliseconds(100));
     cout << "In Main: Client should have processed response" << endl;
+    client_communication->close();
+    server_communication->close();
+    cout << "In Main: Client and server should be closed" << endl;
 
     return 0;
 }

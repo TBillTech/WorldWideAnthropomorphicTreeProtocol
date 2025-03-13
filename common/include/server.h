@@ -72,11 +72,15 @@ struct Stream {
 
   int64_t stream_id;
   Handler *handler;
-  // uri is request uri/path.
-  std::string uri;
-  std::string method;
-  std::string authority;
-  std::string status_resp_body;
+  // uri stores the request URI/path, which is the target resource of the HTTP request.
+  std::string uri; // Example: https://www.example.com:443/path/to/resource?query=example#fragment
+  // authority stores the authority component of the request URI, typically the host and port.
+  std::string authority; // Example: www.example.com:443
+  // method is the HTTP method (e.g., GET, POST) of the request.
+  std::string method; // Example: GET
+  // status_resp_body stores the body of the HTTP response for status responses.
+  // It is used to send predefined status messages (e.g., 404 Not Found).
+  std::string status_resp_body; // Example: "404 Not Found"
   // data is a pointer to the memory which maps file denoted by fd.
   uint8_t *data;
   // datalen is the length of mapped file by data.

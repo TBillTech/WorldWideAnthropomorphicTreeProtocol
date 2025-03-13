@@ -11,16 +11,18 @@ using namespace std;
 class TcpCommunication : public Communication {
 public:
     TcpCommunication(boost::asio::io_context& io_context)
-        : io_context(io_context), socket(io_context), timer(io_context) {
+        : io_context(io_context), send_socket(io_context), receive_socket(io_context), timer(io_context) {
     };
     ~TcpCommunication() override {
         terminate();
     }
-    RequestIdentifier getNextRequestIdentifier() override;
-    void requestSend(const requestor_callback& request) override;
-    void processNextResponse() override;
-    identified_request requestReceive() override;
-    void responseSend(const identified_request& request, const string& response) override;
+    void resolveRequestStream(Request const &req, stream_callback_fn cb) override;
+    bool processRequestStream() override;
+    pair<StreamIdentifier, Request> listenForResponseStream() override;
+    void setupResponseStream(stream_callback& response) override;
+    bool processResponseStream() override;
+    void setupRequests();
+    void setupResponses();
     void send();
     void receive();
     void check_deadline();
@@ -29,39 +31,55 @@ public:
     void connect(const string &peer_name, const string& peer_ip_addr, int peer_port) override;
 
 private:
+    StreamIdentifier theStreamIdentifier() {
+        return StreamIdentifier{false, false, 11, 42};
+    }
+
     void terminate() {
         // Set the terminate flag
         terminate_ = true;
 
         // Wait for the server thread to finish
-        if (reqrep_thread_.joinable()) {
-            reqrep_thread_.join();
+        if (send_thread_.joinable()) {
+            send_thread_.join();
+        }
+        // Wait for the server thread to finish
+        if (receive_thread_.joinable()) {
+            receive_thread_.join();
         }
     }
 
     boost::asio::io_context& io_context;
     string server_name;
-    boost::asio::ip::tcp::socket socket;
-    boost::asio::ip::tcp::endpoint endpoint;
-    RequestIdentifier currentRequestIdentifier;
+    boost::asio::ip::tcp::socket send_socket;
+    boost::asio::ip::tcp::socket receive_socket;
+    boost::asio::ip::tcp::endpoint receive_endpoint;
+    boost::asio::ip::tcp::endpoint send_endpoint;
+    StreamIdentifier currentRequestIdentifier;
     boost::asio::deadline_timer timer;
     bool timed_out;
     boost::asio::streambuf receive_buffer;
 
-    thread reqrep_thread_;
+    thread receive_thread_;
+    thread send_thread_;
     bool terminate_ = false;
     string received_so_far;  // This is a buffer for partially read messages
     bool is_server = false;
+    bool prepared_unhandled_response = false;
 
-    requestor_callback_vector newRequestQueue;
-    requestor_callback_vector requestSentQueue;
-    completed_callback_vector responseReceiveQueue;
-    identified_request_vector requestReceiveQueue;
-    identified_response_vector newResponseQueue;
-    mutex requestIdentifierLock;
-    mutex newRequestQueueMutex;
-    mutex requestSentQueueMutex;
-    mutex responseReceiveQueueMutex;
-    mutex requestReceiveQueueMutex;
-    mutex newResponseQueueMutex;
+    request_resolutions requestResolutionQueue;
+    stream_callbacks requestorQueue;
+
+    unhandled_response_queue unhandledQueue;
+    stream_callbacks responderQueue;
+
+    stream_data_chunks incomingChunks;
+    stream_data_chunks outgoingChunks;
+
+    mutex requestResolverMutex;
+    mutex requestorQueueMutex;
+    mutex unhandledQueueMutex;
+    mutex responderQueueMutex;
+    mutex incomingChunksMutex;
+    mutex outgoingChunksMutex;
 };

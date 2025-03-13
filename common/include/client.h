@@ -46,13 +46,20 @@
 
 using namespace ngtcp2;
 
-struct Stream {
-  Stream(const Request &req, int64_t stream_id);
-  ~Stream();
+struct ClientStream {
+  ClientStream(const Request &req, int64_t stream_id);
+  ~ClientStream();
 
   int open_file(const std::string_view &path);
 
-  Request req;
+  // Example URI: "https://www.example.com:443/path/to/resource?query=example#fragment"
+  std::string_view scheme;  // Example: "https"
+  std::string authority; // Example: "www.example.com:443"
+  std::string path; // Example: "/path/to/resource"
+  struct {
+    int32_t urgency;
+    int inc;
+  } pri;
   int64_t stream_id;
   int fd;
 };
@@ -115,7 +122,7 @@ public:
   void set_remote_addr(const ngtcp2_addr &remote_addr);
 
   int setup_httpconn();
-  int submit_http_request(const Stream *stream);
+  int submit_http_request(const ClientStream *stream);
   int recv_stream_data(uint32_t flags, int64_t stream_id,
                        std::span<const uint8_t> data);
   int acked_stream_data_offset(int64_t stream_id, uint64_t datalen);
@@ -151,7 +158,7 @@ private:
   ev_timer delay_stream_timer_;
   ev_signal sigintev_;
   struct ev_loop *loop_;
-  std::map<int64_t, std::unique_ptr<Stream>> streams_;
+  std::map<int64_t, std::unique_ptr<ClientStream>> streams_;
   std::vector<uint32_t> offered_versions_;
   nghttp3_conn *httpconn_;
   // addr_ is the server host address.

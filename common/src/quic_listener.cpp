@@ -3899,167 +3899,176 @@ namespace
     }
 } // namespace
 
-RequestIdentifier QuicListener::getNextRequestIdentifier()
-{
+void QuicListener::resolveRequestStream(Request const &req, stream_callback_fn cb) {
     // This just returns the currentRequestIdentifier
     // Increment the currentRequestIdentifier
-    lock_guard<std::mutex> lock(requestIdentifierLock);
-    RequestIdentifier newRequestIdentifier = currentRequestIdentifier;
-    currentRequestIdentifier.stream_id += 2;
-    return newRequestIdentifier;
+    lock_guard<std::mutex> lock(requestResolverMutex);
+    requestResolutionQueue.push_back(make_pair(req, cb));
 }
 
-void QuicListener::requestSend(const requestor_callback &request)
-{
-    // This just adds the request to the newRequestQueue
-    // Add the request to the requestSentQueue
-    lock_guard<std::mutex> lock(newRequestQueueMutex);
-    newRequestQueue.push_back(request);
-}
-
-void QuicListener::processNextResponse()
-{
-    // This pops the response from the responseReceiveQueue and calls the callback function
-    // Pop the response from the responseReceiveQueue
-    responseReceiveQueueMutex.lock();
-    if (!responseReceiveQueue.empty())
-    {
-        completed_callback response = responseReceiveQueue.front();
-        responseReceiveQueue.erase(responseReceiveQueue.begin());
-        responseReceiveQueueMutex.unlock();
+bool QuicListener::processRequestStream() {
+    requestorQueueMutex.lock();
+    if (!requestorQueue.empty()) {
+        stream_callback &stream_cb = requestorQueue.front();
+        requestorQueue.erase(requestorQueue.begin());
+        requestorQueueMutex.unlock();
+        // Now the stream callback is not on the queue, so no other worker will try to service it while this is operational.
         // Call the callback function OUTSIDE the lock
-        auto fn = response.first.second;
-        fn(response.first.first, response.second);
+        auto fn = stream_cb.second;
+        vector<std::span<const uint8_t>> to_process;
+        {
+            lock_guard<std::mutex> lock(incomingChunksMutex);
+            auto incoming = incomingChunks.find(stream_cb.first);
+            if (incoming != incomingChunks.end()) {
+                to_process.swap(incoming->second);
+            }
+        }
+        auto processed = fn(stream_cb.first, to_process);
+        {   
+            lock_guard<std::mutex> lock(outgoingChunksMutex);
+            auto outgoing = outgoingChunks.find(stream_cb.first);
+            if (outgoing != outgoingChunks.end()) {
+                outgoing->second.insert(outgoing->second.end(), processed.begin(), processed.end());
+            } else {
+                outgoingChunks.insert(make_pair(stream_cb.first, processed));
+            }
+        }
+        lock_guard<std::mutex> lock(requestorQueueMutex);
+        requestorQueue.push_back(stream_cb);
+    } else {
+        requestorQueueMutex.unlock();
+        return false;
     }
-    else
-    {
-        responseReceiveQueueMutex.unlock();
-    }
+    return true;
 }
 
-identified_request QuicListener::requestReceive()
-{
+pair<StreamIdentifier, Request> QuicListener::listenForResponseStream(){
     // This pops the request from the requestReceiveQueue, and returns it
-    lock_guard<std::mutex> lock(requestReceiveQueueMutex);
-    if (!requestReceiveQueue.empty())
-    {
-        identified_request request = requestReceiveQueue.front();
-        requestReceiveQueue.erase(requestReceiveQueue.begin());
+    lock_guard<std::mutex> lock(unhandledQueueMutex);
+    if (!unhandledQueue.empty()) {
+        pair<StreamIdentifier, Request> request = unhandledQueue.front();
+        unhandledQueue.erase(unhandledQueue.begin());
         return request;
-    }
-    else
-    {
-        return IDLE_identified_request;
+    } else {
+        return IDLE_stream_listener;
     }
 }
 
-void QuicListener::responseSend(const identified_request &request, const string &response)
+void QuicListener::setupResponseStream(stream_callback& response)
 {
-    // This just adds the response to the newResponseQueue
-    // Add the response to the newResponseQueue
-    lock_guard<std::mutex> lock(newResponseQueueMutex);
-    newResponseQueue.push_back(make_pair(request, response));
+    // This just adds the response to the responderQueue
+    lock_guard<std::mutex> lock(responderQueueMutex);
+    responderQueue.push_back(response);
 }
 
-void QuicListener::send()
-{
-    if (is_server)
-    {
+bool QuicListener::processResponseStream() {
+    responderQueueMutex.lock();
+    if (!responderQueue.empty()) {
+        stream_callback &stream_cb = responderQueue.front();
+        responderQueue.erase(responderQueue.begin());
+        responderQueueMutex.unlock();
+        // Now the stream callback is not on the queue, so no other worker will try to service it while this is operational.
+        // Call the callback function OUTSIDE the lock
+        auto fn = stream_cb.second;
+        vector<std::span<const uint8_t>> to_process;
+        {
+            lock_guard<std::mutex> lock(incomingChunksMutex);
+            auto incoming = incomingChunks.find(stream_cb.first);
+            if (incoming != incomingChunks.end()) {
+                to_process.swap(incoming->second);
+            }
+        }
+        auto processed = fn(stream_cb.first, to_process);
+        {   
+            lock_guard<std::mutex> lock(outgoingChunksMutex);
+            auto outgoing = outgoingChunks.find(stream_cb.first);
+            if (outgoing != outgoingChunks.end()) {
+                outgoing->second.insert(outgoing->second.end(), processed.begin(), processed.end());
+            } else {
+                outgoingChunks.insert(make_pair(stream_cb.first, processed));
+            }
+        }
+        lock_guard<std::mutex> lock(responderQueueMutex);
+        responderQueue.push_back(stream_cb);
+    } else {
+        responderQueueMutex.unlock();
+        return false;
+    }
+    return true;
+}
+
+void QuicListener::send() {
+    if (is_server) {
         // lock and pop the first request from the newResponseQueue
-        newResponseQueueMutex.lock();
-        if (!newResponseQueue.empty())
-        {
-            identified_request request = newResponseQueue.front().first;
-            string response = newResponseQueue.front().second;
-            newResponseQueue.erase(newResponseQueue.begin());
-            newResponseQueueMutex.unlock();
-            // send the response (this is hard coded to use the one socket rather than the identified_request info
-            // because this QuicListener is only used for testing)
-            boost::asio::write(socket, boost::asio::buffer(response + "\n"));
-            cout << "Server sent response: " << response << endl;
-        }
-        else
-        {
-            newResponseQueueMutex.unlock();
+        outgoingChunksMutex.lock();
+        if (!outgoingChunks.empty()) {
+            pair<StreamIdentifier, chunks> outgoing = *(outgoingChunks.begin());
+            outgoingChunks.erase(outgoingChunks.begin());
+            outgoingChunksMutex.unlock();
+            for (auto &chunk : outgoing.second) {
+                // send the response (this is hard coded to use the one socket rather than the identified_request info 
+                // because this TcpCommunication is only used for testing and architecture illustration)
+                auto response_str = std::string(chunk.begin(), chunk.end());
+                boost::asio::write(socket, boost::asio::buffer(response_str + "\n"));
+                cout << "Server sent response chunk: " << outgoing.first << " ... " << response_str << endl;
+            }
+        } else {
+            outgoingChunksMutex.unlock();
         }
     }
-    else
-    {
-        // lock and pop the first request from the newRequestQueue
-        newRequestQueueMutex.lock();
-        if (!newRequestQueue.empty())
-        {
-            requestor_callback request = newRequestQueue.front();
-            newRequestQueue.erase(newRequestQueue.begin());
-            newRequestQueueMutex.unlock();
-            // send the request (this is hard coded to use the one socket rather than the identified_request info
-            // because this QuicListener is only used for testing)
-            boost::asio::write(socket, boost::asio::buffer(request.first.second + "\n"));
-            cout << "Client sent request: " << request.first.second << endl;
-            // add the request to the requestSentQueue
-            requestSentQueueMutex.lock();
-            requestSentQueue.push_back(request);
-            requestSentQueueMutex.unlock();
-        }
-        else
-        {
-            newRequestQueueMutex.unlock();
+    else {
+        //lock and pop the first request from the newRequestQueue
+        outgoingChunksMutex.lock();
+        if (!outgoingChunks.empty()) {
+            pair<StreamIdentifier, chunks> outgoing = *(outgoingChunks.begin());
+            outgoingChunks.erase(outgoingChunks.begin());
+            outgoingChunksMutex.unlock();
+            for (auto &chunk : outgoing.second) {
+                // send the request (this is hard coded to use the one socket rather than the identified_request info 
+                // because this TcpCommunication is only used for testing)
+                auto request_str = std::string(chunk.begin(), chunk.end());
+                boost::asio::write(socket, boost::asio::buffer(request_str + "\n"));
+                cout << "Client sent request chunk: " << outgoing.first << " ... " << request_str << endl;
+            }
+        } else {
+            outgoingChunksMutex.unlock();
         }
     }
 }
 
-void QuicListener::receive()
-{
+void QuicListener::receive() {
     socket.async_read_some(boost::asio::buffer(receive_buffer.prepare(1024)),
-                           [this](const boost::system::error_code &ec, std::size_t bytes_transferred)
-                           {
-                               if (!ec)
-                               {
-                                   receive_buffer.commit(bytes_transferred);
-                                   std::istream is(&receive_buffer);
-                                   std::string data;
-                                   std::getline(is, data);
+        [this](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+            if (!ec) {
+                receive_buffer.commit(bytes_transferred);
+                std::istream is(&receive_buffer);
+                std::string data;
+                std::getline(is, data);
 
-                                   if (!data.empty())
-                                   {
-                                       if (is_server)
-                                       {
-                                           std::lock_guard<std::mutex> lock(requestReceiveQueueMutex);
-                                           requestReceiveQueue.push_back(std::make_pair(currentRequestIdentifier, data));
-                                       }
-                                       else
-                                       {
-                                           std::lock_guard<std::mutex> sent_lock(requestSentQueueMutex);
-                                           if (requestSentQueue.empty())
-                                           {
-                                               return;
-                                           }
-                                           requestor_callback currentRequest = requestSentQueue.front();
-                                           requestSentQueue.erase(requestSentQueue.begin());
-                                           std::lock_guard<std::mutex> recv_lock(responseReceiveQueueMutex);
-                                           responseReceiveQueue.push_back(std::make_pair(currentRequest, data));
-                                       }
-                                   }
+                if (!data.empty()) {
+                    // TODO:  Create a datatype to manage chunk memmory safely
+                    auto data_ptr = new std::string(data);
+                    std::lock_guard<std::mutex> lock(incomingChunksMutex);
+                    auto incoming = incomingChunks.find(theStreamIdentifier());
+                    if (incoming != incomingChunks.end()) {
+                        incoming->second.push_back(std::span<const uint8_t>((uint8_t*)data_ptr->c_str(), data_ptr->size()));
+                    } else {
+                        incomingChunks.insert(make_pair(theStreamIdentifier(), vector<std::span<const uint8_t>>{std::span<const uint8_t>((uint8_t*)data_ptr->c_str(), data_ptr->size())}));
+                    }
+                }
 
-                                   // Continue reading
-                                   receive();
-                               }
-                               else
-                               {
-                                   if (ec == boost::asio::error::operation_aborted)
-                                   {
-                                       std::cerr << "Server Receive operation aborted" << std::endl;
-                                   }
-                                   else if (ec == boost::asio::error::eof)
-                                   {
-                                       std::cerr << "Server Connection closed by peer" << std::endl;
-                                   }
-                                   else
-                                   {
-                                       std::cerr << "Server Error in receive: " << ec.message() << std::endl;
-                                   }
-                               }
-                           });
+                // Continue reading
+                receive();
+            } else {
+                if (ec == boost::asio::error::operation_aborted) {
+                    std::cerr << "Receive operation aborted" << std::endl;
+                } else if (ec == boost::asio::error::eof) {
+                    std::cerr << "Connection closed by peer" << std::endl;
+                } else {
+                    std::cerr << "Error in receive: " << ec.message() << std::endl;
+                }
+            }
+        });
 }
 
 void QuicListener::check_deadline()

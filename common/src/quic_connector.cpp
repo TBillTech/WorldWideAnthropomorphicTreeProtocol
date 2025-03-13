@@ -40,16 +40,21 @@ constexpr size_t max_preferred_versionslen = 4;
 } // namespace
 
 
-Stream::Stream(const Request &req, int64_t stream_id)
-  : req(req), stream_id(stream_id), fd(-1) {}
+ClientStream::ClientStream(const Request &req, int64_t stream_id)
+    : scheme(req.scheme),
+        authority(req.authority),
+        path(req.path),
+        stream_id(stream_id),
+        pri{req.pri.urgency, req.pri.inc},
+        fd(-1) {}
 
-Stream::~Stream() {
+ClientStream::~ClientStream() {
   if (fd != -1) {
     close(fd);
   }
 }
 
-int Stream::open_file(const std::string_view &path) {
+int ClientStream::open_file(const std::string_view &path) {
   assert(fd == -1);
 
   std::string_view filename;
@@ -1849,7 +1854,7 @@ int Client::on_extend_max_streams() {
       break;
     }
 
-    auto stream = std::make_unique<Stream>(
+    auto stream = std::make_unique<ClientStream>(
       config.requests[nstreams_done_ % config.requests.size()], stream_id);
 
     if (submit_http_request(stream.get()) != 0) {
@@ -1857,7 +1862,7 @@ int Client::on_extend_max_streams() {
     }
 
     if (!config.download.empty()) {
-      stream->open_file(stream->req.path);
+      stream->open_file(stream->path);
     }
     streams_.emplace(stream_id, std::move(stream));
   }
@@ -1876,16 +1881,14 @@ nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
 }
 } // namespace
 
-int Client::submit_http_request(const Stream *stream) {
+int Client::submit_http_request(const ClientStream *stream) {
   std::string content_length_str;
-
-  const auto &req = stream->req;
 
   std::array<nghttp3_nv, 6> nva{
     util::make_nv_nn(":method", config.http_method),
-    util::make_nv_nn(":scheme", req.scheme),
-    util::make_nv_nn(":authority", req.authority),
-    util::make_nv_nn(":path", req.path),
+    util::make_nv_nn(":scheme", stream->scheme),
+    util::make_nv_nn(":authority", stream->authority),
+    util::make_nv_nn(":path", stream->path),
     util::make_nv_nn("user-agent", "nghttp3/ngtcp2 client"),
   };
   size_t nvlen = 5;
@@ -2666,91 +2669,139 @@ Options:
 } // namespace
 
 
-RequestIdentifier QuicConnector::getNextRequestIdentifier() {
+void QuicConnector::resolveRequestStream(Request const &req, stream_callback_fn cb) {
     // This just returns the currentRequestIdentifier
     // Increment the currentRequestIdentifier
-    lock_guard<std::mutex> lock(requestIdentifierLock);
-    RequestIdentifier newRequestIdentifier = currentRequestIdentifier;
-    currentRequestIdentifier.stream_id += 2;
-    return newRequestIdentifier;
+    lock_guard<std::mutex> lock(requestResolverMutex);
+    requestResolutionQueue.push_back(make_pair(req, cb));
 }
 
-void QuicConnector::requestSend(const requestor_callback& request) {
-    // This just adds the request to the newRequestQueue
-    // Add the request to the requestSentQueue
-    lock_guard<std::mutex> lock(newRequestQueueMutex);
-    newRequestQueue.push_back(request);
-}
-
-void QuicConnector::processNextResponse() {
-    // This pops the response from the responseReceiveQueue and calls the callback function
-    // Pop the response from the responseReceiveQueue
-    responseReceiveQueueMutex.lock();
-    if (!responseReceiveQueue.empty()) {
-        completed_callback response = responseReceiveQueue.front();
-        responseReceiveQueue.erase(responseReceiveQueue.begin());
-        responseReceiveQueueMutex.unlock();
+bool QuicConnector::processRequestStream() {
+    requestorQueueMutex.lock();
+    if (!requestorQueue.empty()) {
+        stream_callback &stream_cb = requestorQueue.front();
+        requestorQueue.erase(requestorQueue.begin());
+        requestorQueueMutex.unlock();
+        // Now the stream callback is not on the queue, so no other worker will try to service it while this is operational.
         // Call the callback function OUTSIDE the lock
-        auto fn = response.first.second;
-        fn(response.first.first, response.second);
+        auto fn = stream_cb.second;
+        vector<std::span<const uint8_t>> to_process;
+        {
+            lock_guard<std::mutex> lock(incomingChunksMutex);
+            auto incoming = incomingChunks.find(stream_cb.first);
+            if (incoming != incomingChunks.end()) {
+                to_process.swap(incoming->second);
+            }
+        }
+        auto processed = fn(stream_cb.first, to_process);
+        {   
+            lock_guard<std::mutex> lock(outgoingChunksMutex);
+            auto outgoing = outgoingChunks.find(stream_cb.first);
+            if (outgoing != outgoingChunks.end()) {
+                outgoing->second.insert(outgoing->second.end(), processed.begin(), processed.end());
+            } else {
+                outgoingChunks.insert(make_pair(stream_cb.first, processed));
+            }
+        }
+        lock_guard<std::mutex> lock(requestorQueueMutex);
+        requestorQueue.push_back(stream_cb);
     } else {
-        responseReceiveQueueMutex.unlock();
+        requestorQueueMutex.unlock();
+        return false;
     }
+    return true;
 }
 
-identified_request QuicConnector::requestReceive(){
+pair<StreamIdentifier, Request> QuicConnector::listenForResponseStream(){
     // This pops the request from the requestReceiveQueue, and returns it
-    lock_guard<std::mutex> lock(requestReceiveQueueMutex);
-    if (!requestReceiveQueue.empty()) {
-        identified_request request = requestReceiveQueue.front();
-        requestReceiveQueue.erase(requestReceiveQueue.begin());
+    lock_guard<std::mutex> lock(unhandledQueueMutex);
+    if (!unhandledQueue.empty()) {
+        pair<StreamIdentifier, Request> request = unhandledQueue.front();
+        unhandledQueue.erase(unhandledQueue.begin());
         return request;
     } else {
-        return IDLE_identified_request;
+        return IDLE_stream_listener;
     }
 }
 
-void QuicConnector::responseSend(const identified_request& request, const string& response) {
-    // This just adds the response to the newResponseQueue
-    // Add the response to the newResponseQueue
-    lock_guard<std::mutex> lock(newResponseQueueMutex);
-    newResponseQueue.push_back(make_pair(request, response));
+void QuicConnector::setupResponseStream(stream_callback& response)
+{
+    // This just adds the response to the responderQueue
+    lock_guard<std::mutex> lock(responderQueueMutex);
+    responderQueue.push_back(response);
+}
+
+bool QuicConnector::processResponseStream() {
+    responderQueueMutex.lock();
+    if (!responderQueue.empty()) {
+        stream_callback &stream_cb = responderQueue.front();
+        responderQueue.erase(responderQueue.begin());
+        responderQueueMutex.unlock();
+        // Now the stream callback is not on the queue, so no other worker will try to service it while this is operational.
+        // Call the callback function OUTSIDE the lock
+        auto fn = stream_cb.second;
+        vector<std::span<const uint8_t>> to_process;
+        {
+            lock_guard<std::mutex> lock(incomingChunksMutex);
+            auto incoming = incomingChunks.find(stream_cb.first);
+            if (incoming != incomingChunks.end()) {
+                to_process.swap(incoming->second);
+            }
+        }
+        auto processed = fn(stream_cb.first, to_process);
+        {   
+            lock_guard<std::mutex> lock(outgoingChunksMutex);
+            auto outgoing = outgoingChunks.find(stream_cb.first);
+            if (outgoing != outgoingChunks.end()) {
+                outgoing->second.insert(outgoing->second.end(), processed.begin(), processed.end());
+            } else {
+                outgoingChunks.insert(make_pair(stream_cb.first, processed));
+            }
+        }
+        lock_guard<std::mutex> lock(responderQueueMutex);
+        responderQueue.push_back(stream_cb);
+    } else {
+        responderQueueMutex.unlock();
+        return false;
+    }
+    return true;
 }
 
 void QuicConnector::send() {
     if (is_server) {
         // lock and pop the first request from the newResponseQueue
-        newResponseQueueMutex.lock();
-        if (!newResponseQueue.empty()) {
-            identified_request request = newResponseQueue.front().first;
-            string response = newResponseQueue.front().second;
-            newResponseQueue.erase(newResponseQueue.begin());
-            newResponseQueueMutex.unlock();
-            // send the response (this is hard coded to use the one socket rather than the identified_request info 
-            // because this QuicConnector is only used for testing)
-            boost::asio::write(socket, boost::asio::buffer(response + "\n"));
-            cout << "Server sent response: " << response << endl;
+        outgoingChunksMutex.lock();
+        if (!outgoingChunks.empty()) {
+            pair<StreamIdentifier, chunks> outgoing = *(outgoingChunks.begin());
+            outgoingChunks.erase(outgoingChunks.begin());
+            outgoingChunksMutex.unlock();
+            for (auto &chunk : outgoing.second) {
+                // send the response (this is hard coded to use the one socket rather than the identified_request info 
+                // because this TcpCommunication is only used for testing and architecture illustration)
+                auto response_str = std::string(chunk.begin(), chunk.end());
+                boost::asio::write(socket, boost::asio::buffer(response_str + "\n"));
+                cout << "Server sent response chunk: " << outgoing.first << " ... " << response_str << endl;
+            }
         } else {
-            newResponseQueueMutex.unlock();
+            outgoingChunksMutex.unlock();
         }
     }
     else {
         //lock and pop the first request from the newRequestQueue
-        newRequestQueueMutex.lock();
-        if (!newRequestQueue.empty()) {
-            requestor_callback request = newRequestQueue.front();
-            newRequestQueue.erase(newRequestQueue.begin());
-            newRequestQueueMutex.unlock();
-            // send the request (this is hard coded to use the one socket rather than the identified_request info 
-            // because this QuicConnector is only used for testing)
-            boost::asio::write(socket, boost::asio::buffer(request.first.second + "\n"));
-            cout << "Client sent request: " << request.first.second << endl;
-            // add the request to the requestSentQueue
-            requestSentQueueMutex.lock();
-            requestSentQueue.push_back(request);
-            requestSentQueueMutex.unlock();
+        outgoingChunksMutex.lock();
+        if (!outgoingChunks.empty()) {
+            pair<StreamIdentifier, chunks> outgoing = *(outgoingChunks.begin());
+            outgoingChunks.erase(outgoingChunks.begin());
+            outgoingChunksMutex.unlock();
+            for (auto &chunk : outgoing.second) {
+                // send the request (this is hard coded to use the one socket rather than the identified_request info 
+                // because this TcpCommunication is only used for testing)
+                auto request_str = std::string(chunk.begin(), chunk.end());
+                boost::asio::write(socket, boost::asio::buffer(request_str + "\n"));
+                cout << "Client sent request chunk: " << outgoing.first << " ... " << request_str << endl;
+            }
         } else {
-            newRequestQueueMutex.unlock();
+            outgoingChunksMutex.unlock();
         }
     }
 }
@@ -2765,18 +2816,14 @@ void QuicConnector::receive() {
                 std::getline(is, data);
 
                 if (!data.empty()) {
-                    if (is_server) {
-                        std::lock_guard<std::mutex> lock(requestReceiveQueueMutex);
-                        requestReceiveQueue.push_back(std::make_pair(currentRequestIdentifier, data));
+                    // TODO:  Create a datatype to manage chunk memmory safely
+                    auto data_ptr = new std::string(data);
+                    std::lock_guard<std::mutex> lock(incomingChunksMutex);
+                    auto incoming = incomingChunks.find(theStreamIdentifier());
+                    if (incoming != incomingChunks.end()) {
+                        incoming->second.push_back(std::span<const uint8_t>((uint8_t*)data_ptr->c_str(), data_ptr->size()));
                     } else {
-                        std::lock_guard<std::mutex> sent_lock(requestSentQueueMutex);
-                        if (requestSentQueue.empty()) {
-                            return;
-                        }
-                        requestor_callback currentRequest = requestSentQueue.front();
-                        requestSentQueue.erase(requestSentQueue.begin());
-                        std::lock_guard<std::mutex> recv_lock(responseReceiveQueueMutex);
-                        responseReceiveQueue.push_back(std::make_pair(currentRequest, data));
+                        incomingChunks.insert(make_pair(theStreamIdentifier(), vector<std::span<const uint8_t>>{std::span<const uint8_t>((uint8_t*)data_ptr->c_str(), data_ptr->size())}));
                     }
                 }
 
@@ -2784,11 +2831,11 @@ void QuicConnector::receive() {
                 receive();
             } else {
                 if (ec == boost::asio::error::operation_aborted) {
-                    std::cerr << "Client Receive operation aborted" << std::endl;
+                    std::cerr << "Receive operation aborted" << std::endl;
                 } else if (ec == boost::asio::error::eof) {
-                    std::cerr << "Client Connection closed by peer" << std::endl;
+                    std::cerr << "Connection closed by peer" << std::endl;
                 } else {
-                    std::cerr << "Client Error in receive: " << ec.message() << std::endl;
+                    std::cerr << "Error in receive: " << ec.message() << std::endl;
                 }
             }
         });
