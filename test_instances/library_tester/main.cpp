@@ -1,13 +1,14 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <sys/mman.h>
 
 #include "util.h"
 #include "config_base.h"
 #include "tcp_communication.h"
 #include "quic_connector.h"
 #include "quic_listener.h"
-#include <sys/mman.h>
+#include "shared_chunk.h"
 
 using namespace std;
 
@@ -36,6 +37,9 @@ unique_ptr<Communication> createClientCommunication(const string& protocol, boos
 }
 
 int main() {
+    // set to pool size for the type UDPChunk to 4 GB
+    memory_pool.setPoolSize<UDPChunk>(static_cast<uint64_t>(4) * 1024 * 1024 * 1024 / UDPChunk::chunk_size);
+
     //string protocol = "QUIC";
     string protocol = "TCP";
     if(protocol == "QUIC")
