@@ -8,37 +8,44 @@ void TcpCommunication::resolveRequestStream(Request const &req, stream_callback_
 }
 
 bool TcpCommunication::processRequestStream() {
-    requestorQueueMutex.lock();
+    std::unique_lock<std::mutex> requestorLock(requestorQueueMutex);
     if (!requestorQueue.empty()) {
         stream_callback stream_cb = requestorQueue.front();
         requestorQueue.erase(requestorQueue.begin());
-        requestorQueueMutex.unlock();
+        requestorLock.unlock();
+        requestorLock.lock();
+        requestorLock.unlock();
+        StreamIdentifier stream_id = stream_cb.first;
         // Now the stream callback is not on the queue, so no other worker will try to service it while this is operational.
         // Call the callback function OUTSIDE the lock
-        auto fn = stream_cb.second;
-        vector<std::span<const uint8_t>> to_process;
+        stream_callback_fn fn = stream_cb.second;
+        chunks to_process;
         {
             lock_guard<std::mutex> lock(incomingChunksMutex);
-            auto incoming = incomingChunks.find(stream_cb.first);
+            auto incoming = incomingChunks.find(stream_id);
             if (incoming != incomingChunks.end()) {
                 to_process.swap(incoming->second);
             }
         }
-        auto processed = fn(stream_cb.first, to_process);
+        chunks processed = fn(stream_cb.first, to_process);
         if(!processed.empty())
         {   
             lock_guard<std::mutex> lock(outgoingChunksMutex);
             auto outgoing = outgoingChunks.find(stream_cb.first);
-            if (outgoing != outgoingChunks.end()) {
-                outgoing->second.insert(outgoing->second.end(), processed.begin(), processed.end());
-            } else {
-                outgoingChunks.insert(make_pair(stream_cb.first, processed));
+            if (outgoing == outgoingChunks.end()) {
+                auto inserted = outgoingChunks.insert(make_pair(stream_cb.first, chunks()));
+                inserted.first->second.swap(processed);
+            }
+            else {
+                int chunk_count = 0;
+                for (auto &chunk : processed) {
+                    outgoing->second.emplace_back(chunk);
+                }
             }
         }
-        lock_guard<std::mutex> lock(requestorQueueMutex);
+        requestorLock.lock();
         requestorQueue.push_back(stream_cb);
     } else {
-        requestorQueueMutex.unlock();
         return false;
     }
     return true;
@@ -64,15 +71,15 @@ void TcpCommunication::setupResponseStream(stream_callback& response)
 }
 
 bool TcpCommunication::processResponseStream() {
-    responderQueueMutex.lock();
+    std::unique_lock<std::mutex> responderLock(responderQueueMutex);
     if (!responderQueue.empty()) {
         stream_callback stream_cb = responderQueue.front();
         responderQueue.erase(responderQueue.begin());
-        responderQueueMutex.unlock();
+        responderLock.unlock();
         // Now the stream callback is not on the queue, so no other worker will try to service it while this is operational.
         // Call the callback function OUTSIDE the lock
-        auto fn = stream_cb.second;
-        vector<std::span<const uint8_t>> to_process;
+        stream_callback_fn fn = stream_cb.second;
+        chunks to_process;
         {
             lock_guard<std::mutex> lock(incomingChunksMutex);
             auto incoming = incomingChunks.find(stream_cb.first);
@@ -80,21 +87,24 @@ bool TcpCommunication::processResponseStream() {
                 to_process.swap(incoming->second);
             }
         }
-        auto processed = fn(stream_cb.first, to_process);
+        chunks processed = fn(stream_cb.first, to_process);
         if(!processed.empty())
         {   
             lock_guard<std::mutex> lock(outgoingChunksMutex);
             auto outgoing = outgoingChunks.find(stream_cb.first);
-            if (outgoing != outgoingChunks.end()) {
-                outgoing->second.insert(outgoing->second.end(), processed.begin(), processed.end());
-            } else {
-                outgoingChunks.insert(make_pair(stream_cb.first, processed));
+            if (outgoing == outgoingChunks.end()) {
+                auto inserted = outgoingChunks.insert(make_pair(stream_cb.first, chunks()));
+                inserted.first->second.swap(processed);
+            }
+            else {
+                for (auto &chunk : processed) {
+                    outgoing->second.emplace_back(chunk);
+                }
             }
         }
-        lock_guard<std::mutex> lock(responderQueueMutex);
+        responderLock.lock();
         responderQueue.push_back(stream_cb);
     } else {
-        responderQueueMutex.unlock();
         return false;
     }
     return true;
@@ -137,22 +147,25 @@ void TcpCommunication::send() {
     // lock and pop the first request from the newResponseQueue
     outgoingChunksMutex.lock();
     if (!outgoingChunks.empty()) {
-        pair<StreamIdentifier, chunks> outgoing = *(outgoingChunks.begin());
+        chunks outgoing;
+        auto outgoing_pair = *(outgoingChunks.begin());
+        outgoing.swap(outgoing_pair.second);
+        StreamIdentifier outgoing_id = outgoing_pair.first;
         outgoingChunks.erase(outgoingChunks.begin());
         outgoingChunksMutex.unlock();
-        for (auto &chunk : outgoing.second) {
+        for (auto &chunk : outgoing) {
             // send the response (this is hard coded to use the one socket rather than the identified_request info 
             // because this TcpCommunication is only used for testing and architecture illustration)
-            auto response_str = std::string(chunk.begin(), chunk.end());
+            string response_str(chunk.begin<const char>(), chunk.end<const char>());
             boost::system::error_code ec;
             boost::asio::write(send_socket, boost::asio::buffer(response_str + "\n"), ec);
             if (ec) {
                 std::cerr << "Error sending response: " << ec.message() << std::endl;
             } else {
                 if (is_server) {
-                    std::cout << "Server sent response chunk: " << outgoing.first << " ... " << response_str << std::endl;
+                    std::cout << "Server sent response chunk: " << outgoing_id << " ... " << response_str << std::endl;
                 } else {
-                    std::cout << "Client sent response chunk: " << outgoing.first << " ... " << response_str << std::endl;
+                    std::cout << "Client sent response chunk: " << outgoing_id << " ... " << response_str << std::endl;
                 }
             }
         }
@@ -171,15 +184,13 @@ void TcpCommunication::receive() {
         std::getline(is, data);
 
         if (!data.empty()) {
-            // TODO:  Create a datatype to manage chunk memory safely
-            auto data_ptr = new std::string(data);
             std::lock_guard<std::mutex> lock(incomingChunksMutex);
             auto incoming = incomingChunks.find(theStreamIdentifier());
-            if (incoming != incomingChunks.end()) {
-                incoming->second.push_back(std::span<const uint8_t>((uint8_t*)data_ptr->c_str(), data_ptr->size()));
-            } else {
-                incomingChunks.insert(make_pair(theStreamIdentifier(), vector<std::span<const uint8_t>>{std::span<const uint8_t>((uint8_t*)data_ptr->c_str(), data_ptr->size())}));
+            if (incoming == incomingChunks.end()) {
+                auto incoming_pair = incomingChunks.insert(make_pair(theStreamIdentifier(), chunks()));
+                incoming = incoming_pair.first;
             }
+            incoming->second.emplace_back(std::span<const char>(data.c_str(), data.size()));
             std::cerr << "Received data: " << data << std::endl;
         } else {
             std::cerr << "Received empty data" << std::endl;

@@ -11,6 +11,7 @@
 #include <ngtcp2/ngtcp2.h> // Add this line to include the ngtcp2_cid type
 
 #include "config_base.h"
+#include "shared_chunk.h"
 
 using namespace std;
 
@@ -92,16 +93,16 @@ struct StreamIdentifier {
     }
 };
 
-typedef vector<std::span<const uint8_t>> chunks;
+typedef vector<shared_span<> > chunks;
 
 // The stream callback function is generally used by both sides to process incoming and outgoing data for bidirectional streams.
-using stream_callback_fn = function<chunks(const StreamIdentifier&, chunks)>;
+using stream_callback_fn = function<chunks(const StreamIdentifier&, chunks&)>;
 
 // On Client side, the initial outgoing request is first logged into the requestResolutionQueue (because it has no response callbacks yet)
 // And because the StreamIdentifier is not yet known.
 typedef pair<Request, stream_callback_fn> RequestCallback;
 // RequestCallback Vector needs to sort by the Request object, so redirect < operator on RequestCallback to Request:
-inline bool operator<(const RequestCallback& lhs, const RequestCallback& rhs) {
+inline bool operator<(RequestCallback& lhs, RequestCallback& rhs) {
     return lhs.first < rhs.first;
 }
 typedef vector<RequestCallback> request_resolutions;

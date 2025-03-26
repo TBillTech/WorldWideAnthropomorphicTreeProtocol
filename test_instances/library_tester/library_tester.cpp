@@ -154,25 +154,33 @@ int main() {
 
     auto theRequest = Request{.scheme = "wwatp://", .authority = "localhost", .path = "/test"};
     bool sentRequest = false;
-    auto theClientHandler = [&sentRequest](const StreamIdentifier& stream_id, chunks response) {
+    auto theClientHandler = [&sentRequest](const StreamIdentifier& stream_id, chunks &response) {
         if (response.empty() && !sentRequest) {
             cout << "Client is idle, so sending Hello Server! message" << endl;
             static string hello_str = "Hello Server!";
-            std::vector<std::span<const uint8_t>> response_chunks;
-            response_chunks.emplace_back(reinterpret_cast<const uint8_t*>(hello_str.data()), hello_str.size());
+            chunks response_chunks;
+            response_chunks.emplace_back(span<const char>(hello_str.c_str(), hello_str.size()));
             sentRequest = true;
-            return response_chunks;
+            return move(response_chunks);
         }
         for (auto& chunk : response) {
-            string chunk_str = string(chunk.begin(), chunk.end());
+            string chunk_str(chunk.begin<const char>(), chunk.end<const char>());
             cout << "Client got response received in callback: " << chunk_str << endl;
         }
-        return chunks();
+        chunks no_chunks;
+        return move(no_chunks);
     };
     client_communication->resolveRequestStream(theRequest, theClientHandler);
 
+    int wait_loops = 100;
+    if (const char* env_p = std::getenv("DEBUG")) {
+        if (std::string(env_p) == "1") {
+            wait_loops = 100;
+        }
+    }
+
     // Service the client communication for a while to allow the client to send the request.
-    for(int i = 0; i < 10; i++) {
+    for(int i = 0; i < wait_loops; i++) {
         client_communication->processRequestStream();
         this_thread::sleep_for(chrono::milliseconds(10));
     }
@@ -193,32 +201,33 @@ int main() {
     }
     if(received_request != IDLE_stream_listener) {
         cout << "In Main: Server request received: " << received_request.second << endl;
-        auto theServerHandler = [](const StreamIdentifier& stream_id, chunks request) {
+        auto theServerHandler = [](const StreamIdentifier& stream_id, chunks& request) {
             for (auto& chunk : request) {
-                string chunk_str = string(chunk.begin(), chunk.end());
+                string chunk_str(chunk.begin<const char>(), chunk.end<const char>());
                 cout << "Server got request in callback: " << chunk_str << endl;
             }
             if (!request.empty()) {
                 static string goodbye_str = "Goodbye Client!";
-                std::vector<std::span<const uint8_t>> response_chunks;
-                response_chunks.emplace_back(reinterpret_cast<const uint8_t*>(goodbye_str.data()), goodbye_str.size());
-                return response_chunks;
+                chunks response_chunks;
+                response_chunks.emplace_back(span<const char>(goodbye_str.c_str(), goodbye_str.size()));
+                return move(response_chunks);
             }
-            return chunks();
+            chunks no_chunks;
+            return move(no_chunks);
         };
         stream_callback response_stream = std::make_pair(received_request.first, theServerHandler);
         server_communication->setupResponseStream(response_stream);
     }
      
     // Service the server communication for a while to allow the server to send the response.
-    for(int i = 0; i < 10; i++) {
+    for(int i = 0; i < wait_loops; i++) {
         server_communication->processResponseStream();
         this_thread::sleep_for(chrono::milliseconds(10));
     }
     cout << "In Main: Server should have sent response" << endl;
 
     // Service the client communication for a while to allow the client to process the response.
-    for(int i = 0; i < 10; i++) {
+    for(int i = 0; i < wait_loops; i++) {
         client_communication->processRequestStream();
         this_thread::sleep_for(chrono::milliseconds(10));
     }

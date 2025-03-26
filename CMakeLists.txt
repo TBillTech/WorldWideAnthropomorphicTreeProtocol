@@ -81,9 +81,9 @@ set(COMMON_SOURCES
 )
 
 # Add test executables
-add_executable(library_tester ${COMMON_SOURCES} test_instances/library_tester/main.cpp)
-add_executable(shared_chunk_tester ${COMMON_SOURCES} test_instances/shared_chunk_tester/main.cpp)
-add_executable(memory_pool_tester ${COMMON_SOURCES} test_instances/memory_pool_tester/main.cpp)
+add_executable(library_tester ${COMMON_SOURCES} test_instances/library_tester/library_tester.cpp)
+add_executable(shared_chunk_tester ${COMMON_SOURCES} test_instances/shared_chunk_tester/shared_chunk_tester.cpp)
+add_executable(memory_pool_tester ${COMMON_SOURCES} test_instances/memory_pool_tester/memory_pool_tester.cpp)
 
 # Define preprocessor macros
 #add_definitions(-DENABLE_EXAMPLE_BORINGSSL -DWITH_EXAMPLE_BORINGSSL -DHAVE_ARPA_INET_H)
@@ -105,16 +105,16 @@ ExternalProject_Add(
     CONFIGURE_COMMAND cmake -B build -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     BUILD_COMMAND make -j$(nproc) -C build
     INSTALL_COMMAND ""
-    BUILD_BYPRODUCTS ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/ssl/libssl.a ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/crypto/libcrypto.a
+    BUILD_BYPRODUCTS ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/libssl.a ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/libcrypto.a
 )
 # Create an imported target for the BoringSSL library
 add_library(boringssl_lib STATIC IMPORTED)
 set_target_properties(boringssl_lib PROPERTIES
-    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/ssl/libssl.a
+    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/libssl.a
 )
 add_library(boringcrypto_lib STATIC IMPORTED)
 set_target_properties(boringcrypto_lib PROPERTIES
-    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/crypto/libcrypto.a
+    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/libcrypto.a
 )
 
 
