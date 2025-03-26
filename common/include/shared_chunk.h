@@ -470,14 +470,17 @@ public:
                 return (other.span_index - span_index);
             }
             std::ptrdiff_t distance = 0;
-            // Distance within the current chunk
-            distance += (chunks[chunk_index].second.first + chunks[chunk_index].second.second - span_index);
-            // Distance for the full chunks in between
-            for (size_t i = chunk_index + 1; i < other.chunk_index; ++i) {
-                distance += chunks[i].second.second;
+            // Distance within this last chunk
+            if (chunk_index < chunks.size()) {
+                distance -= span_index - chunks[chunk_index].second.first;
             }
-            // Distance within the last chunk
-            distance += other.span_index;
+            // Distance for the full chunks in between
+            for (size_t i = other.chunk_index + 1; i < chunk_index; ++i) {
+                distance -= chunks[i].second.second;
+            }
+            // Distance within the first chunk
+            auto& other_chunk = chunks[other.chunk_index];
+            distance -= (other_chunk.second.first + other_chunk.second.second - other.span_index);
             return distance / sizeof(PODType);
         }
     private:
