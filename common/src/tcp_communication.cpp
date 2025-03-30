@@ -51,23 +51,20 @@ bool TcpCommunication::processRequestStream() {
     return true;
 }
 
-pair<StreamIdentifier, Request> TcpCommunication::listenForResponseStream(){
-    // This pops the request from the requestReceiveQueue, and returns it
-    lock_guard<std::mutex> lock(unhandledQueueMutex);
-    if (!unhandledQueue.empty()) {
-        pair<StreamIdentifier, Request> request = unhandledQueue.front();
-        unhandledQueue.erase(unhandledQueue.begin());
-        return request;
-    } else {
-        return IDLE_stream_listener;
-    }
+void TcpCommunication::registerRequestHandler(named_prepare_fn preparer)
+{
+    lock_guard<std::mutex> lock(preparerStackMutex);
+    preparersStack.push_back(preparer);
 }
 
-void TcpCommunication::setupResponseStream(stream_callback& response)
+void TcpCommunication::deregisterRequestHandler(string preparer_name)
 {
-    // This just adds the response to the responderQueue
-    lock_guard<std::mutex> lock(responderQueueMutex);
-    responderQueue.push_back(response);
+    lock_guard<std::mutex> lock(preparerStackMutex);
+    auto it = std::remove_if(preparersStack.begin(), preparersStack.end(),
+        [&preparer_name](const named_prepare_fn& preparer) {
+            return preparer.first == preparer_name;
+        });
+    preparersStack.erase(it, preparersStack.end());
 }
 
 bool TcpCommunication::processResponseStream() {
@@ -136,11 +133,18 @@ void TcpCommunication::setupResponses() {
         return;
     }
     prepared_unhandled_response = true;
-    Request request = {"http", "localhost", "/test", {0, 0}};
-    pair<StreamIdentifier, Request> unhandled = make_pair(theStreamIdentifier(), request);
-    lock_guard<std::mutex> lock(unhandledQueueMutex);
-    std::cerr << "setupResponses has created one unhandled" << std::endl << std::flush;
-    unhandledQueue.push_back(unhandled);
+    const std::string_view uri = "wwatp://localhost/test";
+    lock_guard<std::mutex> lock(preparerStackMutex);
+    for (auto &preparer : preparersStack) {
+        auto response = preparer.second(theStreamIdentifier(), uri);
+        auto response_info = response.first;
+        if (response_info.can_handle) {
+            // Also, since this is just testing code, the various flags are not used.
+            lock_guard<std::mutex> lock(responderQueueMutex);
+            responderQueue.push_back(response.second);
+            break;
+        }
+    }
 }
 
 void TcpCommunication::send() {
@@ -191,7 +195,7 @@ void TcpCommunication::receive() {
                 incoming = incoming_pair.first;
             }
             incoming->second.emplace_back(std::span<const char>(data.c_str(), data.size()));
-            std::cerr << "Received data: " << data << std::endl;
+            std::cerr << "Received data: " << data << std::endl << flush;
         } else {
             std::cerr << "Received empty data" << std::endl;
         }

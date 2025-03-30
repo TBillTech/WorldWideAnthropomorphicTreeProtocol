@@ -130,8 +130,33 @@ int main() {
     auto server_communication = createServerCommunication(protocol, io_context);
     server_communication->listen("localhost", "127.0.0.1", 12345);
 
-    this_thread::sleep_for(chrono::seconds(1));
+    this_thread::sleep_for(chrono::seconds(2));
     cout << "In Main: Server should be started up" << endl;
+
+    auto theServerHandler = [](const StreamIdentifier& stream_id, chunks& request) {
+        for (auto& chunk : request) {
+            string chunk_str(chunk.begin<const char>(), chunk.end<const char>());
+            cout << "Server got request in callback: " << chunk_str << endl;
+        }
+        if (!request.empty()) {
+            static string goodbye_str = "Goodbye Client!";
+            chunks response_chunks;
+            response_chunks.emplace_back(span<const char>(goodbye_str.c_str(), goodbye_str.size()));
+            return move(response_chunks);
+        }
+        chunks no_chunks;
+        return move(no_chunks);
+    };
+    // Add a named_prepare_fn for theServerHandler to the server_communication
+    prepare_stream_callback_fn theServerHandlerWrapper = [&theServerHandler](const StreamIdentifier& stream_id, const std::string_view &uri) {
+        uri_response_info response_info = {true, true, false, 0};
+        stream_callback response_stream = std::make_pair(stream_id, theServerHandler);
+        return std::make_pair(response_info, response_stream);
+    };
+    server_communication->registerRequestHandler(make_pair("test", theServerHandlerWrapper));
+
+    this_thread::sleep_for(chrono::microseconds(100));
+    cout << "In Main: Server should have registered request handler" << endl;
 
     if (protocol == "QUIC")
     {
@@ -172,7 +197,7 @@ int main() {
     };
     client_communication->resolveRequestStream(theRequest, theClientHandler);
 
-    int wait_loops = 100;
+    int wait_loops = 10;
     if (const char* env_p = std::getenv("DEBUG")) {
         if (std::string(env_p) == "1") {
             wait_loops = 100;
@@ -186,39 +211,6 @@ int main() {
     }
     cout << "In Main: Client should have sent request and initialized callback" << endl;
 
-    auto received_request = server_communication->listenForResponseStream();
-    uint64_t interval_count = 0;
-    uint64_t give_up_seconds = 5;
-    auto interval_length = chrono::milliseconds(100);
-    while(received_request == IDLE_stream_listener) {
-        this_thread::sleep_for(interval_length);
-        received_request = server_communication->listenForResponseStream();
-        interval_count++;
-        if(interval_count >= chrono::seconds(give_up_seconds)/interval_length) {
-            cout << "In Main: Waited " << interval_count*interval_length << " for request, giving up." << endl;
-            break;
-        }
-    }
-    if(received_request != IDLE_stream_listener) {
-        cout << "In Main: Server request received: " << received_request.second << endl;
-        auto theServerHandler = [](const StreamIdentifier& stream_id, chunks& request) {
-            for (auto& chunk : request) {
-                string chunk_str(chunk.begin<const char>(), chunk.end<const char>());
-                cout << "Server got request in callback: " << chunk_str << endl;
-            }
-            if (!request.empty()) {
-                static string goodbye_str = "Goodbye Client!";
-                chunks response_chunks;
-                response_chunks.emplace_back(span<const char>(goodbye_str.c_str(), goodbye_str.size()));
-                return move(response_chunks);
-            }
-            chunks no_chunks;
-            return move(no_chunks);
-        };
-        stream_callback response_stream = std::make_pair(received_request.first, theServerHandler);
-        server_communication->setupResponseStream(response_stream);
-    }
-     
     // Service the server communication for a while to allow the server to send the response.
     for(int i = 0; i < wait_loops; i++) {
         server_communication->processResponseStream();

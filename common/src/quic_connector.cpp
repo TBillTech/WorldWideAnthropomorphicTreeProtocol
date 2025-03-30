@@ -40,13 +40,14 @@ constexpr size_t max_preferred_versionslen = 4;
 } // namespace
 
 
-ClientStream::ClientStream(const Request &req, int64_t stream_id)
+ClientStream::ClientStream(const Request &req, int64_t stream_id, Client *client)
     : scheme(req.scheme),
         authority(req.authority),
         path(req.path),
         stream_id(stream_id),
         pri{req.pri.urgency, req.pri.inc},
-        fd(-1) {}
+        fd(-1),
+        handler(client) {}
 
 ClientStream::~ClientStream() {
   if (fd != -1) {
@@ -1657,7 +1658,7 @@ Client::send_packet(const Endpoint &ep, const ngtcp2_addr &remote_addr,
 
     std::cerr << "Client sendmsg: " << strerror(errno) << std::endl;
 
-    // TODO We have packet which is expected to fail to send (e.g.,
+    // LEGACY ISSUE We have packet which is expected to fail to send (e.g.,
     // path validation to old path).
     return {{}, NETWORK_ERR_OK};
   }
@@ -1775,6 +1776,7 @@ int Client::handle_error() {
 }
 
 int Client::on_stream_close(int64_t stream_id, uint64_t app_error_code) {
+    // TODO: Remove streams from the requestorQueue
   if (httpconn_) {
     if (app_error_code == 0) {
       app_error_code = NGHTTP3_H3_NO_ERROR;
@@ -1847,6 +1849,7 @@ int Client::on_extend_max_streams() {
     return 0;
   }
 
+  // TODO: Use the requestResolutionQueue to drive the stream creation.
   for (; nstreams_done_ < config.nstreams; ++nstreams_done_) {
     if (auto rv = ngtcp2_conn_open_bidi_stream(conn_, &stream_id, nullptr);
         rv != 0) {
@@ -1855,9 +1858,9 @@ int Client::on_extend_max_streams() {
     }
 
     auto stream = std::make_unique<ClientStream>(
-      config.requests[nstreams_done_ % config.requests.size()], stream_id);
+      config.requests[nstreams_done_ % config.requests.size()], stream_id, this);
 
-    if (submit_http_request(stream.get()) != 0) {
+    if (submit_http_request(stream.get(), false) != 0) {
       break;
     }
 
@@ -1873,6 +1876,7 @@ namespace {
 nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
                         size_t veccnt, uint32_t *pflags, void *user_data,
                         void *stream_user_data) {
+  // TODO: pull data from the outgoingChunks queue
   vec[0].base = config.data;
   vec[0].len = config.datalen;
   *pflags |= NGHTTP3_DATA_FLAG_EOF;
@@ -1881,7 +1885,51 @@ nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
 }
 } // namespace
 
-int Client::submit_http_request(const ClientStream *stream) {
+namespace
+{
+    nghttp3_ssize dyn_read_data(nghttp3_conn *conn, int64_t stream_id,
+                                nghttp3_vec *vec, size_t veccnt, uint32_t *pflags,
+                                void *user_data, void *stream_user_data)
+    {
+        // Note that this is by definition NO END STREAM, because that is the common use case for dyn_read_data here
+        // TODO: Use the outgoingChunks queue instead of dyn_buf
+        auto stream = static_cast<ClientStream *>(stream_user_data);
+
+        ngtcp2_conn_info ci;
+
+        ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
+
+        vec[0].base = nullptr;
+        vec[0].len = 0;
+
+        if (false) // if (stream->dyndataleft == 0)
+        {
+            *pflags |= NGHTTP3_DATA_FLAG_EOF;
+            if (config.send_trailers)
+            {
+                *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
+                auto stream_id_str = util::format_uint(stream_id);
+                auto trailers = std::to_array({
+                    util::make_nv_nc("x-ngtcp2-stream-id"sv, stream_id_str),
+                });
+
+                if (auto rv = nghttp3_conn_submit_trailers(
+                        conn, stream_id, trailers.data(), trailers.size());
+                    rv != 0)
+                {
+                    std::cerr << "Server nghttp3_conn_submit_trailers: " << nghttp3_strerror(rv)
+                              << std::endl;
+                    return NGHTTP3_ERR_CALLBACK_FAILURE;
+                }
+            }
+        }
+
+        return 1;
+    }
+} // namespace
+
+
+int Client::submit_http_request(const ClientStream *stream, bool live_stream) {
   std::string content_length_str;
 
   std::array<nghttp3_nv, 6> nva{
@@ -1892,7 +1940,7 @@ int Client::submit_http_request(const ClientStream *stream) {
     util::make_nv_nn("user-agent", "nghttp3/ngtcp2 client"),
   };
   size_t nvlen = 5;
-  if (config.fd != -1) {
+  if ((!live_stream) && (config.fd != -1)) {
     content_length_str = util::format_uint(config.datalen);
     nva[nvlen++] = util::make_nv_nc("content-length", content_length_str);
   }
@@ -1904,6 +1952,9 @@ int Client::submit_http_request(const ClientStream *stream) {
   nghttp3_data_reader dr{
     .read_data = read_data,
   };
+  if (live_stream) {
+    dr.read_data = dyn_read_data;
+  }
 
   if (auto rv = nghttp3_conn_submit_request(
         httpconn_, stream->stream_id, nva.data(), nvlen,
@@ -1991,6 +2042,7 @@ int Client::select_preferred_address(Address &selected_addr,
 namespace {
 int http_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data,
                    size_t datalen, void *user_data, void *stream_user_data) {
+  // TODO: Put the data into the incomingChunks
   if (!config.quiet && !config.no_http_dump) {
     debug::print_http_data(stream_id, {data, datalen});
   }
@@ -2321,7 +2373,7 @@ int run(Client &c, struct ev_loop *loop, const char *addr, const char *port,
     return -1;
   }
 
-  // TODO Do we need this ?
+  // LEGACY ISSUE Do we need this ?
   if (auto rv = c.on_write(); rv != 0) {
     return rv;
   }
@@ -2720,23 +2772,20 @@ bool QuicConnector::processRequestStream() {
     return true;
 }
 
-pair<StreamIdentifier, Request> QuicConnector::listenForResponseStream(){
-    // This pops the request from the requestReceiveQueue, and returns it
-    lock_guard<std::mutex> lock(unhandledQueueMutex);
-    if (!unhandledQueue.empty()) {
-        pair<StreamIdentifier, Request> request = unhandledQueue.front();
-        unhandledQueue.erase(unhandledQueue.begin());
-        return request;
-    } else {
-        return IDLE_stream_listener;
-    }
+void QuicConnector::registerRequestHandler(named_prepare_fn preparer)
+{
+    lock_guard<std::mutex> lock(preparerStackMutex);
+    preparersStack.push_back(preparer);
 }
 
-void QuicConnector::setupResponseStream(stream_callback& response)
+void QuicConnector::deregisterRequestHandler(string preparer_name)
 {
-    // This just adds the response to the responderQueue
-    lock_guard<std::mutex> lock(responderQueueMutex);
-    responderQueue.push_back(response);
+    lock_guard<std::mutex> lock(preparerStackMutex);
+    auto it = std::remove_if(preparersStack.begin(), preparersStack.end(),
+        [&preparer_name](const named_prepare_fn& preparer) {
+            return preparer.first == preparer_name;
+        });
+    preparersStack.erase(it, preparersStack.end());
 }
 
 bool QuicConnector::processResponseStream() {
@@ -2777,69 +2826,6 @@ bool QuicConnector::processResponseStream() {
         return false;
     }
     return true;
-}
-
-void QuicConnector::send() {
-    // lock and pop the first request from the newResponseQueue
-    outgoingChunksMutex.lock();
-    if (!outgoingChunks.empty()) {
-        chunks outgoing;
-        auto outgoing_pair = *(outgoingChunks.begin());
-        outgoing.swap(outgoing_pair.second);
-        StreamIdentifier outgoing_id = outgoing_pair.first;
-        outgoingChunks.erase(outgoingChunks.begin());
-        outgoingChunksMutex.unlock();
-        for (auto &chunk : outgoing) {
-            // send the response (this is hard coded to use the one socket rather than the identified_request info 
-            // because this TcpCommunication is only used for testing and architecture illustration)
-            string response_str(chunk.begin<const char>(), chunk.end<const char>());
-            boost::system::error_code ec;
-            boost::asio::write(socket, boost::asio::buffer(response_str + "\n"), ec);
-            if (ec) {
-                std::cerr << "Error sending response: " << ec.message() << std::endl;
-            } else {
-                if (is_server) {
-                    std::cout << "Server sent response chunk: " << outgoing_id << " ... " << response_str << std::endl;
-                } else {
-                    std::cout << "Client sent response chunk: " << outgoing_id << " ... " << response_str << std::endl;
-                }
-            }
-        }
-    } else {
-        outgoingChunksMutex.unlock();
-    }
-}
-
-void QuicConnector::receive() {
-    boost::system::error_code ec;
-    std::size_t bytes_transferred = socket.read_some(boost::asio::buffer(receive_buffer.prepare(1024)), ec);
-    if (!ec) {
-        receive_buffer.commit(bytes_transferred);
-        std::istream is(&receive_buffer);
-        std::string data;
-        std::getline(is, data);
-
-        if (!data.empty()) {
-            std::lock_guard<std::mutex> lock(incomingChunksMutex);
-            auto incoming = incomingChunks.find(theStreamIdentifier());
-            if (incoming == incomingChunks.end()) {
-                auto incoming_pair = incomingChunks.insert(make_pair(theStreamIdentifier(), chunks()));
-                incoming = incoming_pair.first;
-            }
-            incoming->second.emplace_back(std::span<const char>(data.c_str(), data.size()));
-            std::cerr << "Received data: " << data << std::endl;
-        } else {
-            std::cerr << "Received empty data" << std::endl;
-        }
-    } else {
-        if (ec == boost::asio::error::operation_aborted) {
-            std::cerr << "Receive operation aborted" << std::endl;
-        } else if (ec == boost::asio::error::eof) {
-            std::cerr << "Connection closed by peer" << std::endl;
-        } else {
-            std::cerr << "Error in receive: " << ec.message() << std::endl;
-        }
-    }
 }
 
 void QuicConnector::check_deadline() {

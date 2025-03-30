@@ -25,11 +25,10 @@ public:
     }
     void resolveRequestStream(Request const &req, stream_callback_fn cb) override;
     bool processRequestStream() override;
-    pair<StreamIdentifier, Request> listenForResponseStream() override;
-    void setupResponseStream(stream_callback& response) override;
+    void registerRequestHandler(named_prepare_fn preparer) override;
+    void deregisterRequestHandler(string preparer_name) override;
+    uri_response_info prepareHandler(StreamIdentifier stream_id, const string_view& uri);
     bool processResponseStream() override;
-    void send();
-    void receive();
     void check_deadline();
     void listen(const string &local_name, const string& local_ip_addr, int local_port) override;
     void close() override;
@@ -37,7 +36,7 @@ public:
 
 private:
     StreamIdentifier theStreamIdentifier() {
-        return StreamIdentifier{false, false, 11, 42};
+        return StreamIdentifier({11}, 42);
     }
 
     void terminate() {
@@ -63,7 +62,6 @@ private:
     string server_name;
     boost::asio::ip::tcp::socket socket;
     boost::asio::ip::tcp::endpoint endpoint;
-    StreamIdentifier currentRequestIdentifier;
     boost::asio::deadline_timer timer;
     bool timed_out;
     boost::asio::streambuf receive_buffer;
@@ -76,7 +74,7 @@ private:
     request_resolutions requestResolutionQueue;
     stream_callbacks requestorQueue;
 
-    unhandled_response_queue unhandledQueue;
+    named_prepare_fns preparersStack;
     stream_callbacks responderQueue;
 
     stream_data_chunks incomingChunks;
@@ -84,7 +82,7 @@ private:
 
     mutex requestResolverMutex;
     mutex requestorQueueMutex;
-    mutex unhandledQueueMutex;
+    mutex preparerStackMutex;
     mutex responderQueueMutex;
     mutex incomingChunksMutex;
     mutex outgoingChunksMutex;

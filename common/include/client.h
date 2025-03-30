@@ -46,8 +46,10 @@
 
 using namespace ngtcp2;
 
+class Client;
+
 struct ClientStream {
-  ClientStream(const Request &req, int64_t stream_id);
+  ClientStream(const Request &req, int64_t stream_id, Client *handler);
   ~ClientStream();
 
   int open_file(const std::string_view &path);
@@ -62,9 +64,8 @@ struct ClientStream {
   } pri;
   int64_t stream_id;
   int fd;
+  Client *handler;
 };
-
-class Client;
 
 struct Endpoint {
   Address addr;
@@ -122,7 +123,7 @@ public:
   void set_remote_addr(const ngtcp2_addr &remote_addr);
 
   int setup_httpconn();
-  int submit_http_request(const ClientStream *stream);
+  int submit_http_request(const ClientStream *stream, bool live_stream);
   int recv_stream_data(uint32_t flags, int64_t stream_id,
                        std::span<const uint8_t> data);
   int acked_stream_data_offset(int64_t stream_id, uint64_t datalen);

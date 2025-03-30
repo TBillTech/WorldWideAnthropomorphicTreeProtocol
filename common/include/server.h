@@ -57,40 +57,45 @@ struct HTTPHeader {
 class Handler;
 struct FileEntry;
 
+struct StreamIdentifier;
+
 struct Stream {
-  Stream(int64_t stream_id, Handler *handler);
+    Stream(int64_t stream_id, Handler *handler);
 
-  int start_response(nghttp3_conn *conn);
-  std::pair<FileEntry, int> open_file(const std::string &path);
-  void map_file(const FileEntry &fe);
-  int send_status_response(nghttp3_conn *conn, unsigned int status_code,
-                           const std::vector<HTTPHeader> &extra_headers = {});
-  int send_redirect_response(nghttp3_conn *conn, unsigned int status_code,
-                             const std::string_view &path);
-  int64_t find_dyn_length(const std::string_view &path);
-  void http_acked_stream_data(uint64_t datalen);
+    int start_response(nghttp3_conn *conn);
+    std::pair<FileEntry, int> open_file(const std::string &path);
+    void map_file(const FileEntry &fe);
+    int send_status_response(nghttp3_conn *conn, unsigned int status_code,
+                            const std::vector<HTTPHeader> &extra_headers = {});
+    int send_redirect_response(nghttp3_conn *conn, unsigned int status_code,
+                                const std::string_view &path);
+    int64_t find_dyn_length(const std::string_view &path);
+    void http_acked_stream_data(uint64_t datalen);
+    StreamIdentifier getStreamIdentifier() const;
 
-  int64_t stream_id;
-  Handler *handler;
-  // uri stores the request URI/path, which is the target resource of the HTTP request.
-  std::string uri; // Example: https://www.example.com:443/path/to/resource?query=example#fragment
-  // authority stores the authority component of the request URI, typically the host and port.
-  std::string authority; // Example: www.example.com:443
-  // method is the HTTP method (e.g., GET, POST) of the request.
-  std::string method; // Example: GET
-  // status_resp_body stores the body of the HTTP response for status responses.
-  // It is used to send predefined status messages (e.g., 404 Not Found).
-  std::string status_resp_body; // Example: "404 Not Found"
-  // data is a pointer to the memory which maps file denoted by fd.
-  uint8_t *data;
-  // datalen is the length of mapped file by data.
-  uint64_t datalen;
-  // dynresp is true if dynamic data response is enabled.
-  bool dynresp;
-  // dyndataleft is the number of dynamic data left to send.
-  uint64_t dyndataleft;
-  // dynbuflen is the number of bytes in-flight.
-  uint64_t dynbuflen;
+    int64_t stream_id;
+    Handler *handler;
+    // uri stores the request URI/path, which is the target resource of the HTTP request.
+    std::string uri; // Example: https://www.example.com:443/path/to/resource?query=example#fragment
+    // authority stores the authority component of the request URI, typically the host and port.
+    std::string authority; // Example: www.example.com:443
+    // method is the HTTP method (e.g., GET, POST) of the request.
+    std::string method; // Example: GET
+    // status_resp_body stores the body of the HTTP response for status responses.
+    // It is used to send predefined status messages (e.g., 404 Not Found).
+    std::string status_resp_body; // Example: "404 Not Found"
+    // data is a pointer to the memory which maps file denoted by fd.
+    uint8_t *data;
+    // datalen is the length of mapped file by data.
+    uint64_t datalen;
+    // dynresp is true if dynamic data response is enabled.
+    bool dynresp;
+    // dyndataleft is the number of dynamic data left to send.
+    uint64_t dyndataleft;
+    // dynbuflen is the number of bytes in-flight.
+    uint64_t dynbuflen;
+    // live_stream is true if the stream length is undefined, and the stream is expected to continue indefinitely.
+    bool live_stream;
 };
 
 class Server;
@@ -127,7 +132,7 @@ public:
   void signal_write();
   int handshake_completed();
 
-  Server *server() const;
+  Server *server();
   int recv_stream_data(uint32_t flags, int64_t stream_id,
                        std::span<const uint8_t> data);
   int acked_stream_data_offset(int64_t stream_id, uint64_t datalen);
@@ -171,6 +176,7 @@ public:
                        std::span<const uint8_t> data, size_t gso_size);
   void start_wev_endpoint(const Endpoint &ep);
   int send_blocked_packet();
+  ngtcp2_cid const &get_scid() const { return scid_; }
 
 private:
   struct ev_loop *loop_;
@@ -206,9 +212,11 @@ private:
   } tx_;
 };
 
+class QuicListener;
+
 class Server {
 public:
-  Server(struct ev_loop *loop, TLSServerContext &tls_ctx);
+  Server(struct ev_loop *loop, TLSServerContext &tls_ctx, QuicListener &listener);
   ~Server();
 
   int init(const char *addr, const char *port);
@@ -250,6 +258,8 @@ public:
 
   void on_stateless_reset_regen();
 
+  QuicListener &listener() { return listener_; }
+
 private:
   std::unordered_map<ngtcp2_cid, Handler *> handlers_;
   struct ev_loop *loop_;
@@ -258,4 +268,5 @@ private:
   ev_signal sigintev_;
   ev_timer stateless_reset_regen_timer_;
   size_t stateless_reset_bucket_;
+  QuicListener &listener_;
 };

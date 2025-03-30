@@ -36,15 +36,18 @@ using namespace std;
 //
 // This design allows the server to efficiently manage multiple connections and streams, with each Handler object managing a single connection and each Stream object managing a single stream within that connection.
 
-struct StreamIdentifier {
-    bool is_internal;
-    bool is_idle;
+class StreamIdentifier {
+    public:
+    StreamIdentifier(ngtcp2_cid cid, int64_t stream_id) : cid(cid), stream_id(stream_id) {};
+    StreamIdentifier(StreamIdentifier const &other) : cid(other.cid), stream_id(other.stream_id) {};
+        
     // cid is not needed for client side, since the client will know the scid already, 
     // but is important for server side to identify the handler object associated with the connection.
     ngtcp2_cid cid; 
     // stream_id identifies which stream in the connection defines this request;
     // consecutive even numbers for client requests, consecutive odd numbers for server pushes (legacy)
-    uint64_t stream_id;
+    int64_t stream_id;
+
 
     bool operator<(const StreamIdentifier& other) const {
         using namespace ngtcp2;
@@ -54,39 +57,15 @@ struct StreamIdentifier {
         if (other.cid < cid) {
             return false;
         }
-        if (stream_id < other.stream_id) {
-            return true;
-        }
-        if (stream_id > other.stream_id) {
-            return false;
-        }
-        if (is_internal != other.is_internal) {
-            return is_internal < other.is_internal;
-        }
-        return is_idle < other.is_idle;
+        return stream_id < other.stream_id;
     }
 
     bool operator==(const StreamIdentifier& other) const {
         using namespace ngtcp2;
-        return is_internal == other.is_internal && is_idle == other.is_idle && cid == other.cid && stream_id == other.stream_id;
-    }
-
-    bool isInternal() const {
-        // To be internal, it is enough that the port number is 0, since there is no realistic use case for port 0
-        return is_internal;
-    }
-
-    bool isIdle() const {
-        return is_idle;
+        return cid == other.cid && stream_id == other.stream_id;
     }
 
     friend ostream& operator<<(ostream& os, const StreamIdentifier& si) {
-        // If the flags are set, then print them and ignore the ids:
-        if (si.is_internal) {
-            os << "Internal StreamIdentifier: is_internal=" << si.is_internal << ", is_idle=" << si.is_idle;
-            return os;
-        }
-        // Otherwise, ignore the flags and print the ids:
         using namespace ngtcp2;
         os << "StreamIdentifier: cid=" << si.cid << ", stream_id=" << si.stream_id;
         return os;
@@ -107,12 +86,16 @@ inline bool operator<(RequestCallback& lhs, RequestCallback& rhs) {
 }
 typedef vector<RequestCallback> request_resolutions;
 
-// On Server side, the incoming requests are first logged into the unhandled_response_queue (because it has no response callbacks yet)
-// Normally, the communication object will query the QUIC server object to get more information about the request.
-typedef vector<pair<StreamIdentifier, Request>> unhandled_response_queue;
-
 // And for processing of the stream data, the StreamIdentifier is attached to a callback function
 typedef pair<StreamIdentifier, stream_callback_fn> stream_callback;
+struct uri_response_info {
+    bool can_handle;
+    bool is_live_stream;
+    bool is_file;
+    size_t dyn_length;
+};
+
+typedef pair<uri_response_info, stream_callback> prepared_stream_callback;
 
 // While a round robin queue for load balancing is done (for now) with a simple vector.
 typedef vector<stream_callback> stream_callbacks;
@@ -121,10 +104,10 @@ typedef vector<stream_callback> stream_callbacks;
 // And prepared but not yet sent-on-the-wire data chunks can use the same mapping.
 typedef map<StreamIdentifier, chunks> stream_data_chunks;
 
-// There are some special case internal identified_request objects which encode non-network logic:
-// The IDLE_identified_request is used to indicate that the requestor_callback_streams is empty.
-extern StreamIdentifier IDLE_stream;
-extern pair<StreamIdentifier, Request> IDLE_stream_listener;
+// Define a callback function type for preparing stream callbacks
+using prepare_stream_callback_fn = function<prepared_stream_callback(const StreamIdentifier&, const std::string_view &)>;
+typedef pair<string, prepare_stream_callback_fn> named_prepare_fn;
+typedef vector<named_prepare_fn> named_prepare_fns;
 
 class Communication {
 public:
@@ -150,13 +133,11 @@ public:
     // HTTP3 IO thread flushes bytes from the "socket" send buffer to the wire.
     // Thus, the two public methods that the worker thread needs are listenForResponseStream and processResponseStream.
 
-    // The server (and sometimes the client) can receive a request on the wire, and then add this request to
-    // to the requestReceiveQueue.  To get the next request, the worker thread calls listenForResponseStream.
-    // For example, the server receives a request for asset Box1, and then adds this request to the requestReceiveQueue.
-    // There is no callback argument here, because sending the response asynchronously copies to the "socket" send queue.
-    virtual pair<StreamIdentifier, Request> listenForResponseStream() = 0;
-    // The server (and sometimes the client) can will then set up a response handler/callback for creating data chunks to send.
-    virtual void setupResponseStream(stream_callback& response) = 0;
+    // The server (and sometimes the client) can receive a request on the wire, and when it does, it needs to immediately 
+    // handle the incoming request by deciding if it is a normal file request, or maybe the wwatp protocol (for example).
+    // To do this, the user code needs to register a callback function to handle the request (which will be called from the protocol thread).
+    virtual void registerRequestHandler(named_prepare_fn preparer) = 0;
+    virtual void deregisterRequestHandler(string preparer_name) = 0;
     // The server (and sometimes client) can send a response asynchronously via this Communication class which does not queue.
     // For example, server send asset Box1 asynchronously.  Returns false if idle.
     virtual bool processResponseStream() = 0;

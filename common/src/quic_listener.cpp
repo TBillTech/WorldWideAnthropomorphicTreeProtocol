@@ -32,6 +32,8 @@
 using namespace ngtcp2;
 using namespace std::literals;
 
+// TODO: Fix LEGACY ISSUE (s)
+
 namespace
 {
     constexpr size_t NGTCP2_SV_SCIDLEN = 18;
@@ -59,7 +61,8 @@ Stream::Stream(int64_t stream_id, Handler *handler)
       datalen(0),
       dynresp(false),
       dyndataleft(0),
-      dynbuflen(0) {}
+      dynbuflen(0),
+      live_stream(false) {}
 
 namespace
 {
@@ -265,34 +268,24 @@ void Stream::map_file(const FileEntry &fe)
 
 int64_t Stream::find_dyn_length(const std::string_view &path)
 {
-    assert(path[0] == '/');
-
-    if (path.size() == 1)
+    // TODONE: Initialize the stream callbacks using the listener prepareHandler function
+    QuicListener &listener = handler->server()->listener();
+    auto response = listener.prepareHandler(getStreamIdentifier(), path);
+    if (!response.can_handle)
+    {
+        // If nothing can handle it, then pass it along to the file handler
+        return -1;
+    }
+    if (response.is_file)
     {
         return -1;
     }
-
-    uint64_t n = 0;
-
-    for (auto it = std::begin(path) + 1; it != std::end(path); ++it)
+    if (response.is_live_stream)
     {
-        if (*it < '0' || '9' < *it)
-        {
-            return -1;
-        }
-        auto d = *it - '0';
-        if (n > (((1ull << 62) - 1) - d) / 10)
-        {
-            return -1;
-        }
-        n = n * 10 + d;
-        if (n > config.max_dyn_length)
-        {
-            return -1;
-        }
+        live_stream = true;
+        return -1;
     }
-
-    return static_cast<int64_t>(n);
+    return response.dyn_length;
 }
 
 namespace
@@ -301,6 +294,7 @@ namespace
                             size_t veccnt, uint32_t *pflags, void *user_data,
                             void *stream_user_data)
     {
+        // TODO: Use the outgoingChunks queue instead of dyn_buf
         auto stream = static_cast<Stream *>(stream_user_data);
 
         vec[0].base = stream->data;
@@ -323,6 +317,7 @@ namespace
                                 nghttp3_vec *vec, size_t veccnt, uint32_t *pflags,
                                 void *user_data, void *stream_user_data)
     {
+        // TODO: Use the outgoingChunks queue instead of dyn_buf
         auto stream = static_cast<Stream *>(stream_user_data);
 
         ngtcp2_conn_info ci;
@@ -334,6 +329,7 @@ namespace
             return NGHTTP3_ERR_WOULDBLOCK;
         }
 
+        // This looks wrong if dyndataleft == -1, but note that it will get cast to infinity, and turn out correct.
         auto len =
             std::min(dyn_buf->size(), static_cast<size_t>(stream->dyndataleft));
 
@@ -341,7 +337,10 @@ namespace
         vec[0].len = len;
 
         stream->dynbuflen += len;
-        stream->dyndataleft -= len;
+        if (!stream->live_stream)
+        {
+            stream->dyndataleft -= len;
+        }
 
         if (stream->dyndataleft == 0)
         {
@@ -449,7 +448,7 @@ int Stream::send_redirect_response(nghttp3_conn *httpconn,
 
 int Stream::start_response(nghttp3_conn *httpconn)
 {
-    // TODO This should be handled by nghttp3
+    // LEGACY ISSUE This should be handled by nghttp3
     if (uri.empty() || method.empty())
     {
         return send_status_response(httpconn, 400);
@@ -467,7 +466,7 @@ int Stream::start_response(nghttp3_conn *httpconn)
     nghttp3_data_reader dr{};
     auto content_type = "text/plain"sv;
 
-    if (dyn_len == -1)
+    if ((!live_stream) && (dyn_len == -1))
     {
         auto path = config.htdocs + req.path;
         auto [fe, rv] = open_file(path);
@@ -531,6 +530,10 @@ int Stream::start_response(nghttp3_conn *httpconn)
     };
 
     size_t nvlen = 4;
+    if (live_stream) {
+        // Don't send content-length for live streams
+        nvlen = 3;
+    }
 
     std::string prival;
 
@@ -607,6 +610,11 @@ int Stream::start_response(nghttp3_conn *httpconn)
     }
 
     return 0;
+}
+
+StreamIdentifier Stream::getStreamIdentifier() const
+{
+    return StreamIdentifier(handler->get_scid(), stream_id);
 }
 
 namespace
@@ -1153,6 +1161,7 @@ namespace
     int http_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data,
                        size_t datalen, void *user_data, void *stream_user_data)
     {
+        // TODO: Add this to the incoming chunks queue, instead of just printing it out
         if (!config.quiet && !config.no_http_dump)
         {
             debug::print_http_data(stream_id, {data, datalen});
@@ -1334,7 +1343,7 @@ void Handler::http_acked_stream_data(Stream *stream, uint64_t datalen)
         if (auto rv = nghttp3_conn_resume_stream(httpconn_, stream->stream_id);
             rv != 0)
         {
-            // TODO Handle error
+            // LEGACY ISSUE Handle error
             std::cerr << "Server nghttp3_conn_resume_stream: " << nghttp3_strerror(rv)
                       << std::endl;
         }
@@ -2441,10 +2450,11 @@ int Handler::update_key(uint8_t *rx_secret, uint8_t *tx_secret,
     return 0;
 }
 
-Server *Handler::server() const { return server_; }
+Server *Handler::server() { return server_; }
 
 int Handler::on_stream_close(int64_t stream_id, uint64_t app_error_code)
 {
+    // TODO: Implement removing the closed streams from responderQueue in Handler::on_stream_close
     if (!config.quiet)
     {
         std::cerr << "Server QUIC stream " << stream_id << " closed" << std::endl;
@@ -2508,10 +2518,11 @@ void sigterminatehandler(struct ev_loop *loop, ev_async *watcher, int revents)
     ev_break(loop, EVBREAK_ALL);
 }
 
-Server::Server(struct ev_loop *loop, TLSServerContext &tls_ctx)
+Server::Server(struct ev_loop *loop, TLSServerContext &tls_ctx, QuicListener &listener)
     : loop_(loop),
       tls_ctx_(tls_ctx),
-      stateless_reset_bucket_(NGTCP2_STATELESS_RESET_BURST)
+      stateless_reset_bucket_(NGTCP2_STATELESS_RESET_BURST),
+      listener_(listener)
 {
     //ev_signal_init(&sigintev_, siginthandler, SIGINT);
 
@@ -3149,7 +3160,7 @@ void Server::read_pkt(Endpoint &ep, const Address &local_addr,
     auto conn = h->conn();
     if (ngtcp2_conn_in_closing_period(conn))
     {
-        // TODO do exponential backoff.
+        // LEGACY ISSUE do exponential backoff.
         if (h->send_conn_close() != 0)
         {
             remove(h);
@@ -3729,7 +3740,7 @@ Server::send_packet(Endpoint &ep, bool &no_gso, const ngtcp2_addr &local_addr,
         }
 
         std::cerr << "Server sendmsg: " << strerror(errno) << std::endl;
-        // TODO We have packet which is expected to fail to send (e.g.,
+        // LEGACY ISSUE We have packet which is expected to fail to send (e.g.,
         // path validation to old path).
         return {{}, NETWORK_ERR_OK};
     }
@@ -3950,23 +3961,38 @@ bool QuicListener::processRequestStream() {
     return true;
 }
 
-pair<StreamIdentifier, Request> QuicListener::listenForResponseStream(){
-    // This pops the request from the requestReceiveQueue, and returns it
-    lock_guard<std::mutex> lock(unhandledQueueMutex);
-    if (!unhandledQueue.empty()) {
-        pair<StreamIdentifier, Request> request = unhandledQueue.front();
-        unhandledQueue.erase(unhandledQueue.begin());
-        return request;
-    } else {
-        return IDLE_stream_listener;
-    }
+void QuicListener::registerRequestHandler(named_prepare_fn preparer)
+{
+    lock_guard<std::mutex> lock(preparerStackMutex);
+    preparersStack.push_back(preparer);
 }
 
-void QuicListener::setupResponseStream(stream_callback& response)
+void QuicListener::deregisterRequestHandler(string preparer_name)
 {
-    // This just adds the response to the responderQueue
-    lock_guard<std::mutex> lock(responderQueueMutex);
-    responderQueue.push_back(response);
+    lock_guard<std::mutex> lock(preparerStackMutex);
+    auto it = std::remove_if(preparersStack.begin(), preparersStack.end(),
+        [&preparer_name](const named_prepare_fn& preparer) {
+            return preparer.first == preparer_name;
+        });
+    preparersStack.erase(it, preparersStack.end());
+}
+
+uri_response_info QuicListener::prepareHandler(StreamIdentifier stream_id, const string_view& uri)
+{
+    lock_guard<std::mutex> lock(preparerStackMutex);
+    for (auto &preparer : preparersStack) {
+        auto response = preparer.second(theStreamIdentifier(), uri);
+        auto response_info = response.first;
+        if (response_info.can_handle) {
+            if (!response_info.is_file)
+            {
+                lock_guard<std::mutex> lock(responderQueueMutex);
+                responderQueue.push_back(response.second);
+            }
+            return response_info;
+        }
+    }
+    return {false, false, false, 0};
 }
 
 bool QuicListener::processResponseStream() {
@@ -4007,69 +4033,6 @@ bool QuicListener::processResponseStream() {
         return false;
     }
     return true;
-}
-
-void QuicListener::send() {
-    // lock and pop the first request from the newResponseQueue
-    outgoingChunksMutex.lock();
-    if (!outgoingChunks.empty()) {
-        chunks outgoing;
-        auto outgoing_pair = *(outgoingChunks.begin());
-        outgoing.swap(outgoing_pair.second);
-        StreamIdentifier outgoing_id = outgoing_pair.first;
-        outgoingChunks.erase(outgoingChunks.begin());
-        outgoingChunksMutex.unlock();
-        for (auto &chunk : outgoing) {
-            // send the response (this is hard coded to use the one socket rather than the identified_request info 
-            // because this TcpCommunication is only used for testing and architecture illustration)
-            string response_str(chunk.begin<const char>(), chunk.end<const char>());
-            boost::system::error_code ec;
-            boost::asio::write(socket, boost::asio::buffer(response_str + "\n"), ec);
-            if (ec) {
-                std::cerr << "Error sending response: " << ec.message() << std::endl;
-            } else {
-                if (is_server) {
-                    std::cout << "Server sent response chunk: " << outgoing_id << " ... " << response_str << std::endl;
-                } else {
-                    std::cout << "Client sent response chunk: " << outgoing_id << " ... " << response_str << std::endl;
-                }
-            }
-        }
-    } else {
-        outgoingChunksMutex.unlock();
-    }
-}
-
-void QuicListener::receive() {
-    boost::system::error_code ec;
-    std::size_t bytes_transferred = socket.read_some(boost::asio::buffer(receive_buffer.prepare(1024)), ec);
-    if (!ec) {
-        receive_buffer.commit(bytes_transferred);
-        std::istream is(&receive_buffer);
-        std::string data;
-        std::getline(is, data);
-
-        if (!data.empty()) {
-            std::lock_guard<std::mutex> lock(incomingChunksMutex);
-            auto incoming = incomingChunks.find(theStreamIdentifier());
-            if (incoming == incomingChunks.end()) {
-                auto incoming_pair = incomingChunks.insert(make_pair(theStreamIdentifier(), chunks()));
-                incoming = incoming_pair.first;
-            }
-            incoming->second.emplace_back(std::span<const char>(data.c_str(), data.size()));
-            std::cerr << "Received data: " << data << std::endl;
-        } else {
-            std::cerr << "Received empty data" << std::endl;
-        }
-    } else {
-        if (ec == boost::asio::error::operation_aborted) {
-            std::cerr << "Receive operation aborted" << std::endl;
-        } else if (ec == boost::asio::error::eof) {
-            std::cerr << "Connection closed by peer" << std::endl;
-        } else {
-            std::cerr << "Error in receive: " << ec.message() << std::endl;
-        }
-    }
 }
 
 void QuicListener::check_deadline()
@@ -4129,7 +4092,7 @@ void QuicListener::listen(const string &local_name, const string &local_ip_addr,
             exit(EXIT_FAILURE);
         }
 
-        Server s(loop, tls_ctx);
+        Server s(loop, tls_ctx, *this);
         auto port_str = std::to_string(config.port);
         if (s.init(local_ip_addr.c_str(), port_str.c_str()) != 0) {
             exit(EXIT_FAILURE);
