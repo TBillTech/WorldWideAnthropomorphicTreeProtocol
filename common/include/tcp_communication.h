@@ -79,10 +79,13 @@ private:
     stream_data_chunks incomingChunks;
     stream_data_chunks outgoingChunks;
 
+    stream_callbacks streamClosingQueue;
+
     mutex requestResolverMutex;
     mutex requestorQueueMutex;
     mutex preparerStackMutex;
     mutex responderQueueMutex;
     mutex incomingChunksMutex;
     mutex outgoingChunksMutex;
+    mutex streamClosingMutex;
 };

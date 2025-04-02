@@ -1364,6 +1364,7 @@ namespace
 
 void Handler::http_stream_close(int64_t stream_id, uint64_t app_error_code)
 {
+    // TODO: Implement removing the closed streams from responderQueue in Handler::on_stream_close
     auto it = streams_.find(stream_id);
     if (it == std::end(streams_))
     {
@@ -2454,7 +2455,6 @@ Server *Handler::server() { return server_; }
 
 int Handler::on_stream_close(int64_t stream_id, uint64_t app_error_code)
 {
-    // TODO: Implement removing the closed streams from responderQueue in Handler::on_stream_close
     if (!config.quiet)
     {
         std::cerr << "Server QUIC stream " << stream_id << " closed" << std::endl;

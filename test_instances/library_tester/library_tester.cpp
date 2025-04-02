@@ -141,7 +141,7 @@ int main() {
         if (!request.empty()) {
             static string goodbye_str = "Goodbye Client!";
             chunks response_chunks;
-            response_chunks.emplace_back(span<const char>(goodbye_str.c_str(), goodbye_str.size()));
+            response_chunks.emplace_back(0, span<const char>(goodbye_str.c_str(), goodbye_str.size()));
             return move(response_chunks);
         }
         chunks no_chunks;
@@ -184,7 +184,7 @@ int main() {
             cout << "Client is idle, so sending Hello Server! message" << endl;
             static string hello_str = "Hello Server!";
             chunks response_chunks;
-            response_chunks.emplace_back(span<const char>(hello_str.c_str(), hello_str.size()));
+            response_chunks.emplace_back(0, span<const char>(hello_str.c_str(), hello_str.size()));
             sentRequest = true;
             return move(response_chunks);
         }

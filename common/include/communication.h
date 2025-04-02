@@ -74,6 +74,47 @@ class StreamIdentifier {
 
 typedef vector<shared_span<> > chunks;
 
+struct generic_signal {
+    // generic_signal is not really decodec yet, so is in fact just a shared_span reference
+    generic_signal(shared_span<> &span) : signal_type(span.get_signal()), signal(span) {}
+    generic_signal(generic_signal const &other) :
+        signal_type(other.signal_type), signal(other.signal) {}
+    uint64_t signal_type;
+    shared_span<> const &signal;
+};
+
+struct pod_signal {
+    // pod_signal constructor from shared_span interprets the shared_span data as a pod_signal copy of itself
+    pod_signal(const shared_span<> &span) {
+        auto it = span.begin<pod_signal>();
+        auto other = *it;
+        signal = other.signal;
+        signal_code = other.signal_code;
+    }
+    pod_signal(uint64_t signal_value, uint64_t signal_code) : signal(signal_value), signal_code(signal_code) {}
+    pod_signal(pod_signal const &other) :
+        signal(other.signal), signal_code(other.signal_code) {}
+    uint64_t signal;
+    uint64_t signal_code;
+    static constexpr uint64_t GLOBAL_SIGNAL_TYPE = 1; 
+    static constexpr uint64_t SIGNAL_CLOSE_STREAM = 0x00000001;
+    static constexpr uint64_t SIGNAL_HEARTBEAT = 0x00000002;
+};
+
+// This is a helper function that looks at the shared_span signal value, and returns a pod_signal object if and only if the signal value is 1.
+// This should be compatible with templated signal decode functions that operate with different return types if the signal value is higher than 1.
+template<typename SIGNAL_TYPE>
+inline SIGNAL_TYPE get_signal(const shared_span<> &span) {
+    // non template specilializations return the generic_signal
+    return generic_signal(span);
+}
+
+template<>
+inline pod_signal get_signal<pod_signal>(const shared_span<> &span) {
+    // template specialization returns the pod_signal
+    return pod_signal(span);
+}
+
 // The stream callback function is generally used by both sides to process incoming and outgoing data for bidirectional streams.
 using stream_callback_fn = function<chunks(const StreamIdentifier&, chunks&)>;
 

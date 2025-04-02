@@ -43,6 +43,7 @@
 #include "network.h"
 #include "shared.h"
 #include "template.h"
+#include "shared_chunk.h"
 
 using namespace ngtcp2;
 
@@ -74,10 +75,13 @@ struct Endpoint {
   int fd;
 };
 
+class QuicConnector;
+class StreamIdentifier;
+
 class Client : public ClientBase {
 public:
   Client(struct ev_loop *loop, uint32_t client_chosen_version,
-         uint32_t original_version);
+         uint32_t original_version, QuicConnector &quic_connector);
   ~Client();
 
   int init(int fd, const Address &local_addr, const Address &remote_addr,
@@ -86,6 +90,9 @@ public:
 
   int on_read(const Endpoint &ep);
   int on_write();
+  void start_check_stream_timer();
+  void stop_check_stream_timer();
+  void check_and_create_streams();
   int write_streams();
   int feed_data(const Endpoint &ep, const sockaddr *sa, socklen_t salen,
                 const ngtcp2_pkt_info *pi, std::span<const uint8_t> data);
@@ -149,6 +156,13 @@ public:
 
   bool should_exit() const;
 
+  bool lock_outgoing_chunks(int64_t stream_id, nghttp3_vec *vec, size_t veccnt);
+  void unlock_chunks(nghttp3_vec *vec, size_t veccnt);
+  void shared_span_incr_rc(uint8_t *locked_ptr, shared_span<> &&to_lock);
+  void shared_span_decr_rc(uint8_t *locked_ptr);
+
+  void push_incoming_chunk(StreamIdentifier const& sid, std::span<uint8_t> const &chunk);
+
 private:
   std::vector<Endpoint> endpoints_;
   Address remote_addr_;
@@ -157,6 +171,7 @@ private:
   ev_timer change_local_addr_timer_;
   ev_timer key_update_timer_;
   ev_timer delay_stream_timer_;
+  ev_timer check_stream_timer_;
   ev_signal sigintev_;
   struct ev_loop *loop_;
   std::map<int64_t, std::unique_ptr<ClientStream>> streams_;
@@ -180,6 +195,8 @@ private:
   // confirmed.
   bool handshake_confirmed_;
   bool no_gso_;
+  QuicConnector &quic_connector_;
+  map<uint8_t *, shared_span<>> locked_chunks_;
 
   struct {
     bool send_blocked;

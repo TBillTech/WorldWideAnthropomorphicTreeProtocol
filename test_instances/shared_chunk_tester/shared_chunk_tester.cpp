@@ -123,7 +123,7 @@ bool test_shared_span_append() {
 
 // The following is the same as the above test, except use the span constructor with the full 2400 length memoryBlock0
 bool test_shared_span_copy_more() {
-    shared_span<> sspan(std::span<const uint8_t>(memoryBlock0, 2400));
+    shared_span<> sspan(0, std::span<const uint8_t>(memoryBlock0, 2400));
     // Now create two subspans from the appended_span and check that they are the same as the original data
     auto restricted_span = sspan.restrict(make_pair(0, 1200));
     auto remaining_span = sspan.restrict(make_pair(1200, 1200));

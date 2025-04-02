@@ -68,21 +68,22 @@ public:
     typedef ChunkType chunk_type;
     static constexpr size_t chunk_size = ChunkType::chunk_size;
 
-    shared_span(const shared_span &other) : chunks(other.chunks) {
+    shared_span(const shared_span &other) : chunks(other.chunks), signal(other.signal) {
     }
     // the default constructor uses the memory pool to allocate a new chunk (the memory pool is parameterized by the chunk type)
-    shared_span(bool allocate = false) {
+    shared_span(uint64_t signal_value, bool allocate = false) : signal(signal_value) {
         if (allocate) {
             auto chunk = memory_pool.allocate<ChunkType>();
             chunks.emplace_back(shared_ptr<ChunkType>(chunk, [](ChunkType* ptr) { memory_pool.deallocate(ptr); }), make_pair(0, ChunkType::chunk_size));
         }
     }
     // Move constructor
-    shared_span(shared_span &&other) : chunks(move(other.chunks)) {
+    shared_span(shared_span &&other) : chunks(move(other.chunks)), signal(other.signal) {
+        // No need to clear other.chunks here, because the object moved should shortly go out of scope
     }
     // Constructor that takes a span of bytes and copies them into the shared_span
     template <typename PODType>
-    shared_span(const std::span<PODType> data) {
+    shared_span(uint64_t signal_value, const std::span<PODType> data) : signal(signal_value) {
         size_t byte_offset = 0;
         while (byte_offset < data.size()*sizeof(PODType)) {
             if (chunks.empty() || chunks.back().second.second == chunks.back().first->chunk_size) {
@@ -96,6 +97,12 @@ public:
             last_chunk.second.second += copy_size;
             byte_offset += copy_size;
         }
+    }
+
+    constexpr shared_span<ChunkType>& operator=(const shared_span<ChunkType>&& other) {
+        chunks = move(other.chunks);
+        signal = other.signal;
+        return *this;
     }
 
     shared_span restrict(pair<size_t, size_t> range) const {
@@ -147,6 +154,15 @@ public:
         return data_offset;
     }
 
+    // Method to set the signal value (use with caution)
+    void set_signal(uint64_t signal_value) {
+        signal = signal_value;
+    }
+    // Method to get the signal value
+    uint64_t get_signal() const {
+        return signal;
+    }
+
     // Warning, this should ONLY be used if the shared_span is kept alive, as the underlying chunk will be deallocated when the last shared_span goes out of scope.
     // This is useful for passing to compatible libraries.
     ChunkType* use_chunk() const {
@@ -157,6 +173,10 @@ public:
     }
 
     shared_span append(shared_span &other) const {
+        // raise an exception if the signals are not both 0
+        if (signal != 0 && other.signal != 0) {
+            throw invalid_argument("Cannot append two shared_spans with non-zero signals");
+        }
         shared_span new_span(*this);
         new_span.chunks.insert(new_span.chunks.end(), other.chunks.begin(), other.chunks.end());
         return move(new_span);
@@ -305,7 +325,7 @@ public:
         }
         shared_span<ChunkType> to_span() const {
             // Create a new span, starting with the chunk_index and update the first chunk with via the span_index
-            shared_span new_span;
+            shared_span new_span(0);
             new_span.chunks.insert(new_span.chunks.end(), chunks.begin() + chunk_index, chunks.end());
             // Then restrict it to the span_index
             shared_span restricted_span = new_span.restrict(make_pair(span_index, new_span.size()));
@@ -447,7 +467,7 @@ public:
         }
         shared_span<ChunkType> to_span() const {
             // Create a new span, starting with the chunk_index and update the first chunk with via the span_index
-            shared_span new_span;
+            shared_span new_span(0);
             new_span.chunks.insert(new_span.chunks.end(), chunks.begin() + chunk_index, chunks.end());
             // Then restrict it to the span_index
             shared_span restricted_span = new_span.restrict(make_pair(span_index, new_span.size()));
@@ -527,4 +547,5 @@ public:
     }
 private:
     vector<pair<shared_ptr<ChunkType>, pair<size_t, size_t>>> chunks;
+    uint64_t signal; // If non-zero, indicates that this shared_span is a signal, and cannot be combined with other shared_spans
 };
