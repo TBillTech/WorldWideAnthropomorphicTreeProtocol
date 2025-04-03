@@ -40,8 +40,9 @@ int main() {
     // set to pool size for the type UDPChunk to 4 GB
     memory_pool.setPoolSize<UDPChunk>(static_cast<uint64_t>(4) * 1024 * 1024 * 1024 / UDPChunk::chunk_size);
 
-    //string protocol = "QUIC";
-    string protocol = "TCP";
+    string protocol = "QUIC";
+    //string protocol = "TCP";
+    bool zeroRTT_test = false;
     if(protocol == "QUIC")
     {
         auto data_path = realpath("../test_instances/data/", nullptr);
@@ -104,6 +105,7 @@ int main() {
             .mime_types_file = "/etc/mime.types",
             .version = NGTCP2_PROTO_VER_V1,
             .timeout = 30 * NGTCP2_SECONDS,
+            .early_response = true,
             .session_file = move(session_filename),
             .tp_file = move(tp_filename),
             .keylog_filename = move(keylog_filename),
@@ -141,7 +143,7 @@ int main() {
         if (!request.empty()) {
             static string goodbye_str = "Goodbye Client!";
             chunks response_chunks;
-            response_chunks.emplace_back(0, span<const char>(goodbye_str.c_str(), goodbye_str.size()));
+            response_chunks.emplace_back(global_no_signal, span<const char>(goodbye_str.c_str(), goodbye_str.size()));
             return move(response_chunks);
         }
         chunks no_chunks;
@@ -158,7 +160,7 @@ int main() {
     this_thread::sleep_for(chrono::microseconds(100));
     cout << "In Main: Server should have registered request handler" << endl;
 
-    if (protocol == "QUIC")
+    if ((zeroRTT_test) && (protocol == "QUIC"))
     {
         auto prior_client_communication = createClientCommunication(protocol, io_context);
         prior_client_communication->connect("localhost", "127.0.0.1", 12345);
@@ -177,14 +179,14 @@ int main() {
     this_thread::sleep_for(chrono::milliseconds(100));
     cout << "In Main: Client should be started up" << endl;
 
-    auto theRequest = Request{.scheme = "wwatp://", .authority = "localhost", .path = "/test"};
+    auto theRequest = Request{.scheme = "https", .authority = "localhost", .path = "/test"};
     bool sentRequest = false;
     auto theClientHandler = [&sentRequest](const StreamIdentifier& stream_id, chunks &response) {
         if (response.empty() && !sentRequest) {
             cout << "Client is idle, so sending Hello Server! message" << endl;
             static string hello_str = "Hello Server!";
             chunks response_chunks;
-            response_chunks.emplace_back(0, span<const char>(hello_str.c_str(), hello_str.size()));
+            response_chunks.emplace_back(global_no_signal, span<const char>(hello_str.c_str(), hello_str.size()));
             sentRequest = true;
             return move(response_chunks);
         }
@@ -197,7 +199,7 @@ int main() {
     };
     client_communication->resolveRequestStream(theRequest, theClientHandler);
 
-    int wait_loops = 10;
+    int wait_loops = 100;
     if (const char* env_p = std::getenv("DEBUG")) {
         if (std::string(env_p) == "1") {
             wait_loops = 100;
@@ -207,21 +209,21 @@ int main() {
     // Service the client communication for a while to allow the client to send the request.
     for(int i = 0; i < wait_loops; i++) {
         client_communication->processRequestStream();
-        this_thread::sleep_for(chrono::milliseconds(10));
+        this_thread::sleep_for(chrono::milliseconds(20));
     }
     cout << "In Main: Client should have sent request and initialized callback" << endl;
 
     // Service the server communication for a while to allow the server to send the response.
     for(int i = 0; i < wait_loops; i++) {
         server_communication->processResponseStream();
-        this_thread::sleep_for(chrono::milliseconds(10));
+        this_thread::sleep_for(chrono::milliseconds(20));
     }
     cout << "In Main: Server should have sent response" << endl;
 
     // Service the client communication for a while to allow the client to process the response.
     for(int i = 0; i < wait_loops; i++) {
         client_communication->processRequestStream();
-        this_thread::sleep_for(chrono::milliseconds(10));
+        this_thread::sleep_for(chrono::milliseconds(20));
     }
 
     cout << "In Main: Client should have processed response" << endl;

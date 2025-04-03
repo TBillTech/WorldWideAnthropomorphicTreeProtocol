@@ -29,6 +29,8 @@ using namespace std;
 
 void sigterminatehandler(struct ev_loop *loop, ev_async *watcher, int revents);
 
+class Client;
+
 class QuicConnector : public Communication {
 public:
     QuicConnector(boost::asio::io_context& io_context, string private_key_file, string cert_file)
@@ -42,7 +44,7 @@ public:
         terminate();
     }
     void resolveRequestStream(Request const &req, stream_callback_fn cb) override;
-    Request setupRequest(ngtcp2_cid const &cid, int64_t stream_id);
+    Request setupRequest(StreamIdentifier sid);
     bool processRequestStream() override;
     void registerRequestHandler(named_prepare_fn preparer) override;
     void deregisterRequestHandler(string preparer_name) override;
@@ -55,6 +57,7 @@ public:
         lock_guard<std::mutex> lock(requestResolverMutex);
         return requestResolutionQueue.size();
     }
+
     void finishRequest(StreamIdentifier const& sid, uint64_t app_error_code) {
         auto it = std::find_if(requestorQueue.begin(), requestorQueue.end(), 
                        [&sid](const auto& pair) { return pair.first == sid; });
@@ -93,15 +96,27 @@ public:
         }
         return move(to_return);
     }
+    size_t sizeOfNOutgoingChunks(StreamIdentifier const& sid, size_t n) {
+        lock_guard<std::mutex> lock(outgoingChunksMutex);
+        auto outgoing = outgoingChunks.find(sid);
+        size_t size = 0;
+        if (outgoing != outgoingChunks.end()) {
+            for (auto it = outgoing->second.begin(); it != outgoing->second.begin() + std::min(n, outgoing->second.size()); ++it) {
+                auto& chunk = *it;
+                size += chunk.size()+chunk.get_signal_size();
+            }
+        }
+        return size;
+    }
     void pushIncomingChunk(StreamIdentifier const& sid, std::span<uint8_t> const &chunk)
     {
         lock_guard<std::mutex> lock(incomingChunksMutex);
         auto incoming = incomingChunks.find(sid);
         if (incoming == incomingChunks.end()) {
             auto inserted = incomingChunks.insert(make_pair(sid, chunks()));
-            inserted.first->second.emplace_back(0, chunk);
+            inserted.first->second.emplace_back(chunk);
         } else {
-            incoming->second.emplace_back(0, chunk);
+            incoming->second.emplace_back(chunk);
         }
     }
 
@@ -125,6 +140,7 @@ private:
 
     boost::asio::io_context& io_context;
     struct ev_loop* loop;
+    Client* client;
     ev_async async_terminate;
     string private_key_file;
     string cert_file;

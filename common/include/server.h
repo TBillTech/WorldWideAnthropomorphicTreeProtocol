@@ -43,6 +43,7 @@
 #include "network.h"
 #include "shared.h"
 #include "util.h"
+#include "shared_chunk.h"
 
 using namespace ngtcp2;
 
@@ -57,7 +58,7 @@ struct HTTPHeader {
 class Handler;
 struct FileEntry;
 
-struct StreamIdentifier;
+class StreamIdentifier;
 
 struct Stream {
     Stream(int64_t stream_id, Handler *handler);
@@ -72,6 +73,8 @@ struct Stream {
     int64_t find_dyn_length(const std::string_view &path);
     void http_acked_stream_data(uint64_t datalen);
     StreamIdentifier getStreamIdentifier() const;
+    bool isFinished() const { return finished; }
+    void setFinished() { finished = true; }
 
     int64_t stream_id;
     Handler *handler;
@@ -96,6 +99,7 @@ struct Stream {
     uint64_t dynbuflen;
     // live_stream is true if the stream length is undefined, and the stream is expected to continue indefinitely.
     bool live_stream;
+    bool finished;
 };
 
 class Server;
@@ -178,6 +182,17 @@ public:
   int send_blocked_packet();
   ngtcp2_cid const &get_scid() const { return scid_; }
 
+  bool lock_outgoing_chunks(int64_t stream_id, nghttp3_vec *vec, size_t veccnt);
+  size_t get_pending_chunks_size(int64_t stream_id, size_t veccnt);
+  void unlock_chunks(nghttp3_vec *vec, size_t veccnt);
+  void shared_span_incr_rc(uint8_t *locked_ptr, shared_span<> &&to_lock);
+  void shared_span_decr_rc(uint8_t *locked_ptr);
+
+  void push_incoming_chunk(StreamIdentifier const& sid, std::span<uint8_t> const &chunk);
+
+  StreamIdentifier getStreamIdentifier(int64_t stream_id) const;
+  void writecb_start();
+
 private:
   struct ev_loop *loop_;
   Server *server_;
@@ -194,6 +209,7 @@ private:
   // nkey_update_ is the number of key update occurred.
   size_t nkey_update_;
   bool no_gso_;
+  map<uint8_t *, shared_span<>> locked_chunks_;
 
   struct {
     bool send_blocked;
@@ -259,6 +275,8 @@ public:
   void on_stateless_reset_regen();
 
   QuicListener &listener() { return listener_; }
+
+  void writecb_start(StreamIdentifier sid);
 
 private:
   std::unordered_map<ngtcp2_cid, Handler *> handlers_;

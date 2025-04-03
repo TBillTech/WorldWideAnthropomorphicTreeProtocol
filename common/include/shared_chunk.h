@@ -62,47 +62,111 @@ PODType pod_from_chunk(typename std::remove_const<PODType>::type &result, vector
     return result;
 }
 
+struct int_signal {
+    int_signal() : signal_type(GLOBAL_SIGNAL_TYPE), signal(0), signal_code(0) {}
+    int_signal(uint64_t signal_value, uint64_t signal_code) 
+        : signal_type(GLOBAL_SIGNAL_TYPE), signal(signal_value), signal_code(signal_code) {}
+    int_signal(int_signal const &other) 
+        : signal_type(GLOBAL_SIGNAL_TYPE), signal(other.signal), signal_code(other.signal_code) {}
+    int_signal const &operator=(int_signal const &other) {
+        signal = other.signal;
+        signal_code = other.signal_code;
+        return *this;
+    }
+    const uint64_t signal_type = GLOBAL_SIGNAL_TYPE;
+    uint64_t signal;
+    uint64_t signal_code;
+    static constexpr uint64_t GLOBAL_SIGNAL_TYPE = 1; 
+    static constexpr uint64_t SIGNAL_CLOSE_STREAM = 0x00000001;
+    static constexpr uint64_t SIGNAL_HEARTBEAT = 0x00000002;
+    static constexpr uint64_t SIGNAL_PROTOCOL_FORCED_PACKET = 0x00000003;
+};
+
+struct no_signal {
+    static constexpr uint64_t GLOBAL_SIGNAL_TYPE = 0;
+    const uint64_t signal_type = GLOBAL_SIGNAL_TYPE;
+};
+
+extern no_signal global_no_signal;
+
 template<class ChunkType = UDPChunk>
 class shared_span {
 public:
     typedef ChunkType chunk_type;
     static constexpr size_t chunk_size = ChunkType::chunk_size;
 
-    shared_span(const shared_span &other) : chunks(other.chunks), signal(other.signal) {
+    shared_span(const shared_span &other) : chunks(other.chunks), signal_type(other.signal_type) {
     }
     // the default constructor uses the memory pool to allocate a new chunk (the memory pool is parameterized by the chunk type)
-    shared_span(uint64_t signal_value, bool allocate = false) : signal(signal_value) {
+    template <typename SignalType = no_signal>
+    shared_span(const SignalType signal, bool allocate) : signal_type(signal.signal_type) {
+        if ((signal_type != 0) && (allocate == false)) {
+            throw invalid_argument("Cannot create a shared_span with a meaningful signal_type and no allocation");
+        }
         if (allocate) {
-            auto chunk = memory_pool.allocate<ChunkType>();
-            chunks.emplace_back(shared_ptr<ChunkType>(chunk, [](ChunkType* ptr) { memory_pool.deallocate(ptr); }), make_pair(0, ChunkType::chunk_size));
+            append_chunk_with_signal(signal);
+            // The point of using this constructor is to allocate the maximum possible amount of space (int the chunk), 
+            // and to mark the chunk as ranging from the end of the signal to the end of the chunk.
+            // However, append_chunk_with_signal will set the chunk range to just cover the signal only.
+            chunks.back().second.second = ChunkType::chunk_size - chunks.back().second.first;
         }
     }
     // Move constructor
-    shared_span(shared_span &&other) : chunks(move(other.chunks)), signal(other.signal) {
+    shared_span(shared_span &&other) : chunks(move(other.chunks)), signal_type(other.signal_type) {
         // No need to clear other.chunks here, because the object moved should shortly go out of scope
     }
     // Constructor that takes a span of bytes and copies them into the shared_span
-    template <typename PODType>
-    shared_span(uint64_t signal_value, const std::span<PODType> data) : signal(signal_value) {
+    template <typename PODType, typename SignalType = no_signal>
+    shared_span(const SignalType signal, const std::span<PODType> data) : signal_type(signal.signal_type) {
         size_t byte_offset = 0;
+        append_chunk_with_signal(signal);
         while (byte_offset < data.size()*sizeof(PODType)) {
-            if (chunks.empty() || chunks.back().second.second == chunks.back().first->chunk_size) {
-                auto chunk = memory_pool.allocate<ChunkType>();
-                chunks.emplace_back(shared_ptr<ChunkType>(chunk, [](ChunkType* ptr) { memory_pool.deallocate(ptr); }), make_pair(0, 0));
+            if ((chunks.back().second.first + chunks.back().second.second) == ChunkType::chunk_size) {
+                append_chunk_with_no_signal();
             }
             auto& last_chunk = chunks.back();
-            size_t chunk_space = last_chunk.first->chunk_size - last_chunk.second.second;
+            size_t chunk_space = ChunkType::chunk_size - last_chunk.second.first - last_chunk.second.second;
             size_t copy_size = min(chunk_space, (data.size() * sizeof(PODType) - byte_offset));
-            memcpy(last_chunk.first->data + last_chunk.second.second, reinterpret_cast<const uint8_t*>(data.data()) + byte_offset, copy_size);
+            memcpy(last_chunk.first->data + last_chunk.second.first + last_chunk.second.second, reinterpret_cast<const uint8_t*>(data.data()) + byte_offset, copy_size);
             last_chunk.second.second += copy_size;
             byte_offset += copy_size;
+        }
+    }
+    shared_span(const span<const uint8_t> data)
+    : shared_span(move(create_from_data(data))) {}
+
+    static shared_span create_from_data(const span<const uint8_t> data) {
+        uint64_t signal_type = *reinterpret_cast<const uint64_t*>(data.data());
+        switch (signal_type) {
+            case no_signal::GLOBAL_SIGNAL_TYPE: {
+                shared_span span(*reinterpret_cast<const no_signal*>(data.data()), data.subspan(sizeof(no_signal)));
+                return move(span);
+            }
+            case int_signal::GLOBAL_SIGNAL_TYPE: {
+                shared_span span(*reinterpret_cast<const int_signal*>(data.data()), data.subspan(sizeof(int_signal)));
+                return move(span);
+            }
+            default:
+                throw invalid_argument("Unknown signal type");
         }
     }
 
     constexpr shared_span<ChunkType>& operator=(const shared_span<ChunkType>&& other) {
         chunks = move(other.chunks);
-        signal = other.signal;
+        signal_type = other.signal_type;
         return *this;
+    }
+
+    template <typename SignalType = no_signal>
+    void append_chunk_with_signal(SignalType signal) {
+        auto chunk = memory_pool.allocate<ChunkType>();
+        // The signal is not considered to be part of the chunk range, but chunks always have at minimum a no_signal embedded in them.
+        chunks.emplace_back(shared_ptr<ChunkType>(chunk, [](ChunkType* ptr) { memory_pool.deallocate(ptr); }), make_pair(sizeof(SignalType), 0));
+        memcpy(chunks.back().first->data, &signal, sizeof(SignalType));
+    }
+
+    void append_chunk_with_no_signal() {
+        append_chunk_with_signal(global_no_signal);
     }
 
     shared_span restrict(pair<size_t, size_t> range) const {
@@ -121,8 +185,8 @@ public:
             }
             if (restricted_start >= chunk.second.second) {
                 // The restricted range is not in this chunk
-                new_span.chunks.erase(new_span.chunks.begin());
                 restricted_start -= chunk.second.second;
+                new_span.chunks.erase(new_span.chunks.begin());
                 continue;
             }
             // The restricted range starts in this chunk, but extends into the next chunk
@@ -138,6 +202,7 @@ public:
 
     // Method to copy a span of bytes into the shared_span.  Will overwrite data, but NEVER exceed the bounds of the span.
     // Will return the number of bytes written to the span.
+    // This should only be used for testing (for example in shared_chunk_tester).  This will not alter the signals in the chunks.
     size_t copy_from_span(std::span<const uint8_t> data) const {
         size_t data_offset = 0;
         size_t current_chunk = 0;
@@ -154,13 +219,30 @@ public:
         return data_offset;
     }
 
-    // Method to set the signal value (use with caution)
-    void set_signal(uint64_t signal_value) {
-        signal = signal_value;
-    }
-    // Method to get the signal value
-    uint64_t get_signal() const {
+    template <typename SignalType>
+    SignalType get_signal() const {
+        if (chunks.empty()) {
+            throw invalid_argument("No signal in the shared_span");
+        }
+        SignalType signal;
+        memcpy(&signal, chunks.front().first->data, sizeof(SignalType));
         return signal;
+    }
+    uint64_t get_signal_type() const {
+        return signal_type;
+    }
+    uint64_t get_signal_size() const {
+        if (chunks.empty()) {
+            return 0;
+        }
+        switch (signal_type) {
+            case no_signal::GLOBAL_SIGNAL_TYPE:
+                return sizeof(no_signal);
+            case int_signal::GLOBAL_SIGNAL_TYPE:
+                return sizeof(int_signal);
+            default:
+                throw invalid_argument("Unknown signal type");
+        }
     }
 
     // Warning, this should ONLY be used if the shared_span is kept alive, as the underlying chunk will be deallocated when the last shared_span goes out of scope.
@@ -172,11 +254,14 @@ public:
         return chunks[0].first.get();
     }
 
-    shared_span append(shared_span &other) const {
-        // raise an exception if the signals are not both 0
-        if (signal != 0 && other.signal != 0) {
-            throw invalid_argument("Cannot append two shared_spans with non-zero signals");
+    uint64_t use_chunk_size() const {
+        if (chunks.size() != 1) {
+            throw invalid_argument("use_chunk_size can only be called on a shared_span with one chunk");
         }
+        return chunks[0].second.second + get_signal_size();
+    }
+
+    shared_span append(shared_span &other) const {
         shared_span new_span(*this);
         new_span.chunks.insert(new_span.chunks.end(), other.chunks.begin(), other.chunks.end());
         return move(new_span);
@@ -467,10 +552,13 @@ public:
         }
         shared_span<ChunkType> to_span() const {
             // Create a new span, starting with the chunk_index and update the first chunk with via the span_index
-            shared_span new_span(0);
+            shared_span new_span(global_no_signal, false);
             new_span.chunks.insert(new_span.chunks.end(), chunks.begin() + chunk_index, chunks.end());
-            // Then restrict it to the span_index
-            shared_span restricted_span = new_span.restrict(make_pair(span_index, new_span.size()));
+            new_span.signal_type = reinterpret_cast<uint64_t*>(new_span.chunks.begin()->first->data)[0];
+            // Then restrict it to the span_index, which is measured from the absolute start of the chunk
+            // so in fact it needs to skip over the signal size for the chunk
+            size_t signal_size = new_span.get_signal_size();
+            shared_span restricted_span = new_span.restrict(make_pair(span_index-signal_size, new_span.size()));
             return move(restricted_span);
         }
         // Conversion operator to const_iterator
@@ -547,5 +635,6 @@ public:
     }
 private:
     vector<pair<shared_ptr<ChunkType>, pair<size_t, size_t>>> chunks;
-    uint64_t signal; // If non-zero, indicates that this shared_span is a signal, and cannot be combined with other shared_spans
+    uint64_t signal_type; // If non-zero, indicates that this shared_span is a signal_type, and cannot be combined with other shared_spans
 };
+

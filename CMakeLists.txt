@@ -59,6 +59,7 @@ include_directories(
 # Add common source files
 set(COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/common/src/memory_pool.cpp
+    ${PROJECT_SOURCE_DIR}/common/src/shared_chunk.cpp
     ${PROJECT_SOURCE_DIR}/common/src/tcp_communication.cpp
     ${PROJECT_SOURCE_DIR}/common/src/quic_listener.cpp
     ${PROJECT_SOURCE_DIR}/common/src/quic_connector.cpp

@@ -194,7 +194,7 @@ void TcpCommunication::receive() {
                 auto incoming_pair = incomingChunks.insert(make_pair(theStreamIdentifier(), chunks()));
                 incoming = incoming_pair.first;
             }
-            incoming->second.emplace_back(0, std::span<const char>(data.c_str(), data.size()));
+            incoming->second.emplace_back(global_no_signal, span<const char>(data.c_str(), data.size()));
             std::cerr << "Received data: " << data << std::endl << flush;
         } else {
             std::cerr << "Received empty data" << std::endl;

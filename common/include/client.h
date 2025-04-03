@@ -48,12 +48,17 @@
 using namespace ngtcp2;
 
 class Client;
+class StreamIdentifier;
 
 struct ClientStream {
   ClientStream(const Request &req, int64_t stream_id, Client *handler);
   ~ClientStream();
 
   int open_file(const std::string_view &path);
+
+  StreamIdentifier getStreamIdentifier() const;
+  bool isFinished() const { return finished; }
+  void setFinished() { finished = true; }
 
   // Example URI: "https://www.example.com:443/path/to/resource?query=example#fragment"
   std::string_view scheme;  // Example: "https"
@@ -66,6 +71,7 @@ struct ClientStream {
   int64_t stream_id;
   int fd;
   Client *handler;
+  bool finished;
 };
 
 struct Endpoint {
@@ -76,7 +82,6 @@ struct Endpoint {
 };
 
 class QuicConnector;
-class StreamIdentifier;
 
 class Client : public ClientBase {
 public:
@@ -157,11 +162,16 @@ public:
   bool should_exit() const;
 
   bool lock_outgoing_chunks(int64_t stream_id, nghttp3_vec *vec, size_t veccnt);
+  size_t get_pending_chunks_size(int64_t stream_id, size_t veccnt);
   void unlock_chunks(nghttp3_vec *vec, size_t veccnt);
   void shared_span_incr_rc(uint8_t *locked_ptr, shared_span<> &&to_lock);
   void shared_span_decr_rc(uint8_t *locked_ptr);
 
   void push_incoming_chunk(StreamIdentifier const& sid, std::span<uint8_t> const &chunk);
+
+  StreamIdentifier getStreamIdentifier(int64_t stream_id) const;
+
+  void writecb_start();
 
 private:
   std::vector<Endpoint> endpoints_;

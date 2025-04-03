@@ -11,6 +11,8 @@ using namespace std;
 
 void sigterminatehandler(struct ev_loop *loop, ev_async *watcher, int revents);
 
+class Server;
+
 class QuicListener : public Communication {
 public:
     QuicListener(boost::asio::io_context& io_context, string private_key_file, string cert_file)
@@ -34,11 +36,63 @@ public:
     void close() override;
     void connect(const string &peer_name, const string& peer_ip_addr, int peer_port) override;
 
-private:
-    StreamIdentifier theStreamIdentifier() {
-        return StreamIdentifier({11}, 42);
+    void receiveSignal(StreamIdentifier const& sid, shared_span<> && signal) {
+        lock_guard<std::mutex> lock(incomingChunksMutex);
+        auto outgoing = incomingChunks.find(sid);
+        if (outgoing == incomingChunks.end()) {
+            auto inserted = incomingChunks.insert(make_pair(sid, chunks()));
+            inserted.first->second.emplace_back(std::move(signal)); // Move the signal
+        } else {
+            outgoing->second.emplace_back(std::move(signal)); // Move the signal
+        }
     }
 
+    chunks popNOutgoingChunks(StreamIdentifier const& sid, size_t n) {
+        lock_guard<std::mutex> lock(outgoingChunksMutex);
+        auto outgoing = outgoingChunks.find(sid);
+        chunks to_return;
+
+        if (outgoing != outgoingChunks.end()) {
+            // Determine how many chunks to move (up to n or the size of outgoing->second)
+            size_t count = std::min(n, outgoing->second.size());
+    
+            // Move the first `count` elements from outgoing->second to to_return
+            auto begin = outgoing->second.begin();
+            auto end = std::next(begin, count);
+            to_return.insert(to_return.end(),
+                             std::make_move_iterator(begin),
+                             std::make_move_iterator(end));
+    
+            // Erase the moved elements from outgoing->second
+            outgoing->second.erase(begin, end);
+        }
+        return move(to_return);
+    }
+    size_t sizeOfNOutgoingChunks(StreamIdentifier const& sid, size_t n) {
+        lock_guard<std::mutex> lock(outgoingChunksMutex);
+        auto outgoing = outgoingChunks.find(sid);
+        size_t size = 0;
+        if (outgoing != outgoingChunks.end()) {
+            for (auto it = outgoing->second.begin(); it != outgoing->second.begin() + std::min(n, outgoing->second.size()); ++it) {
+                auto& chunk = *it;
+                size += chunk.size()+chunk.get_signal_size();
+            }
+        }
+        return size;
+    }
+    void pushIncomingChunk(StreamIdentifier const& sid, std::span<uint8_t> const &chunk)
+    {
+        lock_guard<std::mutex> lock(incomingChunksMutex);
+        auto incoming = incomingChunks.find(sid);
+        if (incoming == incomingChunks.end()) {
+            auto inserted = incomingChunks.insert(make_pair(sid, chunks()));
+            inserted.first->second.emplace_back(chunk);
+        } else {
+            incoming->second.emplace_back(chunk);
+        }
+    }
+
+private:
     void terminate() {
         // Set the terminate flag
         terminate_.store(true);
@@ -56,6 +110,7 @@ private:
 
     boost::asio::io_context& io_context;
     struct ev_loop* loop;
+    Server* server;
     ev_async async_terminate;
     string private_key_file;
     string cert_file;
