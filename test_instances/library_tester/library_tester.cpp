@@ -136,18 +136,20 @@ int main() {
     cout << "In Main: Server should be started up" << endl;
 
     auto theServerHandler = [](const StreamIdentifier& stream_id, chunks& request) {
+        chunks response_chunks;
         for (auto& chunk : request) {
+            if (chunk.get_signal<request_identifier_tag>().signal == request_identifier_tag::SIGNAL_HEARTBEAT) {
+                cout << "Server got heartbeat in callback" << endl;
+                continue;
+            }
             string chunk_str(chunk.begin<const char>(), chunk.end<const char>());
             cout << "Server got request in callback: " << chunk_str << endl;
+            if (chunk_str == "Hello Server!") {
+                static string goodbye_str = "Goodbye Client!";
+                response_chunks.emplace_back(request_identifier_tag(stream_id.logical_id, 0, 0), span<const char>(goodbye_str.c_str(), goodbye_str.size()));
+            }
         }
-        if (!request.empty()) {
-            static string goodbye_str = "Goodbye Client!";
-            chunks response_chunks;
-            response_chunks.emplace_back(request_identifier_tag(stream_id.logical_id, 0, 0), span<const char>(goodbye_str.c_str(), goodbye_str.size()));
-            return move(response_chunks);
-        }
-        chunks no_chunks;
-        return move(no_chunks);
+        return move(response_chunks);
     };
     // Add a named_prepare_fn for theServerHandler to the server_communication
     prepare_stream_callback_fn theServerHandlerWrapper = [&theServerHandler](const Request &req) {
