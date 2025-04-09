@@ -103,6 +103,18 @@ public:
         return move(to_return);
     }
 
+    bool noMoreChunks(vector<StreamIdentifier> const &sids) {
+        lock_guard<std::mutex> lock(outgoingChunksMutex);
+        for (auto sid : sids)
+        {
+            auto outgoing = outgoingChunks.find(sid);
+            if (outgoing != outgoingChunks.end()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     pair<size_t, vector<StreamIdentifier>> planForNOutgoingChunks(ngtcp2_cid const& dcid, size_t n) {
         size_t size = 0;
         lock_guard<std::mutex> lock(outgoingChunksMutex);
@@ -147,8 +159,8 @@ public:
         }
     }
     set<Request> getCurrentRequests();
-    bool hasRequest();
-    Request getRequest();
+    bool hasOutstandingRequest();
+    Request getOutstandingRequest();
 
 private:
     void terminate() {

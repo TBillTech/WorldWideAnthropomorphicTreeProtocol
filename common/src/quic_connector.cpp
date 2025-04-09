@@ -44,8 +44,7 @@ ClientStream::ClientStream(const Request &req, int64_t stream_id, Client *client
     : req(req),
         stream_id(stream_id),
         fd(-1),
-        handler(client),
-        finished(false) {}
+        handler(client) {}
 
 ClientStream::~ClientStream() {
   if (fd != -1) {
@@ -1080,7 +1079,12 @@ int Client::write_streams() {
         return -1;
       }
       if ((sveccnt == 0) && (stream_id == -1)) {
-        std::cerr << "Client nghttp3_conn_writev_stream: no stream to write" << std::endl; 
+        std::cerr << "Client nghttp3_conn_writev_stream: no stream to write" << std::endl;
+      }
+      else
+      {
+        std::cerr << "Client nghttp3_conn_writev_stream: stream_id=" << stream_id
+                  << " sveccnt=" << sveccnt << std::endl;
       }
     }
 
@@ -1881,14 +1885,16 @@ int Client::on_extend_max_streams() {
   }
 
   // TODONE: Use the requestResolutionQueue to drive the stream creation.
-  while (quic_connector_.hasRequest()) {
+  while (quic_connector_.hasOutstandingRequest()) {
     if (auto rv = ngtcp2_conn_open_bidi_stream(conn_, &stream_id, nullptr);
         rv != 0) {
-      assert(NGTCP2_ERR_STREAM_ID_BLOCKED == rv);
-      break;
+        cerr << "Client Now Wanted to send request, but it appears blocked: " << stream_id << endl << flush;
+        assert(NGTCP2_ERR_STREAM_ID_BLOCKED == rv);
+        break;
     }
 
-    Request req = quic_connector_.getRequest();
+    cerr << "Client Now sending outstanding request: " << stream_id << endl << flush;
+    Request req = quic_connector_.getOutstandingRequest();
     auto stream = std::make_unique<ClientStream>(req, stream_id, this);
 
     if (submit_http_request(stream.get(), true) != 0) {
@@ -1910,26 +1916,11 @@ bool Client::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3_
 
     // Ask the quic_connector_ for veccnt chunks
     chunks to_send = std::move(quic_connector_.popNOutgoingChunks(sids, veccnt));
-    bool signal_closed = false;
+    bool signal_closed = quic_connector_.noMoreChunks(sids);
     size_t vec_index = 0;
 
     for (auto chunk: to_send)
     {
-        // IF the chunk is an int_signal CLOSING, then we need to set the signal_closed flag
-        if (chunk.get_signal_type() == int_signal::GLOBAL_SIGNAL_TYPE) {
-            auto signal = chunk.get_signal<int_signal>();
-            switch (signal.signal) {
-                case int_signal::SIGNAL_CLOSE_STREAM:
-                    signal_closed = true;
-                    break;
-            
-                // Add other cases here if needed
-                default:
-                    // Handle unexpected signals if necessary
-                    break;
-            }
-        }
-    
         // We assume that the chunk is a shared_span<> and we can just use the base pointer
         // to lock it in the locked_chunks_ map
         auto locked_ptr = reinterpret_cast<uint8_t*>(chunk.use_chunk());
@@ -1988,11 +1979,7 @@ nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
     std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
 
     auto stream = static_cast<ClientStream *>(stream_user_data);
-    if (stream->isFinished())
-    {
-        *pflags |= NGHTTP3_DATA_FLAG_EOF;
-        return 0;
-    }
+    bool is_closing = false;
 
     ngtcp2_conn_info ci;
     ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
@@ -2001,11 +1988,18 @@ nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
     {
         return NGHTTP3_ERR_WOULDBLOCK;
     }
+    if (pending.first == 0) {
+        is_closing = true;
+    } else {
+        is_closing = stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
+    }
 
-    stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
-
-    *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
-    if (config.send_trailers)
+    if (is_closing) {
+        *pflags |= NGHTTP3_DATA_FLAG_EOF;
+    } else {
+        *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
+    }
+    if (is_closing && config.send_trailers)
     {
         auto stream_id_str = util::format_uint(stream_id);
         auto trailers = std::to_array({
@@ -2021,7 +2015,6 @@ nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
             return NGHTTP3_ERR_CALLBACK_FAILURE;
         }
     }
-    stream->setFinished();
 
     return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
         return v.base != nullptr; // Check if the base pointer is not nullptr
@@ -2040,11 +2033,6 @@ namespace
 
         // TODONE: Use the outgoingChunks queue instead of dyn_buf
         auto stream = static_cast<ClientStream *>(stream_user_data);
-        if (stream->isFinished())
-        {
-            *pflags |= NGHTTP3_DATA_FLAG_EOF;
-            return 0;
-        }
         bool is_closing = false;
 
         ngtcp2_conn_info ci;
@@ -2054,33 +2042,33 @@ namespace
         {
             return NGHTTP3_ERR_WOULDBLOCK;
         }
-        if (pending.first == 0)
-        { 
+        if (pending.first == 0) {
             is_closing = true;
         } else {
             is_closing = stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
         }
-
-        *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
-        if (is_closing)
+    
+        if (is_closing) {
+            *pflags |= NGHTTP3_DATA_FLAG_EOF;
+        } else {
+            *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
+        }
+    
+        if (is_closing && config.send_trailers)
         {
-            if (config.send_trailers)
-            {
-                auto stream_id_str = util::format_uint(stream_id);
-                auto trailers = std::to_array({
-                    util::make_nv_nc("x-ngtcp2-stream-id"sv, stream_id_str),
-                });
+            auto stream_id_str = util::format_uint(stream_id);
+            auto trailers = std::to_array({
+                util::make_nv_nc("x-ngtcp2-stream-id"sv, stream_id_str),
+            });
 
-                if (auto rv = nghttp3_conn_submit_trailers(
-                        conn, stream_id, trailers.data(), trailers.size());
-                    rv != 0)
-                {
-                    std::cerr << "Server nghttp3_conn_submit_trailers: " << nghttp3_strerror(rv)
-                              << std::endl;
-                    return NGHTTP3_ERR_CALLBACK_FAILURE;
-                }
+            if (auto rv = nghttp3_conn_submit_trailers(
+                    conn, stream_id, trailers.data(), trailers.size());
+                rv != 0)
+            {
+                std::cerr << "Server nghttp3_conn_submit_trailers: " << nghttp3_strerror(rv)
+                            << std::endl;
+                return NGHTTP3_ERR_CALLBACK_FAILURE;
             }
-            stream->setFinished();
         }
 
         return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
@@ -2118,7 +2106,7 @@ int Client::submit_http_request(ClientStream *stream, bool live_stream) {
 
   if (auto rv = nghttp3_conn_submit_request(
     httpconn_, stream->stream_id, nva.data(), nvlen,
-    config.fd == -1 ? nullptr : &dr, stream);
+    &dr, stream);
     rv != 0) {
     std::cerr << "Client nghttp3_conn_submit_request: " << nghttp3_strerror(rv)
             << std::endl;
@@ -2137,17 +2125,6 @@ int Client::recv_stream_data(uint32_t flags, int64_t stream_id,
         auto it = streams_.find(stream_id);
         assert(it != std::end(streams_));
         auto &client_stream = (*it).second;
-        if(!client_stream->is_caching)
-        {
-            // Then set the expected length of the chunk to the network ordered two byte length 
-            // from the first 2 bytes of data
-            client_stream->expected_length = data[0] << 8 | data[1];
-            if (client_stream->expected_length > 48)
-            { 
-                std::cerr << "Client: expected length is too big: " << client_stream->expected_length << std::endl;
-            }
-        }
-        // else, still waiting for the full chunk to be received in caching mode
     }
     auto nconsumed =
         nghttp3_conn_read_stream(httpconn_, stream_id, data.data(), data.size(),
@@ -2233,42 +2210,9 @@ int http_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data,
     }
     auto c = static_cast<Client *>(user_data);
     c->http_consume(stream_id, datalen);
-    if (!stream->is_caching)
-    {
-        if (stream->expected_length > datalen)
-        {
-            // Then we have a partial chunk, so we need to cache it
-            stream->is_caching = true;
-            memcpy(stream->cached_chunk.data, data, datalen);
-            stream->cached_length = datalen;
-        }
-        else
-        {
-            // Then we have a full chunk, so we need to push it into the quic_connector_
-            auto data_span = std::span<uint8_t>(const_cast<uint8_t*>(data), datalen);
-            c->push_incoming_chunk(c->get_dcid(), data_span);
-            stream->is_caching = false;
-            stream->expected_length = 0;
-            stream->cached_length = 0;
-    }
-    } else {
-        // Then we have a partial chunk, so we need to cache it
-        memcpy(stream->cached_chunk.data + stream->cached_length, data, datalen);
-        stream->cached_length += datalen;
-        if (stream->expected_length == stream->cached_length + datalen)
-        {
-            // Then we have a full chunk, so we need to push it into the quic_connector_
-            auto data_span = std::span<uint8_t>(const_cast<uint8_t*>(stream->cached_chunk.data), stream->expected_length);
-            c->push_incoming_chunk(c->get_dcid(), data_span);
-            stream->is_caching = false;
-            stream->expected_length = 0;
-            stream->cached_length = 0;
-        }
-        else
-        {
-            cerr << "Client: mismatch expected_length: " << stream->expected_length << " cached_length: " << stream->cached_length << endl;
-        }
-    }
+    // Then we have a full chunk, so we need to push it into the quic_connector_
+    auto data_span = std::span<uint8_t>(const_cast<uint8_t*>(data), datalen);
+    c->push_incoming_chunk(c->get_dcid(), data_span);
     return 0;
 }
 } // namespace
@@ -2960,7 +2904,10 @@ StreamIdentifier QuicConnector::getNewRequestStreamIdentifier(Request const &req
     ngtcp2_cid cid = client->get_dcid();
     // Use the atomic stream_id_counter to simultaneously increment and return the stream_id
     auto stream_id = stream_id_counter.fetch_add(1);
-    return StreamIdentifier(cid, stream_id);
+    auto newStreamIdentifier = StreamIdentifier(cid, stream_id);
+    lock_guard<std::mutex> lock(returnPathsMutex);
+    returnPaths.insert(make_pair(newStreamIdentifier, req));
+    return newStreamIdentifier;
 }
 
 void QuicConnector::registerResponseHandler(StreamIdentifier sid, stream_callback_fn cb) {
@@ -3054,6 +3001,10 @@ bool QuicConnector::processRequestStream() {
             {
                 lock_guard<std::mutex> lock(outgoingChunksMutex);
                 outgoingChunks.erase(stream_cb.first);
+            }
+            {
+                lock_guard<std::mutex> lock(returnPathsMutex);
+                returnPaths.erase(stream_cb.first);
             }
             // And by definition, it is not in the requestorQueue anymore
         }
@@ -3245,7 +3196,7 @@ set<Request> QuicConnector::getCurrentRequests()
     return requestSet;
 }
 
-bool QuicConnector::hasRequest()
+bool QuicConnector::hasOutstandingRequest()
 {
     set<Request> requestSet = getCurrentRequests();
     for (auto &request : requestSet) {
@@ -3256,7 +3207,7 @@ bool QuicConnector::hasRequest()
     return false;
 }
 
-Request QuicConnector::getRequest()
+Request QuicConnector::getOutstandingRequest()
 {
     set<Request> requestSet = getCurrentRequests();
     for (auto &request : requestSet) {

@@ -56,18 +56,10 @@ struct ClientStream {
 
     int open_file(const std::string_view &path);
 
-    bool isFinished() const { return finished; }
-    void setFinished() { finished = true; }
-
     Request req;
     int64_t stream_id;
     int fd;
     Client *handler;
-    bool finished;
-    bool is_caching = false;
-    UDPChunk cached_chunk;
-    size_t expected_length = 0;
-    size_t cached_length = 0;
 };
 
 struct Endpoint {

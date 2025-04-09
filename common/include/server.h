@@ -72,8 +72,6 @@ struct Stream {
                                 const std::string_view &path);
     int64_t find_dyn_length(const Request &path);
     void http_acked_stream_data(uint64_t datalen);
-    bool isFinished() const { return finished; }
-    void setFinished() { finished = true; }
 
     int64_t stream_id;
     Handler *handler;
@@ -99,11 +97,6 @@ struct Stream {
     uint64_t dynbuflen;
     // live_stream is true if the stream length is undefined, and the stream is expected to continue indefinitely.
     bool live_stream;
-    bool finished;
-    bool is_caching = false;
-    UDPChunk cached_chunk;
-    size_t expected_length = 0;
-    size_t cached_length = 0;
 };
 
 class Server;

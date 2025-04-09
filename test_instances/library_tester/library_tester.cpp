@@ -109,7 +109,7 @@ int main() {
             .session_file = move(session_filename),
             .tp_file = move(tp_filename),
             .keylog_filename = move(keylog_filename),
-            .http_method = "GET"sv,        
+            .http_method = "POST"sv,        
             .max_data = 24_m,
             .max_stream_data_bidi_local = 16_m,
             .max_stream_data_bidi_remote = 256_k,
@@ -143,7 +143,7 @@ int main() {
         if (!request.empty()) {
             static string goodbye_str = "Goodbye Client!";
             chunks response_chunks;
-            response_chunks.emplace_back(global_no_signal, span<const char>(goodbye_str.c_str(), goodbye_str.size()));
+            response_chunks.emplace_back(request_identifier_tag(stream_id.logical_id, 0, 0), span<const char>(goodbye_str.c_str(), goodbye_str.size()));
             return move(response_chunks);
         }
         chunks no_chunks;
@@ -179,14 +179,22 @@ int main() {
     cout << "In Main: Client should be started up" << endl;
 
     auto theRequest = Request{.scheme = "https", .authority = "localhost", .path = "/test"};
-    bool sentRequest = false;
-    auto theClientHandler = [&sentRequest](const StreamIdentifier& stream_id, chunks &response) {
-        if (response.empty() && !sentRequest) {
+    pair<bool, bool> clientState = make_pair(false, true);
+    auto theClientHandler = [&clientState](const StreamIdentifier& stream_id, chunks &response) {
+        if (response.empty() && !clientState.first) {
             cout << "Client is idle, so sending Hello Server! message" << endl;
             static string hello_str = "Hello Server!";
             chunks response_chunks;
-            response_chunks.emplace_back(global_no_signal, span<const char>(hello_str.c_str(), hello_str.size()));
-            sentRequest = true;
+            response_chunks.emplace_back(request_identifier_tag(stream_id.logical_id, 0, 0), span<const char>(hello_str.c_str(), hello_str.size()));
+            clientState.first = true;
+            return move(response_chunks);
+        }
+        if (response.empty() && !clientState.second) {
+            cout << "Client is idle, and clientState.second is false, so send heartbeat" << endl;
+            chunks response_chunks;
+            auto tag = request_identifier_tag(stream_id.logical_id, request_identifier_tag::SIGNAL_HEARTBEAT, 0);
+            response_chunks.emplace_back(tag, span<const char>("", 0));
+            clientState.second = true;
             return move(response_chunks);
         }
         for (auto& chunk : response) {
@@ -218,13 +226,15 @@ int main() {
         server_communication->processResponseStream();
         this_thread::sleep_for(chrono::milliseconds(20));
     }
-    cout << "In Main: Server should have sent response" << endl;
+    cout << "In Main: Server should have prepared response" << endl;
 
-    // Service the client communication for a while to allow the client to process the response.
+    // Send the heartbeat packet.
+    clientState.second = false;
     for(int i = 0; i < wait_loops; i++) {
         client_communication->processRequestStream();
         this_thread::sleep_for(chrono::milliseconds(20));
     }
+    cout << "In Main: Client should have sent hearbeat (with same callback), yeilding response from server" << endl;
 
     cout << "In Main: Client should have processed response" << endl;
     client_communication->close();

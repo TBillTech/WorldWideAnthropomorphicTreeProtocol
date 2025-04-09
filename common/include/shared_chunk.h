@@ -81,6 +81,8 @@ struct request_identifier_tag {
     uint64_t signal_code;
     static constexpr uint64_t GLOBAL_SIGNAL_TYPE = 2;
     static constexpr uint64_t SIGNAL_NORMAL_CHUNK = 0x00000000;
+    static constexpr uint64_t SIGNAL_CLOSE_STREAM = 0x00000001;
+    static constexpr uint64_t SIGNAL_HEARTBEAT = 0x00000002;
 };
 
 struct int_signal {
