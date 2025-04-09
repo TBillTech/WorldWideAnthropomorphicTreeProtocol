@@ -15,8 +15,8 @@ There are multiple software instances attached to the tree protocol with the fol
   - Authorization branch: Not visible or queryable by clients.  Contains all the information necessary for this node to behave correctly.
   - Public branch: visible and queryable by all clients.
   - Private branch: only visible and queryable by the exact client.
-- **Load Balancer Node**: From an IP standpoint, actually is the service at the IP address and port of the tree.  It's job is to redirect traffic flows, and so it possesses all the Authorization branches (and keeps nothing else) and knows which authorization instances are available to match and service them.
-- **Client**: Conceptually, connects directly to a server (usually in fact a load balancer instance), and is linked into the client software as a library. Implementations must allow the server to provide proxy sources transparently, and must allow the linked software to control how much of the tree is kept and maintained in memory. 
+- **Load Balancer Node**: From an IP standpoint, actually is the service at the IP address and port of the tree.  It's job is to redirect traffic flows, and so it possesses all the Authorization branches (and keeps nothing else) and knows which authorization instances are available to match and service them. Also has legacy tunneling from Client facing http2 websockets down to Authentication node facing QUIC connections.
+- **Client**: Conceptually, connects directly to a server (usually in fact a load balancer instance), and is linked into the client software as a library. Implementations must allow the server to provide proxy sources transparently, and must allow the linked software to control how much of the tree is kept and maintained in memory. There is a javascript web browser implementation library that uses legacy http3 websockets to connect to the load balancer node.
 
 ## Tree Structure
 
@@ -78,3 +78,7 @@ It is recommended that only changes to the tree be sent across the protocol unle
 At present the Agents attaching to the tree will use QUIC and HTTP/3 communication.  This will permit, for example, different branches of the tree to be sent either whole or in part to multiple other agents simultaneously.
 
 For now, the QUIC + HTTP/3 library will be nghttp3.
+
+After further reasearch, the HTTP/3 protocol shows some difficulties. Crucially, it appears that when the server blocks due to no data ready, then the client also blocks.  This implies that the desired following flow is broken.  The client should connect to the server on a stream, then client sends messages to the server, then the server reads those messages, then the server replies to the messages, and repeat. The broken bit is that when the server "blocks" based on not having more data to send, then the client also "blocks" on sending data even if it has data to send.
+
+Workaround: Logically disconnect RequestIdentifiers of the QuicConnector and QuicListener from QUIC streams. On client side, send a "request" which is actually a sequence of chunks with RequestIdentifiers in a batch.  Then, on server side, the new "stream" gets created, with a single "request" composed of a batch of RequestIdentified chunks, and then a single "reply" composed of a batch of RequestIdentified result chunks is sent back allowing the stream to close.  If there is enough data being sent back and forth, it might even keep the stream open.

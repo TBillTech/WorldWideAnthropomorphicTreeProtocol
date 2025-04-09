@@ -26,7 +26,7 @@ using namespace std;
 //
 // Stream Objects:
 //
-// There is a Stream object for each stream_id within a connection. Each Handler object manages multiple Stream objects, one for each active stream within the connection.
+// There is a Stream object for each logical_id within a connection. Each Handler object manages multiple Stream objects, one for each active stream within the connection.
 //
 // Here is a summary of how these components interact:
 //
@@ -38,15 +38,16 @@ using namespace std;
 
 class StreamIdentifier {
     public:
-    StreamIdentifier(ngtcp2_cid cid, int64_t stream_id) : cid(cid), stream_id(stream_id) {};
-    StreamIdentifier(StreamIdentifier const &other) : cid(other.cid), stream_id(other.stream_id) {};
+    StreamIdentifier(ngtcp2_cid cid, uint64_t logical_id) : cid(cid), logical_id(logical_id) {};
+    StreamIdentifier(ngtcp2_cid cid, int64_t stream_id) = delete;
+    StreamIdentifier(StreamIdentifier const &other) : cid(other.cid), logical_id(other.logical_id) {};
         
     // cid is not needed for client side, since the client will know the scid already, 
     // but is important for server side to identify the handler object associated with the connection.
     ngtcp2_cid cid; 
-    // stream_id identifies which stream in the connection defines this request;
+    // logical_id identifies which stream in the connection defines this request;
     // consecutive even numbers for client requests, consecutive odd numbers for server pushes (legacy)
-    int64_t stream_id;
+    uint64_t logical_id;
 
 
     bool operator<(const StreamIdentifier& other) const {
@@ -57,17 +58,17 @@ class StreamIdentifier {
         if (other.cid < cid) {
             return false;
         }
-        return stream_id < other.stream_id;
+        return logical_id < other.logical_id;
     }
 
     bool operator==(const StreamIdentifier& other) const {
         using namespace ngtcp2;
-        return cid == other.cid && stream_id == other.stream_id;
+        return cid == other.cid && logical_id == other.logical_id;
     }
 
     friend ostream& operator<<(ostream& os, const StreamIdentifier& si) {
         using namespace ngtcp2;
-        os << "StreamIdentifier: cid=" << si.cid << ", stream_id=" << si.stream_id;
+        os << "StreamIdentifier: cid=" << si.cid << ", logical_id=" << si.logical_id;
         return os;
     }
 };
@@ -95,7 +96,7 @@ struct uri_response_info {
     size_t dyn_length;
 };
 
-typedef pair<uri_response_info, stream_callback> prepared_stream_callback;
+typedef pair<uri_response_info, stream_callback_fn> prepared_stream_callback;
 
 // While a round robin queue for load balancing is done (for now) with a simple vector.
 typedef vector<stream_callback> stream_callbacks;
@@ -105,48 +106,72 @@ typedef vector<stream_callback> stream_callbacks;
 typedef map<StreamIdentifier, chunks> stream_data_chunks;
 
 // Define a callback function type for preparing stream callbacks
-using prepare_stream_callback_fn = function<prepared_stream_callback(const StreamIdentifier&, const std::string_view &)>;
+using prepare_stream_callback_fn = function<prepared_stream_callback(const Request &)>;
 typedef pair<string, prepare_stream_callback_fn> named_prepare_fn;
 typedef vector<named_prepare_fn> named_prepare_fns;
 
+// Track the return path for a StreamIdentifier
+typedef map<StreamIdentifier, Request> stream_return_paths;
+
 class Communication {
 public:
+    // Here are the 1 to N relationships between URL/Requests, StreamIdentifiers, and Streams:
+    // Each URL/Request may map to a single Stream object, but this is a _temporary_ relationship.  
+    //    Thus, it is the connection (ngtcp2_cid) Handler objects that track the URL/Request to Stream object. 
+    // Each ngtcp2_cid maps to a connection (ngtcp2_cid) Handler object.
+    // Each StreamIdentifier is "owned" by the connection (ngtcp2_cid) Handler that matches its cid
+    // Each StreamIdentifier also maps to one of the URL/Request
+    // Thus, either the StreamIdentifier maps to a single open Stream, 
+    //    OR the StreamIdentifier maps to a single URL/Request that can be used to open a new Stream.
+    
+    // NOTE: This means that sometimes the client will need to send a flush message to the server, which can just be a heartbeat signal. 
+
     // ## "client" side communication model: worker threads + HTTP3 IO thread
-    // worker thread gets a StreamIdentifier from the Communication object
-    // worker thread calls setupRequestStream, which adds the request to the requestSentQueue, inserts the bytes in the "socket" send buffer.
-    // HTTP3 IO thread flushes bytes from the "socket" send buffer to the wire.
-    // HTTP3 IO thread receives bytes from the wire, correlates them with the request id, pops from the requestSentQueue, and adds the response to the responseReceiveQueue.
-    // worker thread calls processRequestStream, which pops the response from the responseReceiveQueue and calls the callback function.
-    // Thus, the two public methods that the worker thread needs are setupRequestStream and processRequestStream.
-    // The HTTP3 IO thread is an instance of this class, so does not explicitly need any public methods.  (but maybe private methods)
-    // A new request requires a new StreamIdentifier, which the Communication object knows how to create based on URI and other info.
-    virtual void resolveRequestStream(Request const &req, stream_callback_fn cb) = 0;
+    // worker thread gets a StreamIdentifier from the Communication object by requesting a new StreamIdentifier for a URL/Request
+    // worker thread calls setupRequestCallback, which adds a mapping from the StreamIdentifier to the callback.
+    // worker thread calls processRequestStream, which handles incoming and outgoing chunks as arguments and returns to the callback.
+    // HTTP3 IO thread checks if there are any outgoing chunks to send for a URL/Request and no open stream for it,
+    //    and if so, HTTP3 IO thread creates a new open stream.
+    // HTTP3 IO thread sends any outgoing chunks over the now opened stream.  IF all outgoing chunks have been sent, then also send FIN.
+    // HTTP3 IO thread receives bytes from open streams, and puts them on the incoming chunk queue.
+    // Thus the following queues and maps are needed:
+    // 1. stream_callbacks requestorQueue: For mapping StreamIdentifiers to callbacks
+    // 2. stream_data_chunks incomingChunks: For mapping incoming chunks to StreamIdentifiers
+    // 3. stream_data_chunks outgoingChunks: For mapping outgoing chunks to StreamIdentifiers
+    virtual StreamIdentifier getNewRequestStreamIdentifier(Request const &req) = 0;
+    virtual void registerResponseHandler(StreamIdentifier sid, stream_callback_fn cb) = 0;
+    virtual void deregisterResponseHandler(StreamIdentifier sid) = 0;
     // In order to separate the nominally client side handler threads from the Communication IO thread, a handler thread can call 
     // this function to make the callback from a worker thread and take as much time as necessary without interrupting the 
-    // Communication IO.  Returns false if idle.
+    // Communication IO.
     virtual bool processRequestStream() = 0;
 
     // ## "server" side communication model
-    // HTTP3 IO thread receives request bytes from the wire, and adds them to the requestReceiveQueue.
-    // worker thread calls listenForResponseStream, which pops the request from the requestReceiveQueue, returns the request and request_id.
-    // worker thread finishes computing the appropriate response, and calls processResponseStream, which inserts the bytes int the "socket" send buffer.
-    // HTTP3 IO thread flushes bytes from the "socket" send buffer to the wire.
-    // Thus, the two public methods that the worker thread needs are listenForResponseStream and processResponseStream.
-
-    // The server (and sometimes the client) can receive a request on the wire, and when it does, it needs to immediately 
-    // handle the incoming request by deciding if it is a normal file request, or maybe the wwatp protocol (for example).
-    // To do this, the user code needs to register a callback function to handle the request (which will be called from the protocol thread).
+    // worker thread calls registerRequestHandler to support associated the right callback with a new stream object;
+    //     This in effect maps an incoming URL/Request to a callback function.
+    // HTTP3 IO thread receives request bytes from the wire, and creates a new Stream object to handle the request.  
+    //     Note that since this ULR/Request is in the headers, the Stream object can immediately be associated with a callback.
+    // For open streams, HTTP3 IO thread receives request chunks for an open stream, and puts them on the incoming chunk queue (until client FIN).
+    //     Note that only after FIN can the StreamIdentifier be read from the request stream, and so after FIN is when the responderQueue is populated.
+    //     This further means that the communication (ngtcp2_cid) handler needs to keep track of the which StreamIdentifiers
+    //     map to which URL/Request.
+    // For open streams, HTTP3 IO thread checks if the FIN has arrived,
+    //     and if so sends outgoing chunks to the stream.  If all outgoing chunks have been sent, then also send FIN.
+    // worker thread calls processResponseStream, which pops the requestHandler from the responderQueue, 
+    //     and processed incoming to outgoing chunks through the callback for the requestHandler.
+    // Thus the following queues and maps are needed:
+    // 1. stream_callbacks responderQueue: For mapping StreamIdentifiers to callbacks
+    // 2. stream_data_chunks incomingChunks: For mapping incoming chunks to StreamIdentifiers
+    // 3. stream_data_chunks outgoingChunks: For mapping outgoing chunks to StreamIdentifiers
+    // 4. named_prepare_fns preparersStack: For mapping URL/Request to callbacks
+    // 5. stream_return_paths returnPaths: For mapping StreamIdentifiers to URL/Requests. 
     virtual void registerRequestHandler(named_prepare_fn preparer) = 0;
     virtual void deregisterRequestHandler(string preparer_name) = 0;
-    // The server (and sometimes client) can send a response asynchronously via this Communication class which does not queue.
-    // For example, server send asset Box1 asynchronously.  Returns false if idle.
+    // In order to separate the nominally server side handler threads from the Communication IO thread, a handler thread can call 
+    // this function to make the callback from a worker thread and take as much time as necessary without interrupting the 
+    // Communication IO.
     virtual bool processResponseStream() = 0;
 
-    // The Protocol facing side of the algorithm runs in a separate thread to the above methods, which are for the data users.
-    // The following methods are suggested for the protocol facing side of the algorithm, and are called by the protocol facing thread.
-    // setupRequests and setupResponses drain the requestResolutionQueue and fill the unhandledQueue.
-    // virtual void setupRequests() = 0;
-    // virtual void setupResponses() = 0;
     // send and receive deal with data coming in and going out on the streams
     // virtual void send() = 0;
     // virtual void receive() = 0;

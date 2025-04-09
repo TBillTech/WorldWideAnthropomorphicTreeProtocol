@@ -62,6 +62,27 @@ PODType pod_from_chunk(typename std::remove_const<PODType>::type &result, vector
     return result;
 }
 
+struct request_identifier_tag {
+    request_identifier_tag() :
+        request_id(0), signal(0), signal_code(0) {}
+    request_identifier_tag(uint64_t request_id, uint64_t signal, uint64_t signal_code)
+        : request_id(request_id), signal(signal), signal_code(signal_code) {}
+    request_identifier_tag(request_identifier_tag const &other)
+        : request_id(other.request_id), signal(other.signal), signal_code(other.signal_code) {}
+    request_identifier_tag const &operator=(request_identifier_tag const &other) {
+        request_id = other.request_id;
+        signal = other.signal;
+        signal_code = other.signal_code;
+        return *this;
+    }
+    const uint64_t signal_type = GLOBAL_SIGNAL_TYPE;
+    uint64_t request_id;
+    uint64_t signal;
+    uint64_t signal_code;
+    static constexpr uint64_t GLOBAL_SIGNAL_TYPE = 2;
+    static constexpr uint64_t SIGNAL_NORMAL_CHUNK = 0x00000000;
+};
+
 struct int_signal {
     int_signal() : signal_type(GLOBAL_SIGNAL_TYPE), signal(0), signal_code(0) {}
     int_signal(uint64_t signal_value, uint64_t signal_code) 
@@ -139,11 +160,18 @@ public:
         uint64_t signal_type = *reinterpret_cast<const uint64_t*>(data.data());
         switch (signal_type) {
             case no_signal::GLOBAL_SIGNAL_TYPE: {
-                shared_span span(*reinterpret_cast<const no_signal*>(data.data()), data.subspan(sizeof(no_signal)));
+                auto remaining_data = data.subspan(sizeof(no_signal));
+                shared_span span(*reinterpret_cast<const no_signal*>(data.data()), remaining_data);
                 return move(span);
             }
             case int_signal::GLOBAL_SIGNAL_TYPE: {
-                shared_span span(*reinterpret_cast<const int_signal*>(data.data()), data.subspan(sizeof(int_signal)));
+                auto remaining_data = data.subspan(sizeof(int_signal));
+                shared_span span(*reinterpret_cast<const int_signal*>(data.data()), remaining_data);
+                return move(span);
+            }
+            case request_identifier_tag::GLOBAL_SIGNAL_TYPE: {
+                auto remaining_data = data.subspan(sizeof(request_identifier_tag));
+                shared_span span(*reinterpret_cast<const request_identifier_tag*>(data.data()), remaining_data);
                 return move(span);
             }
             default:
@@ -240,6 +268,8 @@ public:
                 return sizeof(no_signal);
             case int_signal::GLOBAL_SIGNAL_TYPE:
                 return sizeof(int_signal);
+            case request_identifier_tag::GLOBAL_SIGNAL_TYPE:
+                return sizeof(request_identifier_tag);
             default:
                 throw invalid_argument("Unknown signal type");
         }

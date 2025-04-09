@@ -70,9 +70,8 @@ struct Stream {
                             const std::vector<HTTPHeader> &extra_headers = {});
     int send_redirect_response(nghttp3_conn *conn, unsigned int status_code,
                                 const std::string_view &path);
-    int64_t find_dyn_length(const std::string_view &path);
+    int64_t find_dyn_length(const Request &path);
     void http_acked_stream_data(uint64_t datalen);
-    StreamIdentifier getStreamIdentifier() const;
     bool isFinished() const { return finished; }
     void setFinished() { finished = true; }
 
@@ -84,6 +83,7 @@ struct Stream {
     std::string authority; // Example: www.example.com:443
     // method is the HTTP method (e.g., GET, POST) of the request.
     std::string method; // Example: GET
+    Request req;
     // status_resp_body stores the body of the HTTP response for status responses.
     // It is used to send predefined status messages (e.g., 404 Not Found).
     std::string status_resp_body; // Example: "404 Not Found"
@@ -100,6 +100,10 @@ struct Stream {
     // live_stream is true if the stream length is undefined, and the stream is expected to continue indefinitely.
     bool live_stream;
     bool finished;
+    bool is_caching = false;
+    UDPChunk cached_chunk;
+    size_t expected_length = 0;
+    size_t cached_length = 0;
 };
 
 class Server;
@@ -182,15 +186,14 @@ public:
   int send_blocked_packet();
   ngtcp2_cid const &get_scid() const { return scid_; }
 
-  bool lock_outgoing_chunks(int64_t stream_id, nghttp3_vec *vec, size_t veccnt);
-  size_t get_pending_chunks_size(int64_t stream_id, size_t veccnt);
+  bool lock_outgoing_chunks(const vector<StreamIdentifier>& sids, nghttp3_vec *vec, size_t veccnt);
+  pair<size_t, vector<StreamIdentifier>> get_pending_chunks_size(int64_t stream_id, size_t veccnt);
   void unlock_chunks(nghttp3_vec *vec, size_t veccnt);
   void shared_span_incr_rc(uint8_t *locked_ptr, shared_span<> &&to_lock);
   void shared_span_decr_rc(uint8_t *locked_ptr);
 
-  void push_incoming_chunk(StreamIdentifier const& sid, std::span<uint8_t> const &chunk);
+  void push_incoming_chunk(const Request& sid, std::span<uint8_t> const &chunk);
 
-  StreamIdentifier getStreamIdentifier(int64_t stream_id) const;
   void writecb_start();
 
 private:

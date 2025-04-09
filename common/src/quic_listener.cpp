@@ -64,11 +64,6 @@ Stream::Stream(int64_t stream_id, Handler *handler)
       dynbuflen(0),
       live_stream(false) {}
 
-StreamIdentifier Stream::getStreamIdentifier() const
-{
-    return handler->getStreamIdentifier(stream_id);
-}
-
 namespace
 {
     constexpr auto NGTCP2_SERVER = "nghttp3/ngtcp2 server"sv;
@@ -271,11 +266,11 @@ void Stream::map_file(const FileEntry &fe)
     datalen = fe.len;
 }
 
-int64_t Stream::find_dyn_length(const std::string_view &path)
+int64_t Stream::find_dyn_length(const Request &req)
 {
     // TODONE: Initialize the stream callbacks using the listener prepareHandler function
     QuicListener &listener = handler->server()->listener();
-    auto response = listener.prepareHandler(getStreamIdentifier(), path);
+    auto response = listener.prepareInfo(req);
     if (!response.can_handle)
     {
         // If nothing can handle it, then pass it along to the file handler
@@ -311,14 +306,20 @@ namespace
 
         ngtcp2_conn_info ci;
         ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
-        auto len = max(sizeof(int_signal), stream->handler->get_pending_chunks_size(stream_id, veccnt));
-        if (len > ci.cwnd)
+        auto pending = stream->handler->get_pending_chunks_size(stream_id, veccnt);
+        if (pending.first > ci.cwnd)
         {
             return NGHTTP3_ERR_WOULDBLOCK;
         }
+        if (pending.first == 0)
+        {
+            *pflags |= NGHTTP3_DATA_FLAG_EOF;
+        }
+        {
+            stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
+            *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
+        }
 
-        stream->handler->lock_outgoing_chunks(stream_id, vec, veccnt);
-        *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
         if (config.send_trailers)
         {
             auto stream_id_str = util::format_uint(stream_id);
@@ -337,17 +338,21 @@ namespace
         } 
         stream->setFinished();
 
-        return len;
+        return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
+            return v.base != nullptr; // Check if the base pointer is not nullptr
+        });
     }
 } // namespace
 
-bool Handler::lock_outgoing_chunks(int64_t stream_id, nghttp3_vec *vec, size_t veccnt)
+bool Handler::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3_vec *vec, size_t veccnt)
 {
     // Unlike the unlock_chunks function, this function has to actually do the buisness logic
     // bit where it pops the chunks from the outgoingChunks queue
+    // But first zero out the vec, in case the outgoingChunks queue cannot fill it up
+    std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
 
-    // Ask the quic_connector_ for veccnt chunks
-    chunks to_send = move(server()->listener().popNOutgoingChunks(getStreamIdentifier(stream_id), veccnt));
+    // Ask the quic_listener_ for veccnt chunks
+    chunks to_send = std::move(server()->listener().popNOutgoingChunks(sids, veccnt));
     bool signal_closed = false;
     size_t vec_index = 0;
 
@@ -378,26 +383,16 @@ bool Handler::lock_outgoing_chunks(int64_t stream_id, nghttp3_vec *vec, size_t v
         // Call shared_span_incr_rc to increment the reference count
         shared_span_incr_rc(locked_ptr, std::move(chunk));
     }
-    if (vec_index == 0)
-    {
-        // If there is nothing to send, then need to send a minimum control plane packet
-        // to keep the connection alive
-        int_signal forced_signal(int_signal::SIGNAL_PROTOCOL_FORCED_PACKET, 1);
-        shared_span<> control_plane_chunk(forced_signal, span<uint8_t>{});
-        auto locked_ptr = reinterpret_cast<uint8_t*>(control_plane_chunk.use_chunk());
-        vec[0].base = locked_ptr;
-        vec[0].len = control_plane_chunk.get_signal_size() + control_plane_chunk.size();
-
-        // Call shared_span_incr_rc to increment the reference count
-        shared_span_incr_rc(locked_ptr, std::move(control_plane_chunk));
-    }
     return signal_closed;
 }
 
-size_t Handler::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
+pair<size_t, vector<StreamIdentifier>> Handler::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
 {
-    // Simply ask the quic_connector_ for the size of the pending chunks
-    return server()->listener().sizeOfNOutgoingChunks(getStreamIdentifier(stream_id), veccnt);
+    // This logic relies on the server receiving one or more chunks from the client.
+    // However, it does not really matter how many or what request_ids the client sent for this purpose:  
+    //     All scid matching chunks are candidates for sending.
+    // In other words, setting up the correct RequestHandlers is the job for the receiving side of the process.
+    return server()->listener().planForNOutgoingChunks(get_scid(), veccnt);
 }
 
 void Handler::unlock_chunks(nghttp3_vec *vec, size_t veccnt)
@@ -425,10 +420,10 @@ void Handler::shared_span_decr_rc(uint8_t *locked_ptr)
     locked_chunks_.erase(locked_ptr);
 }
 
-void Handler::push_incoming_chunk(StreamIdentifier const& sid, std::span<uint8_t> const &chunk)
+void Handler::push_incoming_chunk(const Request& req, std::span<uint8_t> const &chunk)
 {
     // Push the chunk into the quic_connector_ requestResolutionQueue
-    server()->listener().pushIncomingChunk(sid, chunk);
+    server()->listener().pushIncomingChunk(req, get_scid(), chunk);
 }
 
 
@@ -454,16 +449,26 @@ namespace
 
         ngtcp2_conn_info ci;
         ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
-        auto len = max(sizeof(int_signal), stream->handler->get_pending_chunks_size(stream_id, veccnt));
-        if (len > ci.cwnd)
+        // auto stream_window = ngtcp2_conn_get_max_stream_data_left(stream->handler->conn(), stream_id);
+        // auto connection_window = ngtcp2_conn_get_max_data_left(stream->handler->conn());
+        
+        // std::cout << "Stream flow control window: " << stream_window << std::endl;
+        // std::cout << "Connection flow control window: " << connection_window << std::endl;
+
+        auto pending = stream->handler->get_pending_chunks_size(stream_id, veccnt);
+        if (pending.first > ci.cwnd)
         {
             return NGHTTP3_ERR_WOULDBLOCK;
         }
-
-        is_closing = stream->handler->lock_outgoing_chunks(stream_id, vec, veccnt);
+        if (pending.first == 0)
+        {
+            is_closing = true;
+        } else {
+            is_closing = stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
+        }
 
         // This looks wrong if dyndataleft == -1, but note that it will get cast to infinity, and turn out correct.
-        len = std::min(len, static_cast<size_t>(stream->dyndataleft));
+        auto len = std::min(pending.first, static_cast<size_t>(stream->dyndataleft));
 
         stream->dynbuflen += len;
         if (!stream->live_stream)
@@ -473,6 +478,7 @@ namespace
         if (stream->dyndataleft == 0)
         {
             is_closing = true;
+            *pflags |= NGHTTP3_DATA_FLAG_EOF;
         }
 
         *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
@@ -497,7 +503,9 @@ namespace
             stream->setFinished();
         }
 
-        return len;
+        return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
+            return v.base != nullptr; // Check if the base pointer is not nullptr
+        });
     }
 } // namespace
 
@@ -593,7 +601,7 @@ int Stream::start_response(nghttp3_conn *httpconn)
         return send_status_response(httpconn, 400);
     }
 
-    auto dyn_len = find_dyn_length(req.path);
+    auto dyn_len = find_dyn_length(req);
 
     int64_t content_length = -1;
     nghttp3_data_reader dr{};
@@ -743,11 +751,6 @@ int Stream::start_response(nghttp3_conn *httpconn)
     }
 
     return 0;
-}
-
-StreamIdentifier Handler::getStreamIdentifier(int64_t stream_id) const
-{
-    return StreamIdentifier(get_scid(), stream_id);
 }
 
 void Handler::writecb_start()
@@ -1300,14 +1303,51 @@ namespace
                        size_t datalen, void *user_data, void *stream_user_data)
     {
         // TODONE: Add this to the incoming chunks queue, instead of just printing it out
+        auto stream = static_cast<Stream *>(stream_user_data);
+
         if (!config.quiet && !config.no_http_dump)
         {
             debug::print_http_data(stream_id, {data, datalen});
         }
         auto h = static_cast<Handler *>(user_data);
         h->http_consume(stream_id, datalen);
-        auto data_span = std::span<uint8_t>(const_cast<uint8_t*>(data), datalen);
-        h->push_incoming_chunk(h->getStreamIdentifier(stream_id), data_span);              
+        if (!stream->is_caching)
+        {
+            if (stream->expected_length > datalen)
+            {
+                // Then we have a partial chunk, so we need to cache it
+                stream->is_caching = true;
+                memcpy(stream->cached_chunk.data, data, datalen);
+                stream->cached_length = datalen;
+            }
+            else
+            {
+                // Then we have a full chunk, so we need to push it into the quic_connector_
+                auto data_span = std::span<uint8_t>(const_cast<uint8_t*>(data), datalen);
+                h->push_incoming_chunk(stream->req, data_span);
+                stream->is_caching = false;
+                stream->expected_length = 0;
+                stream->cached_length = 0;
+            }
+        } else {
+            // Then we have a partial chunk, so we need to cache it
+            memcpy(stream->cached_chunk.data + stream->cached_length, data, datalen);
+            stream->cached_length += datalen;
+            if (stream->expected_length == stream->cached_length + datalen)
+            {
+                // Then we have a full chunk, so we need to push it into the quic_connector_
+                auto data_span = std::span<uint8_t>(const_cast<uint8_t*>(stream->cached_chunk.data), stream->expected_length);
+                h->push_incoming_chunk(stream->req, data_span);
+                stream->is_caching = false;
+                stream->expected_length = 0;
+                stream->cached_length = 0;
+            }
+            else
+            {
+                cerr << "Client: mismatch expected_length: " << stream->expected_length << " cached_length: " << stream->cached_length << endl;
+            }
+        }
+    
         return 0;
     }
 } // namespace
@@ -1384,6 +1424,7 @@ void Handler::http_recv_request_header(Stream *stream, int32_t token,
     {
     case NGHTTP3_QPACK_TOKEN__PATH:
         stream->uri = std::string{v.base, v.base + v.len};
+        stream->req = request_path(stream->uri, false);
         break;
     case NGHTTP3_QPACK_TOKEN__METHOD:
         stream->method = std::string{v.base, v.base + v.len};
@@ -1504,11 +1545,6 @@ namespace
 
 void Handler::http_stream_close(int64_t stream_id, uint64_t app_error_code)
 {
-    // TODONE: Implement removing the closed streams from responderQueue in Handler::on_stream_close
-    int_signal signal(int_signal::SIGNAL_CLOSE_STREAM, app_error_code);
-    shared_span<> control_plane_chunk(signal, span<uint8_t>{});
-    server()->listener().receiveSignal(getStreamIdentifier(stream_id), move(control_plane_chunk));
-  
     auto it = streams_.find(stream_id);
     if (it == std::end(streams_))
     {
@@ -2540,6 +2576,19 @@ int Handler::recv_stream_data(uint32_t flags, int64_t stream_id,
         return 0;
     }
 
+    if (ngtcp2_is_bidi_stream(stream_id))
+    {
+        auto it = streams_.find(stream_id);
+        assert(it != std::end(streams_));
+        auto &stream = (*it).second;
+        if(!stream->is_caching)
+        {
+            // Then set the expected length of the chunk to the network ordered two byte length 
+            // from the first 2 bytes of data
+            stream->expected_length = data[0] << 8 | data[1];
+        }
+        // else, still waiting for the full chunk to be received in caching mode
+    }
     auto nconsumed =
         nghttp3_conn_read_stream(httpconn_, stream_id, data.data(), data.size(),
                                  flags & NGTCP2_STREAM_DATA_FLAG_FIN);
@@ -4067,11 +4116,22 @@ namespace
     }
 } // namespace
 
-void QuicListener::resolveRequestStream(Request const &req, stream_callback_fn cb) {
-    // This just returns the currentRequestIdentifier
-    // Increment the currentRequestIdentifier
-    lock_guard<std::mutex> lock(requestResolverMutex);
-    requestResolutionQueue.push_back(make_pair(req, cb));
+StreamIdentifier QuicListener::getNewRequestStreamIdentifier(Request const &req) {
+    throw std::runtime_error("Not implemented");
+}
+
+void QuicListener::registerResponseHandler(StreamIdentifier sid, stream_callback_fn cb) {
+    lock_guard<std::mutex> lock(requestorQueueMutex);
+    requestorQueue.push_back(std::make_pair(sid, cb));
+}
+
+void QuicListener::deregisterResponseHandler(StreamIdentifier sid) {
+    lock_guard<std::mutex> lock(requestorQueueMutex);
+    auto it = std::remove_if(requestorQueue.begin(), requestorQueue.end(),
+        [&sid](const stream_callback& stream_cb) {
+            return stream_cb.first == sid;
+        });
+    requestorQueue.erase(it, requestorQueue.end());
 }
 
 bool QuicListener::processRequestStream() {
@@ -4134,17 +4194,38 @@ void QuicListener::deregisterRequestHandler(string preparer_name)
     preparersStack.erase(it, preparersStack.end());
 }
 
-uri_response_info QuicListener::prepareHandler(StreamIdentifier sid, const string_view& uri)
+uri_response_info QuicListener::prepareInfo(const Request& req)
 {
     lock_guard<std::mutex> lock(preparerStackMutex);
     for (auto &preparer : preparersStack) {
-        auto response = preparer.second(sid, uri);
+        auto response = preparer.second(req);
+        auto response_info = response.first;
+        if (response_info.can_handle) {
+            return response_info;
+        }
+    }
+    return {false, false, false, 0};
+}
+
+uri_response_info QuicListener::prepareHandler(StreamIdentifier sid, const Request& req)
+{
+    unique_lock<std::mutex> preparerlock(preparerStackMutex);
+    for (auto &preparer : preparersStack) {
+        auto response = preparer.second(req);
+        preparerlock.unlock();
+        auto stream_callback = make_pair(sid, response.second);
         auto response_info = response.first;
         if (response_info.can_handle) {
             if (!response_info.is_file)
             {
-                lock_guard<std::mutex> lock(responderQueueMutex);
-                responderQueue.push_back(response.second);
+                {
+                    lock_guard<std::mutex> lock(responderQueueMutex);
+                    responderQueue.push_back(stream_callback);
+                }
+                {
+                    lock_guard<std::mutex> lock(returnPathsMutex);
+                    returnPaths.insert(make_pair(sid, req));
+                }
             }
             return response_info;
         }

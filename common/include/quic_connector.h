@@ -7,6 +7,7 @@
 #include <thread>
 #include <ev.h>
 #include <algorithm>
+#include <set>
 
 using namespace std;
 
@@ -43,8 +44,9 @@ public:
     ~QuicConnector() override {
         terminate();
     }
-    void resolveRequestStream(Request const &req, stream_callback_fn cb) override;
-    Request setupRequest(StreamIdentifier sid);
+    StreamIdentifier getNewRequestStreamIdentifier(Request const &req) override;
+    void registerResponseHandler(StreamIdentifier sid, stream_callback_fn cb) override;
+    void deregisterResponseHandler(StreamIdentifier sid) override;
     bool processRequestStream() override;
     void registerRequestHandler(named_prepare_fn preparer) override;
     void deregisterRequestHandler(string preparer_name) override;
@@ -53,10 +55,6 @@ public:
     void listen(const string &local_name, const string& local_ip_addr, int local_port) override;
     void close() override;
     void connect(const string &peer_name, const string& peer_ip_addr, int peer_port) override;
-    size_t requestCount() {
-        lock_guard<std::mutex> lock(requestResolverMutex);
-        return requestResolutionQueue.size();
-    }
 
     void finishRequest(StreamIdentifier const& sid, uint64_t app_error_code) {
         auto it = std::find_if(requestorQueue.begin(), requestorQueue.end(), 
@@ -75,56 +73,84 @@ public:
             outgoing->second.emplace_back(std::move(signal)); // Move the signal
         }
     }
-    chunks popNOutgoingChunks(StreamIdentifier const& sid, size_t n) {
-        lock_guard<std::mutex> lock(outgoingChunksMutex);
-        auto outgoing = outgoingChunks.find(sid);
-        chunks to_return;
 
-        if (outgoing != outgoingChunks.end()) {
-            // Determine how many chunks to move (up to n or the size of outgoing->second)
-            size_t count = std::min(n, outgoing->second.size());
+    chunks popNOutgoingChunks(vector<StreamIdentifier> const &sids, size_t n) {
+        lock_guard<std::mutex> lock(outgoingChunksMutex);
+        chunks to_return;
+        for (auto sid : sids)
+        {
+            auto outgoing = outgoingChunks.find(sid);
     
-            // Move the first `count` elements from outgoing->second to to_return
-            auto begin = outgoing->second.begin();
-            auto end = std::next(begin, count);
-            to_return.insert(to_return.end(),
-                             std::make_move_iterator(begin),
-                             std::make_move_iterator(end));
-    
-            // Erase the moved elements from outgoing->second
-            outgoing->second.erase(begin, end);
+            if (outgoing != outgoingChunks.end()) {
+                // Determine how many chunks to move (up to n or the size of outgoing->second)
+                size_t count = std::min(n, outgoing->second.size());
+        
+                // Move the first `count` elements from outgoing->second to to_return
+                auto begin = outgoing->second.begin();
+                auto end = std::next(begin, count);
+                to_return.insert(to_return.end(),
+                                 std::make_move_iterator(begin),
+                                 std::make_move_iterator(end));
+        
+                // Erase the moved elements from outgoing->second
+                outgoing->second.erase(begin, end);
+                n -= count; // Decrease n by the number of moved chunks
+                if (outgoing->second.empty()) {
+                    outgoingChunks.erase(outgoing); // Remove the entry if empty
+                }
+            }
         }
         return move(to_return);
     }
-    size_t sizeOfNOutgoingChunks(StreamIdentifier const& sid, size_t n) {
-        lock_guard<std::mutex> lock(outgoingChunksMutex);
-        auto outgoing = outgoingChunks.find(sid);
+
+    pair<size_t, vector<StreamIdentifier>> planForNOutgoingChunks(ngtcp2_cid const& dcid, size_t n) {
         size_t size = 0;
-        if (outgoing != outgoingChunks.end()) {
-            for (auto it = outgoing->second.begin(); it != outgoing->second.begin() + std::min(n, outgoing->second.size()); ++it) {
-                auto& chunk = *it;
-                size += chunk.size()+chunk.get_signal_size();
+        lock_guard<std::mutex> lock(outgoingChunksMutex);
+        auto used_identifiers = vector<StreamIdentifier>();
+        auto unused_identifiers = set<StreamIdentifier>();
+        for (const auto& pair : outgoingChunks) {
+            if (pair.first.cid == dcid) {
+                unused_identifiers.insert(pair.first);
             }
         }
-        return size;
+        while((n > 0) && (unused_identifiers.size() > 0)) {
+            // choose an unused identifier at random:
+            auto it = unused_identifiers.begin();
+            std::advance(it, rand() % unused_identifiers.size());
+            auto sid = *it;
+            unused_identifiers.erase(it);
+            used_identifiers.push_back(sid);
+
+            auto outgoing = outgoingChunks.find(sid);
+            if (outgoing != outgoingChunks.end()) {
+                for (auto it = outgoing->second.begin(); it != outgoing->second.begin() + std::min(n, outgoing->second.size()); ++it) {
+                    auto& chunk = *it;
+                    size += chunk.size()+chunk.get_signal_size();
+                }
+                n -= std::min(n, outgoing->second.size());
+            }
+        }
+        return make_pair(size, vector<StreamIdentifier>(used_identifiers.begin(), used_identifiers.end()));
     }
-    void pushIncomingChunk(StreamIdentifier const& sid, std::span<uint8_t> const &chunk)
+
+    void pushIncomingChunk(ngtcp2_cid const& sid, std::span<uint8_t> const &raw_chunk)
     {
         lock_guard<std::mutex> lock(incomingChunksMutex);
-        auto incoming = incomingChunks.find(sid);
+        auto chunk = shared_span<>(raw_chunk);
+        StreamIdentifier stream_id(sid, chunk.get_signal<request_identifier_tag>().request_id);
+        auto incoming = incomingChunks.find(stream_id);
         if (incoming == incomingChunks.end()) {
-            auto inserted = incomingChunks.insert(make_pair(sid, chunks()));
-            inserted.first->second.emplace_back(chunk);
+            auto inserted = incomingChunks.insert(make_pair(stream_id, chunks()));
+            inserted.first->second.emplace_back(move(chunk));
         } else {
-            incoming->second.emplace_back(chunk);
+            incoming->second.emplace_back(move(chunk));
         }
     }
+    set<Request> getCurrentRequests();
+    bool hasRequest();
+    Request getRequest();
 
 private:
-    StreamIdentifier theStreamIdentifier() {
-        return StreamIdentifier({11}, 42);
-    }
-
     void terminate() {
         // Set the terminate flag
         terminate_.store(true);
@@ -155,12 +181,13 @@ private:
     std::atomic<bool> terminate_ = false;
     string received_so_far;  // This is a buffer for partially read messages
     bool is_server = false;
+    std::atomic<uint64_t> stream_id_counter = 1;
 
-    request_resolutions requestResolutionQueue;
     stream_callbacks requestorQueue;
 
     named_prepare_fns preparersStack;
     stream_callbacks responderQueue;
+    stream_return_paths returnPaths;
 
     stream_data_chunks incomingChunks;
     stream_data_chunks outgoingChunks;
@@ -171,6 +198,7 @@ private:
     mutex requestorQueueMutex;
     mutex preparerStackMutex;
     mutex responderQueueMutex;
+    mutex returnPathsMutex;
     mutex incomingChunksMutex;
     mutex outgoingChunksMutex;
     mutex streamClosingMutex;

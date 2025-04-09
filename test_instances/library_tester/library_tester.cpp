@@ -105,7 +105,7 @@ int main() {
             .mime_types_file = "/etc/mime.types",
             .version = NGTCP2_PROTO_VER_V1,
             .timeout = 30 * NGTCP2_SECONDS,
-            .early_response = true,
+            .early_response = false,
             .session_file = move(session_filename),
             .tp_file = move(tp_filename),
             .keylog_filename = move(keylog_filename),
@@ -150,10 +150,9 @@ int main() {
         return move(no_chunks);
     };
     // Add a named_prepare_fn for theServerHandler to the server_communication
-    prepare_stream_callback_fn theServerHandlerWrapper = [&theServerHandler](const StreamIdentifier& stream_id, const std::string_view &uri) {
+    prepare_stream_callback_fn theServerHandlerWrapper = [&theServerHandler](const Request &req) {
         uri_response_info response_info = {true, true, false, 0};
-        stream_callback response_stream = std::make_pair(stream_id, theServerHandler);
-        return std::make_pair(response_info, response_stream);
+        return std::make_pair(response_info, theServerHandler);
     };
     server_communication->registerRequestHandler(make_pair("test", theServerHandlerWrapper));
 
@@ -197,7 +196,8 @@ int main() {
         chunks no_chunks;
         return move(no_chunks);
     };
-    client_communication->resolveRequestStream(theRequest, theClientHandler);
+    StreamIdentifier assigned_stream_id = client_communication->getNewRequestStreamIdentifier(theRequest);
+    client_communication->registerResponseHandler(assigned_stream_id, theClientHandler);
 
     int wait_loops = 100;
     if (const char* env_p = std::getenv("DEBUG")) {

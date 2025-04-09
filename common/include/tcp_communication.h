@@ -16,7 +16,9 @@ public:
     ~TcpCommunication() override {
         terminate();
     }
-    void resolveRequestStream(Request const &req, stream_callback_fn cb) override;
+    StreamIdentifier getNewRequestStreamIdentifier(Request const &req) override;
+    void registerResponseHandler(StreamIdentifier sid, stream_callback_fn cb) override;
+    void deregisterResponseHandler(StreamIdentifier sid) override;
     bool processRequestStream() override;
     void registerRequestHandler(named_prepare_fn preparer) override;
     void deregisterRequestHandler(string preparer_name) override;
@@ -36,7 +38,7 @@ private:
         id.datalen = 2;
         id.data[0] = 0;
         id.data[1] = 11;
-        return StreamIdentifier(id, 42);
+        return StreamIdentifier(id, 42ul);
     }
 
     void terminate() {
@@ -70,18 +72,17 @@ private:
     bool is_server = false;
     bool prepared_unhandled_response = false;
 
-    request_resolutions requestResolutionQueue;
     stream_callbacks requestorQueue;
 
     named_prepare_fns preparersStack;
     stream_callbacks responderQueue;
+    stream_return_paths returnPaths;
 
     stream_data_chunks incomingChunks;
     stream_data_chunks outgoingChunks;
 
     stream_callbacks streamClosingQueue;
 
-    mutex requestResolverMutex;
     mutex requestorQueueMutex;
     mutex preparerStackMutex;
     mutex responderQueueMutex;

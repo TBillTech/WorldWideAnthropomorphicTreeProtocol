@@ -41,11 +41,8 @@ constexpr size_t max_preferred_versionslen = 4;
 
 
 ClientStream::ClientStream(const Request &req, int64_t stream_id, Client *client)
-    : scheme(req.scheme),
-        authority(req.authority),
-        path(req.path),
+    : req(req),
         stream_id(stream_id),
-        pri{req.pri.urgency, req.pri.inc},
         fd(-1),
         handler(client),
         finished(false) {}
@@ -85,15 +82,6 @@ int ClientStream::open_file(const std::string_view &path) {
   }
 
   return 0;
-}
-
-StreamIdentifier ClientStream::getStreamIdentifier() const {
-    return handler->getStreamIdentifier(stream_id);
-}
-
-StreamIdentifier Client::getStreamIdentifier(int64_t stream_id) const {
-    ngtcp2_cid const *cid_ = ngtcp2_conn_get_client_initial_dcid(conn());
-    return StreamIdentifier(*cid_, stream_id);
 }
 
 namespace {
@@ -1022,12 +1010,9 @@ void Client::stop_check_stream_timer() {
 }
   
 void Client::check_and_create_streams() {
-    // Check if there are pending requests in the queue
-    if (quic_connector_.requestCount() > 0) {
-        // Check if there are unused stream IDs available
-        if (ngtcp2_conn_get_streams_bidi_left(conn_) > 0) {
-            on_extend_max_streams();
-        }
+    // Check if there are unused stream IDs available
+    if (ngtcp2_conn_get_streams_bidi_left(conn_) > 0) {
+        on_extend_max_streams();
     }
 }
 
@@ -1896,14 +1881,14 @@ int Client::on_extend_max_streams() {
   }
 
   // TODONE: Use the requestResolutionQueue to drive the stream creation.
-  while (quic_connector_.requestCount() > 0) {
+  while (quic_connector_.hasRequest()) {
     if (auto rv = ngtcp2_conn_open_bidi_stream(conn_, &stream_id, nullptr);
         rv != 0) {
       assert(NGTCP2_ERR_STREAM_ID_BLOCKED == rv);
       break;
     }
 
-    Request req = quic_connector_.setupRequest(getStreamIdentifier(stream_id));
+    Request req = quic_connector_.getRequest();
     auto stream = std::make_unique<ClientStream>(req, stream_id, this);
 
     if (submit_http_request(stream.get(), true) != 0) {
@@ -1916,7 +1901,7 @@ int Client::on_extend_max_streams() {
   return 0;
 }
 
-bool Client::lock_outgoing_chunks(int64_t stream_id, nghttp3_vec *vec, size_t veccnt)
+bool Client::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3_vec *vec, size_t veccnt)
 {
     // Unlike the unlock_chunks function, this function has to actually do the buisness logic
     // bit where it pops the chunks from the outgoingChunks queue
@@ -1924,7 +1909,7 @@ bool Client::lock_outgoing_chunks(int64_t stream_id, nghttp3_vec *vec, size_t ve
     std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
 
     // Ask the quic_connector_ for veccnt chunks
-    chunks to_send = std::move(quic_connector_.popNOutgoingChunks(getStreamIdentifier(stream_id), veccnt));
+    chunks to_send = std::move(quic_connector_.popNOutgoingChunks(sids, veccnt));
     bool signal_closed = false;
     size_t vec_index = 0;
 
@@ -1955,26 +1940,13 @@ bool Client::lock_outgoing_chunks(int64_t stream_id, nghttp3_vec *vec, size_t ve
         // Call shared_span_incr_rc to increment the reference count
         shared_span_incr_rc(locked_ptr, std::move(chunk));
     }
-    if (vec_index == 0)
-    {
-        // If there is nothing to send, then need to send a minimum control plane packet
-        // to keep the connection alive
-        int_signal forced_signal(int_signal::SIGNAL_PROTOCOL_FORCED_PACKET, 1);
-        shared_span<> control_plane_chunk(forced_signal, span<uint8_t>{});
-        auto locked_ptr = reinterpret_cast<uint8_t*>(control_plane_chunk.use_chunk());
-        vec[0].base = locked_ptr;
-        vec[0].len = control_plane_chunk.get_signal_size() + control_plane_chunk.size();
-
-        // Call shared_span_incr_rc to increment the reference count
-        shared_span_incr_rc(locked_ptr, std::move(control_plane_chunk));
-    }
     return signal_closed;
 }
 
-size_t Client::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
+pair<size_t, vector<StreamIdentifier>> Client::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
 {
     // Simply ask the quic_connector_ for the size of the pending chunks
-    return quic_connector_.sizeOfNOutgoingChunks(getStreamIdentifier(stream_id), veccnt);
+    return quic_connector_.planForNOutgoingChunks(get_dcid(), veccnt);
 }
 
 void Client::unlock_chunks(nghttp3_vec *vec, size_t veccnt)
@@ -2002,7 +1974,7 @@ void Client::shared_span_decr_rc(uint8_t *locked_ptr)
     locked_chunks_.erase(locked_ptr);
 }
 
-void Client::push_incoming_chunk(StreamIdentifier const& sid, std::span<uint8_t> const &chunk)
+void Client::push_incoming_chunk(ngtcp2_cid const &sid, std::span<uint8_t> const &chunk)
 {
     // Push the chunk into the quic_connector_ requestResolutionQueue
     quic_connector_.pushIncomingChunk(sid, chunk);
@@ -2024,13 +1996,13 @@ nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
 
     ngtcp2_conn_info ci;
     ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
-    auto len = max(sizeof(int_signal), stream->handler->get_pending_chunks_size(stream_id, veccnt));
-    if (len > ci.cwnd)
+    auto pending = stream->handler->get_pending_chunks_size(stream_id, veccnt);
+    if (pending.first > ci.cwnd)
     {
         return NGHTTP3_ERR_WOULDBLOCK;
     }
 
-    stream->handler->lock_outgoing_chunks(stream_id, vec, veccnt);
+    stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
 
     *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
     if (config.send_trailers)
@@ -2051,7 +2023,9 @@ nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
     }
     stream->setFinished();
 
-    return len;
+    return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
+        return v.base != nullptr; // Check if the base pointer is not nullptr
+    });
 }
 } // namespace
 
@@ -2075,13 +2049,17 @@ namespace
 
         ngtcp2_conn_info ci;
         ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
-        auto len = max(sizeof(int_signal), stream->handler->get_pending_chunks_size(stream_id, veccnt));
-        if (len > ci.cwnd)
+        auto pending = stream->handler->get_pending_chunks_size(stream_id, veccnt);
+        if (pending.first > ci.cwnd)
         {
             return NGHTTP3_ERR_WOULDBLOCK;
         }
-
-        is_closing = stream->handler->lock_outgoing_chunks(stream_id, vec, veccnt);
+        if (pending.first == 0)
+        { 
+            is_closing = true;
+        } else {
+            is_closing = stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
+        }
 
         *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
         if (is_closing)
@@ -2105,18 +2083,20 @@ namespace
             stream->setFinished();
         }
 
-        return len;
+        return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
+            return v.base != nullptr; // Check if the base pointer is not nullptr
+        });
     }
 } // namespace
 
-int Client::submit_http_request(const ClientStream *stream, bool live_stream) {
+int Client::submit_http_request(ClientStream *stream, bool live_stream) {
   std::string content_length_str;
 
   std::array<nghttp3_nv, 6> nva{
     util::make_nv_nn(":method", config.http_method),
-    util::make_nv_nn(":scheme", stream->scheme),
-    util::make_nv_nn(":authority", stream->authority),
-    util::make_nv_nn(":path", stream->path),
+    util::make_nv_nn(":scheme", stream->req.scheme),
+    util::make_nv_nn(":authority", stream->req.authority),
+    util::make_nv_nn(":path", stream->req.path),
     util::make_nv_nn("user-agent", "nghttp3/ngtcp2 client"),
   };
   size_t nvlen = 5;
@@ -2137,11 +2117,11 @@ int Client::submit_http_request(const ClientStream *stream, bool live_stream) {
   }
 
   if (auto rv = nghttp3_conn_submit_request(
-        httpconn_, stream->stream_id, nva.data(), nvlen,
-        config.fd == -1 ? nullptr : &dr, nullptr);
-      rv != 0) {
+    httpconn_, stream->stream_id, nva.data(), nvlen,
+    config.fd == -1 ? nullptr : &dr, stream);
+    rv != 0) {
     std::cerr << "Client nghttp3_conn_submit_request: " << nghttp3_strerror(rv)
-              << std::endl;
+            << std::endl;
     return -1;
   }
 
@@ -2151,22 +2131,40 @@ int Client::submit_http_request(const ClientStream *stream, bool live_stream) {
 
 int Client::recv_stream_data(uint32_t flags, int64_t stream_id,
                              std::span<const uint8_t> data) {
-  auto nconsumed =
-    nghttp3_conn_read_stream(httpconn_, stream_id, data.data(), data.size(),
-                             flags & NGTCP2_STREAM_DATA_FLAG_FIN);
-  if (nconsumed < 0) {
-    std::cerr << "Client nghttp3_conn_read_stream: " << nghttp3_strerror(nconsumed)
-              << std::endl;
-    ngtcp2_ccerr_set_application_error(
-      &last_error_, nghttp3_err_infer_quic_app_error_code(nconsumed), nullptr,
-      0);
-    return -1;
-  }
+    // I expect streams to be bidirectional if and only if it is a user space streams from QuicConnector 
+    if (ngtcp2_is_bidi_stream(stream_id)) 
+    {
+        auto it = streams_.find(stream_id);
+        assert(it != std::end(streams_));
+        auto &client_stream = (*it).second;
+        if(!client_stream->is_caching)
+        {
+            // Then set the expected length of the chunk to the network ordered two byte length 
+            // from the first 2 bytes of data
+            client_stream->expected_length = data[0] << 8 | data[1];
+            if (client_stream->expected_length > 48)
+            { 
+                std::cerr << "Client: expected length is too big: " << client_stream->expected_length << std::endl;
+            }
+        }
+        // else, still waiting for the full chunk to be received in caching mode
+    }
+    auto nconsumed =
+        nghttp3_conn_read_stream(httpconn_, stream_id, data.data(), data.size(),
+                                flags & NGTCP2_STREAM_DATA_FLAG_FIN);
+    if (nconsumed < 0) {
+        std::cerr << "Client nghttp3_conn_read_stream: " << nghttp3_strerror(nconsumed)
+                << std::endl;
+        ngtcp2_ccerr_set_application_error(
+        &last_error_, nghttp3_err_infer_quic_app_error_code(nconsumed), nullptr,
+        0);
+        return -1;
+    }
 
-  ngtcp2_conn_extend_max_stream_offset(conn_, stream_id, nconsumed);
-  ngtcp2_conn_extend_max_offset(conn_, nconsumed);
+    ngtcp2_conn_extend_max_stream_offset(conn_, stream_id, nconsumed);
+    ngtcp2_conn_extend_max_offset(conn_, nconsumed);
 
-  return 0;
+    return 0;
 }
 
 int Client::acked_stream_data_offset(int64_t stream_id, uint64_t datalen) {
@@ -2223,21 +2221,55 @@ int Client::select_preferred_address(Address &selected_addr,
 namespace {
 int http_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data,
                    size_t datalen, void *user_data, void *stream_user_data) {
-  // TODONE: Put the data into the incomingChunks
-  auto stream = static_cast<ClientStream *>(stream_user_data);
+    // TODONE: Put the data into the incomingChunks
+    auto stream = static_cast<ClientStream *>(stream_user_data);
 
-  ngtcp2_conn_info ci;
+    ngtcp2_conn_info ci;
 
-  ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
+    ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
 
-  if (!config.quiet && !config.no_http_dump) {
-    debug::print_http_data(stream_id, {data, datalen});
-  }
-  auto c = static_cast<Client *>(user_data);
-  c->http_consume(stream_id, datalen);
-  auto data_span = std::span<uint8_t>(const_cast<uint8_t*>(data), datalen);
-  c->push_incoming_chunk(stream->getStreamIdentifier(), data_span);
-  return 0;
+    if (!config.quiet && !config.no_http_dump) {
+        debug::print_http_data(stream_id, {data, datalen});
+    }
+    auto c = static_cast<Client *>(user_data);
+    c->http_consume(stream_id, datalen);
+    if (!stream->is_caching)
+    {
+        if (stream->expected_length > datalen)
+        {
+            // Then we have a partial chunk, so we need to cache it
+            stream->is_caching = true;
+            memcpy(stream->cached_chunk.data, data, datalen);
+            stream->cached_length = datalen;
+        }
+        else
+        {
+            // Then we have a full chunk, so we need to push it into the quic_connector_
+            auto data_span = std::span<uint8_t>(const_cast<uint8_t*>(data), datalen);
+            c->push_incoming_chunk(c->get_dcid(), data_span);
+            stream->is_caching = false;
+            stream->expected_length = 0;
+            stream->cached_length = 0;
+    }
+    } else {
+        // Then we have a partial chunk, so we need to cache it
+        memcpy(stream->cached_chunk.data + stream->cached_length, data, datalen);
+        stream->cached_length += datalen;
+        if (stream->expected_length == stream->cached_length + datalen)
+        {
+            // Then we have a full chunk, so we need to push it into the quic_connector_
+            auto data_span = std::span<uint8_t>(const_cast<uint8_t*>(stream->cached_chunk.data), stream->expected_length);
+            c->push_incoming_chunk(c->get_dcid(), data_span);
+            stream->is_caching = false;
+            stream->expected_length = 0;
+            stream->cached_length = 0;
+        }
+        else
+        {
+            cerr << "Client: mismatch expected_length: " << stream->expected_length << " cached_length: " << stream->cached_length << endl;
+        }
+    }
+    return 0;
 }
 } // namespace
 
@@ -2404,10 +2436,7 @@ int Client::http_stream_close(int64_t stream_id, uint64_t app_error_code) {
     ngtcp2_conn_extend_max_streams_uni(conn_, 1);
   }
 
-  // TODONE: The stream is now receiving a close signal, possibly with an error code
-  int_signal signal(int_signal::SIGNAL_CLOSE_STREAM, app_error_code);
-  shared_span<> control_plane_chunk(signal, span<uint8_t>{});
-  quic_connector_.receiveSignal(getStreamIdentifier(stream_id), move(control_plane_chunk));
+  // NOTE: The workaround for the new logical streams means that this even has no significance for the quic_connector_
 
   if (auto it = streams_.find(stream_id); it != std::end(streams_)) {
     if (!config.quiet) {
@@ -2535,6 +2564,13 @@ bool Client::get_early_data() const { return early_data_; }
 void Client::writecb_start() {
     ev_io_start(loop_, &wev_);
 }
+
+ngtcp2_cid const &Client::get_dcid() const
+{
+    ngtcp2_cid const *cid_ = ngtcp2_conn_get_client_initial_dcid(conn());
+    return *cid_;   
+}
+
 
 namespace {
 int run(Client &c, struct ev_loop *loop, const char *addr, const char *port,
@@ -2918,31 +2954,27 @@ Options:
 } // namespace
 
 
-void QuicConnector::resolveRequestStream(Request const &req, stream_callback_fn cb) {
-    // This just returns the currentRequestIdentifier
-    // Increment the currentRequestIdentifier
-    lock_guard<std::mutex> lock(requestResolverMutex);
-    requestResolutionQueue.push_back(make_pair(req, cb));
+StreamIdentifier QuicConnector::getNewRequestStreamIdentifier(Request const &req) {
+    // This needs to read the cid from the client, increment the global_stream_id per the client,
+    // and also add the StreamIdentifier and Request to the stream_return_paths
+    ngtcp2_cid cid = client->get_dcid();
+    // Use the atomic stream_id_counter to simultaneously increment and return the stream_id
+    auto stream_id = stream_id_counter.fetch_add(1);
+    return StreamIdentifier(cid, stream_id);
 }
 
-Request QuicConnector::setupRequest(StreamIdentifier sid) {
-    // For the TCP protocol, this is just testing code, and so there is no real negotiation.
-    // So, if there a thing on the requestResolutionQueue, then pop it and add it to the requestorQueue.
-    RequestCallback request_cb;
-    {
-        lock_guard<std::mutex> lock(requestResolverMutex);
-        if (!requestResolutionQueue.empty()) {
-            request_cb = requestResolutionQueue.front();
-            requestResolutionQueue.erase(requestResolutionQueue.begin());
-        } else {
-            throw std::runtime_error("No request found in the requestResolutionQueue, but setupRequest should only be called when there is a request in the queue");
-        }
-    }
-
-    stream_callback request_stream = std::make_pair(sid, request_cb.second);
+void QuicConnector::registerResponseHandler(StreamIdentifier sid, stream_callback_fn cb) {
     lock_guard<std::mutex> lock(requestorQueueMutex);
-    requestorQueue.push_back(request_stream);
-    return request_cb.first;
+    requestorQueue.push_back(std::make_pair(sid, cb));
+}
+
+void QuicConnector::deregisterResponseHandler(StreamIdentifier sid) {
+    lock_guard<std::mutex> lock(requestorQueueMutex);
+    auto it = std::remove_if(requestorQueue.begin(), requestorQueue.end(),
+        [&sid](const stream_callback& stream_cb) {
+            return stream_cb.first == sid;
+        });
+    requestorQueue.erase(it, requestorQueue.end());
 }
 
 bool QuicConnector::processRequestStream() {
@@ -3188,4 +3220,49 @@ void QuicConnector::connect(const string &peer_name, const string& peer_ip_addr,
         }
         return EXIT_SUCCESS;
     });
+}
+
+set<Request> QuicConnector::getCurrentRequests()
+{
+    set<StreamIdentifier> outgoingIDSet;
+    {
+        lock_guard<std::mutex> lock(outgoingChunksMutex);
+        for (auto &outgoing : outgoingChunks) {
+            outgoingIDSet.insert(outgoing.first);
+        }
+    }
+    set<Request> requestSet;
+    {
+        lock_guard<std::mutex> lock(returnPathsMutex);
+        for (auto &sid : outgoingIDSet) {
+            auto request = returnPaths.find(sid);
+            if (request == returnPaths.end()) {
+                continue;
+            }
+            requestSet.insert(request->second);
+        }
+    }
+    return requestSet;
+}
+
+bool QuicConnector::hasRequest()
+{
+    set<Request> requestSet = getCurrentRequests();
+    for (auto &request : requestSet) {
+        if (!client->active_request(request)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Request QuicConnector::getRequest()
+{
+    set<Request> requestSet = getCurrentRequests();
+    for (auto &request : requestSet) {
+        if (!client->active_request(request)) {
+            return request;
+        }
+    }
+    throw std::runtime_error("No request found in the requestSet, but getRequest should only be called when there is a request in the set");
 }

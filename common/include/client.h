@@ -51,34 +51,30 @@ class Client;
 class StreamIdentifier;
 
 struct ClientStream {
-  ClientStream(const Request &req, int64_t stream_id, Client *handler);
-  ~ClientStream();
+    ClientStream(const Request &req, int64_t stream_id, Client *handler);
+    ~ClientStream();
 
-  int open_file(const std::string_view &path);
+    int open_file(const std::string_view &path);
 
-  StreamIdentifier getStreamIdentifier() const;
-  bool isFinished() const { return finished; }
-  void setFinished() { finished = true; }
+    bool isFinished() const { return finished; }
+    void setFinished() { finished = true; }
 
-  // Example URI: "https://www.example.com:443/path/to/resource?query=example#fragment"
-  std::string_view scheme;  // Example: "https"
-  std::string authority; // Example: "www.example.com:443"
-  std::string path; // Example: "/path/to/resource"
-  struct {
-    int32_t urgency;
-    int inc;
-  } pri;
-  int64_t stream_id;
-  int fd;
-  Client *handler;
-  bool finished;
+    Request req;
+    int64_t stream_id;
+    int fd;
+    Client *handler;
+    bool finished;
+    bool is_caching = false;
+    UDPChunk cached_chunk;
+    size_t expected_length = 0;
+    size_t cached_length = 0;
 };
 
 struct Endpoint {
-  Address addr;
-  ev_io rev;
-  Client *client;
-  int fd;
+    Address addr;
+    ev_io rev;
+    Client *client;
+    int fd;
 };
 
 class QuicConnector;
@@ -135,7 +131,7 @@ public:
   void set_remote_addr(const ngtcp2_addr &remote_addr);
 
   int setup_httpconn();
-  int submit_http_request(const ClientStream *stream, bool live_stream);
+  int submit_http_request(ClientStream *stream, bool live_stream);
   int recv_stream_data(uint32_t flags, int64_t stream_id,
                        std::span<const uint8_t> data);
   int acked_stream_data_offset(int64_t stream_id, uint64_t datalen);
@@ -161,17 +157,24 @@ public:
 
   bool should_exit() const;
 
-  bool lock_outgoing_chunks(int64_t stream_id, nghttp3_vec *vec, size_t veccnt);
-  size_t get_pending_chunks_size(int64_t stream_id, size_t veccnt);
+  bool lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3_vec *vec, size_t veccnt);
+  pair<size_t, vector<StreamIdentifier>> get_pending_chunks_size(int64_t stream_id, size_t veccnt);
   void unlock_chunks(nghttp3_vec *vec, size_t veccnt);
   void shared_span_incr_rc(uint8_t *locked_ptr, shared_span<> &&to_lock);
   void shared_span_decr_rc(uint8_t *locked_ptr);
 
-  void push_incoming_chunk(StreamIdentifier const& sid, std::span<uint8_t> const &chunk);
-
-  StreamIdentifier getStreamIdentifier(int64_t stream_id) const;
+  void push_incoming_chunk(ngtcp2_cid const& sid, std::span<uint8_t> const &chunk);
 
   void writecb_start();
+
+  bool active_request(Request const& req) const {
+    return std::any_of(streams_.begin(), streams_.end(),
+                       [&req](const auto &pair) {
+                         return pair.second->req == req;
+                       });
+  }
+
+  ngtcp2_cid const &get_dcid() const;
 
 private:
   std::vector<Endpoint> endpoints_;

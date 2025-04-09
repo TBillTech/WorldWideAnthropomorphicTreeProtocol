@@ -13,13 +13,14 @@
 #include "util.h"
 
 struct Request {
-  std::string_view scheme;
-  std::string authority;
-  std::string path;
-  struct {
-    int32_t urgency;
-    int inc;
-  } pri;
+    // Example URI: "https://www.example.com:443/path/to/resource?query=example#fragment"
+    std::string_view scheme;  // Example: "https"
+    std::string authority; // Example: "www.example.com:443"
+    std::string path; // Example: "/path/to/resource"
+    struct {
+        int32_t urgency;
+        int inc;
+    } pri;
 
   // Operator < needs to compare all fields, but path should be most important:
     bool operator<(const Request &req) const {

@@ -1,10 +1,23 @@
 #include "tcp_communication.h"
 
-void TcpCommunication::resolveRequestStream(Request const &req, stream_callback_fn cb) {
-    // This just returns the currentRequestIdentifier
-    // Increment the currentRequestIdentifier
-    lock_guard<std::mutex> lock(requestResolverMutex);
-    requestResolutionQueue.push_back(make_pair(req, cb));
+StreamIdentifier TcpCommunication::getNewRequestStreamIdentifier(Request const &req) {
+    // This is just a test, so we don't need to do anything with the cid.
+    // The request is just a placeholder for now.
+    return theStreamIdentifier();    
+}
+
+void TcpCommunication::registerResponseHandler(StreamIdentifier sid, stream_callback_fn cb) {
+    lock_guard<std::mutex> lock(requestorQueueMutex);
+    requestorQueue.push_back(std::make_pair(sid, cb));
+}
+
+void TcpCommunication::deregisterResponseHandler(StreamIdentifier sid) {
+    lock_guard<std::mutex> lock(requestorQueueMutex);
+    auto it = std::remove_if(requestorQueue.begin(), requestorQueue.end(),
+        [&sid](const stream_callback& stream_cb) {
+            return stream_cb.first == sid;
+        });
+    requestorQueue.erase(it, requestorQueue.end());
 }
 
 bool TcpCommunication::processRequestStream() {
@@ -107,25 +120,6 @@ bool TcpCommunication::processResponseStream() {
     return true;
 }
 
-void TcpCommunication::setupRequests() {
-    // For the TCP protocol, this is just testing code, and so there is no real negotiation.
-    // So, if there a thing on the requestResolutionQueue, then pop it and add it to the requestorQueue.
-    RequestCallback request_cb;
-    {
-        lock_guard<std::mutex> lock(requestResolverMutex);
-        if (!requestResolutionQueue.empty()) {
-            request_cb = requestResolutionQueue.front();
-            requestResolutionQueue.erase(requestResolutionQueue.begin());
-        } else {
-            return;
-        }
-    }
-
-    stream_callback request_stream = std::make_pair(theStreamIdentifier(), request_cb.second);
-    lock_guard<std::mutex> lock(requestorQueueMutex);
-    requestorQueue.push_back(request_stream);
-}
-
 void TcpCommunication::setupResponses() {
     // For the TCP protocol, this is just testing code, and so there is no real negotiation.
     // So, we need to put something on the unhandledQueue exactly once.
@@ -134,14 +128,15 @@ void TcpCommunication::setupResponses() {
     }
     prepared_unhandled_response = true;
     const std::string_view uri = "wwatp://localhost/test";
+    Request req = Request{.scheme = "https", .authority = "localhost", .path = "/test"};
     lock_guard<std::mutex> lock(preparerStackMutex);
     for (auto &preparer : preparersStack) {
-        auto response = preparer.second(theStreamIdentifier(), uri);
+        auto response = preparer.second(req);
         auto response_info = response.first;
         if (response_info.can_handle) {
             // Also, since this is just testing code, the various flags are not used.
             lock_guard<std::mutex> lock(responderQueueMutex);
-            responderQueue.push_back(response.second);
+            responderQueue.push_back(make_pair(theStreamIdentifier(), response.second));
             break;
         }
     }
@@ -316,7 +311,6 @@ void TcpCommunication::connect(const string &peer_name, const string& peer_ip_ad
         cout << "Client connected to " << peer_ip_addr << ":" << peer_port+1 << "," << peer_port << endl;
         while (!terminate_) {
             io_context.poll();
-            this->setupRequests();
             this->send();
             this_thread::sleep_for(chrono::milliseconds(100));
         }
