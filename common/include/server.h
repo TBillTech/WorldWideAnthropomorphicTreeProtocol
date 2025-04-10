@@ -71,6 +71,7 @@ struct Stream {
     int send_redirect_response(nghttp3_conn *conn, unsigned int status_code,
                                 const std::string_view &path);
     int64_t find_dyn_length(const Request &path);
+    void append_data(std::span<const uint8_t> data);
     void http_acked_stream_data(uint64_t datalen);
 
     int64_t stream_id;
@@ -97,6 +98,8 @@ struct Stream {
     uint64_t dynbuflen;
     // live_stream is true if the stream length is undefined, and the stream is expected to continue indefinitely.
     bool live_stream;
+    // Span for caching partial chunks
+    shared_span<> partial_chunk;
 };
 
 class Server;
@@ -185,7 +188,7 @@ public:
   void shared_span_incr_rc(uint8_t *locked_ptr, shared_span<> &&to_lock);
   void shared_span_decr_rc(uint8_t *locked_ptr);
 
-  void push_incoming_chunk(const Request& sid, std::span<uint8_t> const &chunk);
+  void push_incoming_chunk(const Request& req, shared_span<> &&chunk);
 
   void writecb_start();
 

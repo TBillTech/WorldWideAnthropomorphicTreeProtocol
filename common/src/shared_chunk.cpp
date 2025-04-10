@@ -1,3 +1,3 @@
 #include "shared_chunk.h"
 
-no_signal global_no_signal;
+no_chunk_header global_no_chunk_header;

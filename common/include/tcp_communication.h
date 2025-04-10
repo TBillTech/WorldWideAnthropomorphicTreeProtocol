@@ -38,7 +38,7 @@ private:
         id.datalen = 2;
         id.data[0] = 0;
         id.data[1] = 11;
-        return StreamIdentifier(id, 42ul);
+        return StreamIdentifier(id, static_cast<uint16_t>(42));
     }
 
     void terminate() {

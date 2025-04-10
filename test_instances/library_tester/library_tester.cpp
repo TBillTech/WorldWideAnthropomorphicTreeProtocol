@@ -42,7 +42,7 @@ int main() {
 
     string protocol = "QUIC";
     //string protocol = "TCP";
-    bool zeroRTT_test = false;
+    bool zeroRTT_test = true;
     if(protocol == "QUIC")
     {
         auto data_path = realpath("../test_instances/data/", nullptr);
@@ -135,18 +135,61 @@ int main() {
     this_thread::sleep_for(chrono::seconds(2));
     cout << "In Main: Server should be started up" << endl;
 
-    auto theServerHandler = [](const StreamIdentifier& stream_id, chunks& request) {
+    struct {
+        bool client_sent_data = false;
+        bool client_sent_greeting = false;
+        bool client_sent_heartbeat = true;
+        bool server_sent_data = false;
+    } send_states;
+    auto theServerHandler = [&send_states](const StreamIdentifier& stream_id, chunks& request) {
         chunks response_chunks;
-        for (auto& chunk : request) {
-            if (chunk.get_signal<request_identifier_tag>().signal == request_identifier_tag::SIGNAL_HEARTBEAT) {
-                cout << "Server got heartbeat in callback" << endl;
-                continue;
+        if (request.empty() && !send_states.server_sent_data) {
+            cout << "Server is idle, so sending data" << endl;
+            chunks response_chunks;
+            // fill 10 response_chunks with 1200 - sizeof(payload_chunk_header) bytes of data initialized to index of data
+            uint8_t data_block[1200];
+            for (int i = 0; i < 1200; i++) {
+                data_block[i] = 'a' + i % 26;
             }
-            string chunk_str(chunk.begin<const char>(), chunk.end<const char>());
-            cout << "Server got request in callback: " << chunk_str << endl;
-            if (chunk_str == "Hello Server!") {
-                static string goodbye_str = "Goodbye Client!";
-                response_chunks.emplace_back(request_identifier_tag(stream_id.logical_id, 0, 0), span<const char>(goodbye_str.c_str(), goodbye_str.size()));
+            size_t data_len = 1200 - sizeof(payload_chunk_header);
+            for (int i = 0; i < 10; i++) {
+                response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, 0, data_len), span<const uint8_t>(data_block, data_len));
+            }
+            send_states.server_sent_data = true;
+            return move(response_chunks);
+        }
+        for (auto& chunk : request) {
+            if (chunk.size() < 100) {
+                if (chunk.get_signal<payload_chunk_header>().signal == payload_chunk_header::SIGNAL_HEARTBEAT) {
+                    cout << "Server got heartbeat in callback" << endl;
+                    continue;
+                }
+                string chunk_str(chunk.begin<const char>(), chunk.end<const char>());
+                cout << "Server got request in callback: " << chunk_str << endl;
+                if (chunk_str == "Hello Server!") {
+                    static string goodbye_str = "Goodbye Client!";
+                    response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, 0, goodbye_str.size()), span<const char>(goodbye_str.c_str(), goodbye_str.size()));
+                }
+            } else {
+                uint8_t data_block[1200];
+                for (int i = 0; i < 1200; i++) {
+                    data_block[i] = 'a' + i % 26;
+                }
+                size_t data_len = 1200 - sizeof(payload_chunk_header);
+                // Verify that the chunk contains the expected data block
+                if (chunk.size() != data_len) {
+                    cout << "Server got request in callback: chunk size mismatch" << endl;
+                } else {
+                    auto data_ptr = chunk.begin<uint8_t>();
+                    for (size_t i = 0; i < data_len; i++) {
+                        if (*data_ptr != data_block[i]) {
+                            cout << "Server got request in callback: data mismatch at index " << i << endl;
+                            break;
+                        }
+                        data_ptr++;
+                    }
+                    cout << "Server got request in callback: data matches" << endl;
+                }
             }
         }
         return move(response_chunks);
@@ -181,27 +224,63 @@ int main() {
     cout << "In Main: Client should be started up" << endl;
 
     auto theRequest = Request{.scheme = "https", .authority = "localhost", .path = "/test"};
-    pair<bool, bool> clientState = make_pair(false, true);
-    auto theClientHandler = [&clientState](const StreamIdentifier& stream_id, chunks &response) {
-        if (response.empty() && !clientState.first) {
+    auto theClientHandler = [&send_states](const StreamIdentifier& stream_id, chunks &response) {
+        if (response.empty() && !send_states.client_sent_data) {
+            cout << "Client is idle, so sending data" << endl;
+            chunks response_chunks;
+            // fill 10 response_chunks with 1200 - sizeof(payload_chunk_header) bytes of data initialized to index of data
+            uint8_t data_block[1200];
+            for (int i = 0; i < 1200; i++) {
+                data_block[i] = 'a' + i % 26;
+            }
+            size_t data_len = 1200 - sizeof(payload_chunk_header);
+            for (int i = 0; i < 10; i++) {
+                response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, 0, data_len), span<const uint8_t>(data_block, data_len));
+            }
+            send_states.client_sent_data = true;
+            return move(response_chunks);
+        }
+        if (response.empty() && !send_states.client_sent_greeting) {
             cout << "Client is idle, so sending Hello Server! message" << endl;
             static string hello_str = "Hello Server!";
             chunks response_chunks;
-            response_chunks.emplace_back(request_identifier_tag(stream_id.logical_id, 0, 0), span<const char>(hello_str.c_str(), hello_str.size()));
-            clientState.first = true;
+            response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, 0, hello_str.size()), span<const char>(hello_str.c_str(), hello_str.size()));
+            send_states.client_sent_greeting = true;
             return move(response_chunks);
         }
-        if (response.empty() && !clientState.second) {
+        if (response.empty() && !send_states.client_sent_heartbeat) {
             cout << "Client is idle, and clientState.second is false, so send heartbeat" << endl;
             chunks response_chunks;
-            auto tag = request_identifier_tag(stream_id.logical_id, request_identifier_tag::SIGNAL_HEARTBEAT, 0);
+            auto tag = signal_chunk_header(stream_id.logical_id, signal_chunk_header::SIGNAL_HEARTBEAT);
             response_chunks.emplace_back(tag, span<const char>("", 0));
-            clientState.second = true;
+            send_states.client_sent_heartbeat = true;
             return move(response_chunks);
         }
         for (auto& chunk : response) {
-            string chunk_str(chunk.begin<const char>(), chunk.end<const char>());
-            cout << "Client got response received in callback: " << chunk_str << endl;
+            if (chunk.size() < 100) {
+                string chunk_str(chunk.begin<const char>(), chunk.end<const char>());
+                cout << "Client got response received in callback: " << chunk_str << endl;
+            } else {
+                uint8_t data_block[1200];
+                for (int i = 0; i < 1200; i++) {
+                    data_block[i] = 'a' + i % 26;
+                }
+                size_t data_len = 1200 - sizeof(payload_chunk_header);
+                // Verify that the chunk contains the expected data block
+                if (chunk.size() != data_len) {
+                    cout << "Client got response received in callback: chunk size mismatch" << endl;
+                } else {
+                    auto data_ptr = chunk.begin<uint8_t>();
+                    for (size_t i = 0; i < data_len; i++) {
+                        if (*data_ptr != data_block[i]) {
+                            cout << "Client got response received in callback: data mismatch at index " << i << endl;
+                            break;
+                        }
+                        data_ptr++;
+                    }
+                    cout << "Client got response received in callback: data matches" << endl;
+                }
+            }        
         }
         chunks no_chunks;
         return move(no_chunks);
@@ -231,7 +310,7 @@ int main() {
     cout << "In Main: Server should have prepared response" << endl;
 
     // Send the heartbeat packet.
-    clientState.second = false;
+    send_states.client_sent_heartbeat = false;
     for(int i = 0; i < wait_loops; i++) {
         client_communication->processRequestStream();
         this_thread::sleep_for(chrono::milliseconds(20));

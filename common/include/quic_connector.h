@@ -145,11 +145,10 @@ public:
         return make_pair(size, vector<StreamIdentifier>(used_identifiers.begin(), used_identifiers.end()));
     }
 
-    void pushIncomingChunk(ngtcp2_cid const& sid, std::span<uint8_t> const &raw_chunk)
+    void pushIncomingChunk(ngtcp2_cid const& sid, shared_span<> &&chunk)
     {
         lock_guard<std::mutex> lock(incomingChunksMutex);
-        auto chunk = shared_span<>(raw_chunk);
-        StreamIdentifier stream_id(sid, chunk.get_signal<request_identifier_tag>().request_id);
+        StreamIdentifier stream_id(sid, chunk.get_request_id());
         auto incoming = incomingChunks.find(stream_id);
         if (incoming == incomingChunks.end()) {
             auto inserted = incomingChunks.insert(make_pair(stream_id, chunks()));
@@ -193,7 +192,7 @@ private:
     std::atomic<bool> terminate_ = false;
     string received_so_far;  // This is a buffer for partially read messages
     bool is_server = false;
-    std::atomic<uint64_t> stream_id_counter = 1;
+    std::atomic<uint16_t> stream_id_counter = 1;
 
     stream_callbacks requestorQueue;
 

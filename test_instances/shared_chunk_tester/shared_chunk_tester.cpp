@@ -45,8 +45,8 @@ bool copy_data_into_span(shared_span<>& span, std::span<const uint8_t> data) {
 }
 
 bool test_shared_span_constructor() {
-    shared_span<> span(global_no_signal, true);
-    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_signal);
+    shared_span<> span(global_no_chunk_header, true);
+    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_chunk_header);
     if (span.size() != ChunkDataSize) {
         return false;
     }
@@ -54,8 +54,8 @@ bool test_shared_span_constructor() {
 }
 
 bool test_update_shared_span_segment() {
-    shared_span<> span(global_no_signal, true);
-    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_signal);
+    shared_span<> span(global_no_chunk_header, true);
+    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_chunk_header);
     copy_data_into_span(span, std::span<const uint8_t>(memoryBlock0, ChunkDataSize));
     auto restricted_span = span.restrict(make_pair(7, 5));
     auto remaining_span = span.restrict(make_pair(7+5, ChunkDataSize-5-7));
@@ -78,8 +78,8 @@ bool test_update_shared_span_segment() {
 }
 
 bool test_shared_span_restrict() {
-    shared_span<> span(global_no_signal, true);
-    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_signal);
+    shared_span<> span(global_no_chunk_header, true);
+    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_chunk_header);
     copy_data_into_span(span, std::span<const uint8_t>(memoryBlock0, ChunkDataSize));
     auto restricted_span = span.restrict(make_pair(7, 5));
     auto remaining_span = span.restrict(make_pair(7+5, ChunkDataSize-5-7));
@@ -93,12 +93,12 @@ bool test_shared_span_restrict() {
 }
 
 bool test_shared_span_copy_from_span() {
-    shared_span<> span(global_no_signal, true);
+    shared_span<> span(global_no_chunk_header, true);
     return copy_data_into_span(span, std::span<const uint8_t>(memoryBlock0, span.size()));
 }
 
 bool test_shared_span_use_chunk() {
-    shared_span<> span(global_no_signal, true);
+    shared_span<> span(global_no_chunk_header, true);
     span.copy_from_span(std::span<const uint8_t>((uint8_t*)"Hello, World!", 13));
     auto chunk = span.use_chunk();
     if (memcmp(chunk->data + span.get_signal_size(), "Hello, World!", 13) != 0) {
@@ -110,9 +110,9 @@ bool test_shared_span_use_chunk() {
 
 // Also need to test that appending spans together creates the right byte sequences
 bool test_shared_span_append() {
-    shared_span<> sspan(global_no_signal, true);
-    shared_span<> span2(global_no_signal, true);
-    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_signal);
+    shared_span<> sspan(global_no_chunk_header, true);
+    shared_span<> span2(global_no_chunk_header, true);
+    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_chunk_header);
     copy_data_into_span(sspan, std::span<const uint8_t>(memoryBlock0, ChunkDataSize));
     copy_data_into_span(span2, std::span<const uint8_t>(memoryBlockA, ChunkDataSize));
     auto appended_span = sspan.append(span2);
@@ -127,8 +127,8 @@ bool test_shared_span_append() {
 
 // The following is the same as the above test, except use the span constructor with the full 2400 length memoryBlock0
 bool test_shared_span_copy_more() {
-    shared_span<> sspan(global_no_signal, std::span<const uint8_t>(memoryBlock0, 2400));
-    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_signal);
+    shared_span<> sspan(global_no_chunk_header, std::span<const uint8_t>(memoryBlock0, 2400));
+    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_chunk_header);
     // Now create two subspans from the appended_span and check that they are the same as the original data
     auto restricted_span = sspan.restrict(make_pair(0, 1200));
     auto remaining_span = sspan.restrict(make_pair(1200, 2400));
@@ -163,8 +163,8 @@ bool test_shared_span_copy_more() {
 
 bool test_shared_span_POD_iterator() {
     // First create two shared_spans will allocation using an odd size
-    shared_span<> sspan(global_no_signal, true);
-    shared_span<> span2(global_no_signal, true);
+    shared_span<> sspan(global_no_chunk_header, true);
+    shared_span<> span2(global_no_chunk_header, true);
     // Make a POD type that is an odd size compared to 1200
     struct OddSizedPOD {
         uint8_t data[307];
@@ -211,9 +211,9 @@ bool test_shared_span_POD_iterator() {
 }
 
 bool test_string_shared_span_iteration() {
-    shared_span<> sspan(global_no_signal, true);
-    shared_span<> span2(global_no_signal, true);
-    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_signal);
+    shared_span<> sspan(global_no_chunk_header, true);
+    shared_span<> span2(global_no_chunk_header, true);
+    const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_chunk_header);
     copy_data_into_span(sspan, std::span<const uint8_t>(memoryBlock0, ChunkDataSize));
     copy_data_into_span(span2, std::span<const uint8_t>(memoryBlockA, ChunkDataSize));
     auto appended_span = sspan.append(span2);

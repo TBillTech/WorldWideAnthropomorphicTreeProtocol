@@ -54,12 +54,19 @@ struct ClientStream {
     ClientStream(const Request &req, int64_t stream_id, Client *handler);
     ~ClientStream();
 
+    void append_data(std::span<const uint8_t> data);
+
     int open_file(const std::string_view &path);
+
+    bool lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3_vec *vec, size_t veccnt);
+    pair<size_t, vector<StreamIdentifier>> get_pending_chunks_size(int64_t stream_id, size_t veccnt);   
 
     Request req;
     int64_t stream_id;
     int fd;
     Client *handler;
+    shared_span<> partial_chunk;
+    chunks locked_chunks;
 };
 
 struct Endpoint {
@@ -149,13 +156,13 @@ public:
 
   bool should_exit() const;
 
-  bool lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3_vec *vec, size_t veccnt);
+  bool lock_outgoing_chunks(chunks &locked_chunks, vector<StreamIdentifier> const &sids, nghttp3_vec *vec, size_t veccnt);
   pair<size_t, vector<StreamIdentifier>> get_pending_chunks_size(int64_t stream_id, size_t veccnt);
   void unlock_chunks(nghttp3_vec *vec, size_t veccnt);
   void shared_span_incr_rc(uint8_t *locked_ptr, shared_span<> &&to_lock);
   void shared_span_decr_rc(uint8_t *locked_ptr);
 
-  void push_incoming_chunk(ngtcp2_cid const& sid, std::span<uint8_t> const &chunk);
+  void push_incoming_chunk(shared_span<> &&chunk);
 
   void writecb_start();
 

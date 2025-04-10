@@ -62,7 +62,8 @@ Stream::Stream(int64_t stream_id, Handler *handler)
       dynresp(false),
       dyndataleft(0),
       dynbuflen(0),
-      live_stream(false) {}
+      live_stream(false),
+      partial_chunk(global_no_chunk_header, false) {}
 
 namespace
 {
@@ -288,6 +289,55 @@ int64_t Stream::find_dyn_length(const Request &req)
     return response.dyn_length;
 }
 
+void Stream::append_data(std::span<const uint8_t> data) {
+    if (data.empty()) {
+        return;
+    }
+    auto remaining_span = data.subspan(0, data.size());
+    // Note: if empty partial_chunk, size() and get_wire_size() are both 0, so it will test as not in progress.
+    // Check if a prior chunk is already in progress, by examining the in memory size so far with the size read from the wire
+    if (partial_chunk.size() + partial_chunk.get_signal_size() != partial_chunk.get_wire_size())
+    {
+        // If so, append the as much data as necessary to the partial chunk
+        size_t copy_bytes = min(partial_chunk.get_wire_size() - partial_chunk.get_signal_size() - partial_chunk.size(), data.size());
+        auto next_start = partial_chunk.expand_use(copy_bytes);
+        auto data_span = data.subspan(0, copy_bytes);
+        partial_chunk.copy_span(data_span, {true, next_start});
+        auto end_span = data.subspan(copy_bytes-6, 12);
+        cerr << "Stream::end_span bytes: ";
+        for (auto byte : end_span) {
+            cerr << hex << static_cast<int>(byte) << " ";
+        }
+        cerr << endl << flush;
+        remaining_span = data.subspan(copy_bytes, data.size() - copy_bytes);
+    } else {
+        // Otherwise, create a new chunk and copy the data into it
+        uint8_t signal_type = data[0];
+        if (signal_type == signal_chunk_header::GLOBAL_SIGNAL_TYPE)
+        {
+            auto signal_span = data.subspan(0, min(sizeof(signal_chunk_header), data.size())); 
+            partial_chunk = shared_span<>(signal_span);
+            remaining_span = data.subspan(signal_span.size(), data.size() - signal_span.size());
+        } else if (signal_type == payload_chunk_header::GLOBAL_SIGNAL_TYPE)
+        {
+            auto header = reinterpret_cast<payload_chunk_header const*>(data.subspan(0, sizeof(payload_chunk_header)).data());
+            auto data_span = data.subspan(0, min(header->get_wire_size(), data.size()));
+            partial_chunk = shared_span<>(data_span);
+            remaining_span = data.subspan(data_span.size(), data.size() - data_span.size());
+        } else {
+            throw std::invalid_argument("Unknown signal type");
+        }
+    }
+    // Check if the chunk is complete
+    if (partial_chunk.size() + partial_chunk.get_signal_size() == partial_chunk.get_wire_size()) {
+        // If so, push it onto the incoming queue
+        handler->push_incoming_chunk(req, move(partial_chunk));
+        partial_chunk = shared_span<>(global_no_chunk_header, false);
+    }
+    append_data(remaining_span);
+}
+
+
 namespace
 {
     nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
@@ -402,10 +452,10 @@ void Handler::shared_span_decr_rc(uint8_t *locked_ptr)
     locked_chunks_.erase(locked_ptr);
 }
 
-void Handler::push_incoming_chunk(const Request& req, std::span<uint8_t> const &chunk)
+void Handler::push_incoming_chunk(const Request& req, shared_span<> &&chunk)
 {
     // Push the chunk into the quic_connector_ requestResolutionQueue
-    server()->listener().pushIncomingChunk(req, get_scid(), chunk);
+    server()->listener().pushIncomingChunk(req, get_scid(), move(chunk));
 }
 
 
@@ -1289,7 +1339,7 @@ namespace
         h->http_consume(stream_id, datalen);
         // Then we have a full chunk, so we need to push it into the quic_connector_
         auto data_span = std::span<uint8_t>(const_cast<uint8_t*>(data), datalen);
-        h->push_incoming_chunk(stream->req, data_span);
+        stream->append_data(data_span);
     
         return 0;
     }
@@ -4188,11 +4238,11 @@ bool QuicListener::processResponseStream() {
             }
         }
         for (auto &chunk : to_process) {
-            // IF the chunk is an int_signal CLOSING, then we need to set the signal_closed flag
-            if (chunk.get_signal_type() == int_signal::GLOBAL_SIGNAL_TYPE) {
-                auto signal = chunk.get_signal<int_signal>();
+            // IF the chunk is an signal_chunk_header CLOSING, then we need to set the signal_closed flag
+            if (chunk.get_signal_type() == signal_chunk_header::GLOBAL_SIGNAL_TYPE) {
+                auto signal = chunk.get_signal<signal_chunk_header>();
                 switch (signal.signal) {
-                    case int_signal::SIGNAL_CLOSE_STREAM:
+                    case signal_chunk_header::SIGNAL_CLOSE_STREAM:
                         signal_closed = true;
                         break;
                 

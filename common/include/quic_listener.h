@@ -122,10 +122,9 @@ public:
         return make_pair(size, vector<StreamIdentifier>(used_identifiers.begin(), used_identifiers.end()));
     }
 
-    void pushIncomingChunk(const Request& req, ngtcp2_cid const& scid, std::span<uint8_t> const &chunk)
+    void pushIncomingChunk(const Request& req, ngtcp2_cid const& scid, shared_span<> &&chunk)
     {
-        request_identifier_tag const *tag = reinterpret_cast<request_identifier_tag const *>(chunk.data());
-        StreamIdentifier sid(scid, tag->request_id);
+        StreamIdentifier sid(scid, chunk.get_request_id());
         bool handler_ready = false;
         {
             lock_guard<std::mutex> lock(responderQueueMutex);
@@ -143,9 +142,9 @@ public:
         auto incoming = incomingChunks.find(sid);
         if (incoming == incomingChunks.end()) {
             auto inserted = incomingChunks.insert(make_pair(sid, chunks()));
-            inserted.first->second.emplace_back(chunk);
+            inserted.first->second.emplace_back(move(chunk));
         } else {
-            incoming->second.emplace_back(chunk);
+            incoming->second.emplace_back(move(chunk));
         }
     }
 

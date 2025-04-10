@@ -44,7 +44,8 @@ ClientStream::ClientStream(const Request &req, int64_t stream_id, Client *client
     : req(req),
         stream_id(stream_id),
         fd(-1),
-        handler(client) {}
+        handler(client),
+        partial_chunk(global_no_chunk_header, false) {}
 
 ClientStream::~ClientStream() {
   if (fd != -1) {
@@ -82,6 +83,68 @@ int ClientStream::open_file(const std::string_view &path) {
 
   return 0;
 }
+
+void ClientStream::append_data(std::span<const uint8_t> data) {
+    if (data.empty()) {
+        return;
+    }
+    auto remaining_span = data.subspan(0, data.size());
+    // Note: if empty partial_chunk, size(), get_signal_size() and get_wire_size() are all 0, so it will test as not in progress.
+    // Check if a prior chunk is already in progress, by examining the in memory size so far with the size read from the wire
+    if (partial_chunk.size() + partial_chunk.get_signal_size() != partial_chunk.get_wire_size())
+    {
+        // If so, append the as much data as necessary to the partial chunk
+        size_t copy_bytes = min(partial_chunk.get_wire_size() - partial_chunk.get_signal_size() - partial_chunk.size(), data.size());
+        auto next_start = partial_chunk.expand_use(copy_bytes);
+        auto data_span = data.subspan(0, copy_bytes);
+        partial_chunk.copy_span(data_span, {true, next_start});
+        auto end_span = data.subspan(copy_bytes-6, 12);
+        cerr << "Client Stream Decode  end_span bytes: ";
+        for (auto byte : end_span) {
+            cerr << hex << static_cast<int>(byte) << " ";
+        }
+        cerr << endl << flush;
+        remaining_span = data.subspan(copy_bytes, data.size() - copy_bytes);
+    } else {
+        // Otherwise, create a new chunk and copy the data into it
+        uint8_t signal_type = data[0];
+        if (signal_type == signal_chunk_header::GLOBAL_SIGNAL_TYPE)
+        {
+            auto signal_span = data.subspan(0, min(sizeof(signal_chunk_header), data.size())); 
+            partial_chunk = shared_span<>(signal_span);
+            remaining_span = data.subspan(signal_span.size(), data.size() - signal_span.size());
+        } else if (signal_type == payload_chunk_header::GLOBAL_SIGNAL_TYPE)
+        {
+            auto header = reinterpret_cast<payload_chunk_header const*>(data.subspan(0, sizeof(payload_chunk_header)).data());
+            auto data_span = data.subspan(0, min(header->get_wire_size(), data.size()));
+            partial_chunk = shared_span<>(data_span);
+            remaining_span = data.subspan(data_span.size(), data.size() - data_span.size());
+        } else {
+            throw std::invalid_argument("Unknown signal type");
+        }
+    }
+    // Check if the chunk is complete
+    if (partial_chunk.size() + partial_chunk.get_signal_size() == partial_chunk.get_wire_size()) {
+        // If so, push it onto the incoming queue
+        handler->push_incoming_chunk(move(partial_chunk));
+        partial_chunk = shared_span<>(global_no_chunk_header, false);
+    }
+    append_data(remaining_span);
+}
+
+bool ClientStream::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3_vec *vec, size_t veccnt)
+{
+    // Assume that by the time lock_outgoing_chunks is called on this stream again, that it is safe to free
+    // any previously locked chunks.
+    //locked_chunks.clear();
+    return handler->lock_outgoing_chunks(locked_chunks, sids, vec, veccnt);
+}
+
+pair<size_t, vector<StreamIdentifier>> ClientStream::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
+{
+    return handler->get_pending_chunks_size(stream_id, veccnt);
+}
+
 
 namespace {
 void writecb(struct ev_loop *loop, ev_io *w, int revents) {
@@ -1078,14 +1141,6 @@ int Client::write_streams() {
         disconnect();
         return -1;
       }
-      if ((sveccnt == 0) && (stream_id == -1)) {
-        std::cerr << "Client nghttp3_conn_writev_stream: no stream to write" << std::endl;
-      }
-      else
-      {
-        std::cerr << "Client nghttp3_conn_writev_stream: stream_id=" << stream_id
-                  << " sveccnt=" << sveccnt << std::endl;
-      }
     }
 
     ngtcp2_ssize ndatalen;
@@ -1104,7 +1159,6 @@ int Client::write_streams() {
     auto nwrite = ngtcp2_conn_writev_stream(
       conn_, &ps.path, &pi, buf.data(), buflen, &ndatalen, flags, stream_id,
       reinterpret_cast<const ngtcp2_vec *>(v), vcnt, ts);
-    unlock_chunks(vec.data(), vec.size());
     if (nwrite < 0) {
       switch (nwrite) {
       case NGTCP2_ERR_STREAM_DATA_BLOCKED:
@@ -1228,6 +1282,7 @@ int Client::write_streams() {
 
       return 0;
     }
+    
   }
 }
 
@@ -1907,7 +1962,7 @@ int Client::on_extend_max_streams() {
   return 0;
 }
 
-bool Client::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3_vec *vec, size_t veccnt)
+bool Client::lock_outgoing_chunks(chunks &locked_chunks, vector<StreamIdentifier> const &sids, nghttp3_vec *vec, size_t veccnt)
 {
     // Unlike the unlock_chunks function, this function has to actually do the buisness logic
     // bit where it pops the chunks from the outgoingChunks queue
@@ -1927,10 +1982,8 @@ bool Client::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3_
         vec[vec_index].base = locked_ptr;
         vec[vec_index].len = chunk.get_signal_size() + chunk.size();
         vec_index++;
-
-        // Call shared_span_incr_rc to increment the reference count
-        shared_span_incr_rc(locked_ptr, std::move(chunk));
     }
+    locked_chunks.insert(locked_chunks.end(), std::make_move_iterator(to_send.begin()), std::make_move_iterator(to_send.end()));
     return signal_closed;
 }
 
@@ -1949,7 +2002,7 @@ void Client::unlock_chunks(nghttp3_vec *vec, size_t veccnt)
         auto it = locked_chunks_.find(vec[i].base);
         if (it != locked_chunks_.end())
         {
-            shared_span_decr_rc(vec[i].base);
+            //shared_span_decr_rc(vec[i].base);
         }
     }
 }
@@ -1965,10 +2018,11 @@ void Client::shared_span_decr_rc(uint8_t *locked_ptr)
     locked_chunks_.erase(locked_ptr);
 }
 
-void Client::push_incoming_chunk(ngtcp2_cid const &sid, std::span<uint8_t> const &chunk)
+void Client::push_incoming_chunk(shared_span<> &&chunk)
 {
+    auto sid = get_dcid();
     // Push the chunk into the quic_connector_ requestResolutionQueue
-    quic_connector_.pushIncomingChunk(sid, chunk);
+    quic_connector_.pushIncomingChunk(sid, move(chunk));
 }
 
 namespace {
@@ -1983,7 +2037,7 @@ nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
 
     ngtcp2_conn_info ci;
     ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
-    auto pending = stream->handler->get_pending_chunks_size(stream_id, veccnt);
+    auto pending = stream->get_pending_chunks_size(stream_id, veccnt);
     if (pending.first > ci.cwnd)
     {
         return NGHTTP3_ERR_WOULDBLOCK;
@@ -1991,7 +2045,7 @@ nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
     if (pending.first == 0) {
         is_closing = true;
     } else {
-        is_closing = stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
+        is_closing = stream->lock_outgoing_chunks(pending.second, vec, veccnt);
     }
 
     if (is_closing) {
@@ -2037,7 +2091,7 @@ namespace
 
         ngtcp2_conn_info ci;
         ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
-        auto pending = stream->handler->get_pending_chunks_size(stream_id, veccnt);
+        auto pending = stream->get_pending_chunks_size(stream_id, veccnt);
         if (pending.first > ci.cwnd)
         {
             return NGHTTP3_ERR_WOULDBLOCK;
@@ -2045,7 +2099,7 @@ namespace
         if (pending.first == 0) {
             is_closing = true;
         } else {
-            is_closing = stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
+            is_closing = stream->lock_outgoing_chunks(pending.second, vec, veccnt);
         }
     
         if (is_closing) {
@@ -2212,7 +2266,7 @@ int http_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data,
     c->http_consume(stream_id, datalen);
     // Then we have a full chunk, so we need to push it into the quic_connector_
     auto data_span = std::span<uint8_t>(const_cast<uint8_t*>(data), datalen);
-    c->push_incoming_chunk(c->get_dcid(), data_span);
+    stream->append_data(data_span);
     return 0;
 }
 } // namespace
@@ -2946,11 +3000,11 @@ bool QuicConnector::processRequestStream() {
             }
         }
         for (auto &chunk : to_process) {
-            // IF the chunk is an int_signal CLOSING, then we need to set the signal_closed flag
-            if (chunk.get_signal_type() == int_signal::GLOBAL_SIGNAL_TYPE) {
-                auto signal = chunk.get_signal<int_signal>();
+            // IF the chunk is an signal_chunk_header CLOSING, then we need to set the signal_closed flag
+            if (chunk.get_signal_type() == signal_chunk_header::GLOBAL_SIGNAL_TYPE) {
+                auto signal = chunk.get_signal<signal_chunk_header>();
                 switch (signal.signal) {
-                    case int_signal::SIGNAL_CLOSE_STREAM:
+                    case signal_chunk_header::SIGNAL_CLOSE_STREAM:
                         signal_closed = true;
                         break;
                 

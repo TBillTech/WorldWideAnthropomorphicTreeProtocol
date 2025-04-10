@@ -38,7 +38,7 @@ using namespace std;
 
 class StreamIdentifier {
     public:
-    StreamIdentifier(ngtcp2_cid cid, uint64_t logical_id) : cid(cid), logical_id(logical_id) {};
+    StreamIdentifier(ngtcp2_cid cid, uint16_t logical_id) : cid(cid), logical_id(logical_id) {};
     StreamIdentifier(ngtcp2_cid cid, int64_t stream_id) = delete;
     StreamIdentifier(StreamIdentifier const &other) : cid(other.cid), logical_id(other.logical_id) {};
         
@@ -47,7 +47,7 @@ class StreamIdentifier {
     ngtcp2_cid cid; 
     // logical_id identifies which stream in the connection defines this request;
     // consecutive even numbers for client requests, consecutive odd numbers for server pushes (legacy)
-    uint64_t logical_id;
+    uint16_t logical_id;
 
 
     bool operator<(const StreamIdentifier& other) const {
@@ -72,8 +72,6 @@ class StreamIdentifier {
         return os;
     }
 };
-
-typedef vector<shared_span<> > chunks;
 
 // The stream callback function is generally used by both sides to process incoming and outgoing data for bidirectional streams.
 using stream_callback_fn = function<chunks(const StreamIdentifier&, chunks&)>;
