@@ -52,33 +52,33 @@ message(STATUS "HAVE_LINUX_RTNETLINK_H: ${HAVE_LINUX_RTNETLINK_H}")
 # Include directories
 include_directories(
     ${Boost_INCLUDE_DIRS}
-    ${PROJECT_SOURCE_DIR}/common/include 
+    ${PROJECT_SOURCE_DIR}/common/transport/include 
     ${PROJECT_SOURCE_DIR}/libraries/boringssl/include
 )
 
 # Add common source files
 set(COMMON_SOURCES
-    ${PROJECT_SOURCE_DIR}/common/src/memory_pool.cpp
-    ${PROJECT_SOURCE_DIR}/common/src/shared_chunk.cpp
-    ${PROJECT_SOURCE_DIR}/common/src/tcp_communication.cpp
-    ${PROJECT_SOURCE_DIR}/common/src/quic_listener.cpp
-    ${PROJECT_SOURCE_DIR}/common/src/quic_connector.cpp
-    ${PROJECT_SOURCE_DIR}/common/src/server_base.cc
-    ${PROJECT_SOURCE_DIR}/common/src/client_base.cc
-    ${PROJECT_SOURCE_DIR}/common/src/config_base.cc
-    ${PROJECT_SOURCE_DIR}/common/src/tls_server_session_boringssl.cc
-    ${PROJECT_SOURCE_DIR}/common/src/tls_server_context_boringssl.cc
-    ${PROJECT_SOURCE_DIR}/common/src/tls_client_session_boringssl.cc
-    ${PROJECT_SOURCE_DIR}/common/src/tls_client_context_boringssl.cc
-    ${PROJECT_SOURCE_DIR}/common/src/util.cc
-    ${PROJECT_SOURCE_DIR}/common/src/http.cc
-    ${PROJECT_SOURCE_DIR}/common/src/util_openssl.cc
-    ${PROJECT_SOURCE_DIR}/common/src/tls_session_base_quictls.cc
-    ${PROJECT_SOURCE_DIR}/common/src/tls_shared_boringssl.cc
-    ${PROJECT_SOURCE_DIR}/common/src/urlparse.c
-    ${PROJECT_SOURCE_DIR}/common/src/debug.cc
-    ${PROJECT_SOURCE_DIR}/common/src/shared.cc
-    ${PROJECT_SOURCE_DIR}/common/src/siphash.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/memory_pool.cpp
+    ${PROJECT_SOURCE_DIR}/common/transport/src/shared_chunk.cpp
+    ${PROJECT_SOURCE_DIR}/common/transport/src/tcp_communication.cpp
+    ${PROJECT_SOURCE_DIR}/common/transport/src/quic_listener.cpp
+    ${PROJECT_SOURCE_DIR}/common/transport/src/quic_connector.cpp
+    ${PROJECT_SOURCE_DIR}/common/transport/src/server_base.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/client_base.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/config_base.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/tls_server_session_boringssl.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/tls_server_context_boringssl.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/tls_client_session_boringssl.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/tls_client_context_boringssl.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/util.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/http.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/util_openssl.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/tls_session_base_quictls.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/tls_shared_boringssl.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/urlparse.c
+    ${PROJECT_SOURCE_DIR}/common/transport/src/debug.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/shared.cc
+    ${PROJECT_SOURCE_DIR}/common/transport/src/siphash.cc
 )
 
 # Add test executables
