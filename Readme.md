@@ -30,7 +30,8 @@ The tree protocol has a tree structure, with node branches having any number of 
 - **A version**:
   - Sequence Number % Max Sequence, Max Sequence, UTF8 policy
   - Optional: Authorial proof (a node reference)
-  - Optional: TokenRing (A node containing the authors, permissions, rules, etc.)
+  - Optional: Authors: for TokenRing A node containing the authors, permissions, rules, etc.
+  - Optional: Readers
   - Optional: Collision depth
 - **Child names**: List of [UTF8 label templates]
 - **Contents**: Length-Value bytes
@@ -73,7 +74,7 @@ It is recommended that only changes to the tree be sent across the protocol unle
 - Once
 - Auto
 
-## Underlying technologies
+## Underlying technologies for transport layer
 
 At present the Agents attaching to the tree will use QUIC and HTTP/3 communication.  This will permit, for example, different branches of the tree to be sent either whole or in part to multiple other agents simultaneously.
 
@@ -82,3 +83,40 @@ For now, the QUIC + HTTP/3 library will be nghttp3.
 After further reasearch, the HTTP/3 protocol shows some difficulties. Crucially, it appears that when the server blocks due to no data ready, then the client also blocks.  This implies that the desired following flow is broken.  The client should connect to the server on a stream, then client sends messages to the server, then the server reads those messages, then the server replies to the messages, and repeat. The broken bit is that when the server "blocks" based on not having more data to send, then the client also "blocks" on sending data even if it has data to send.
 
 Workaround: Logically disconnect RequestIdentifiers of the QuicConnector and QuicListener from QUIC streams. On client side, send a "request" which is actually a sequence of chunks with RequestIdentifiers in a batch.  Then, on server side, the new "stream" gets created, with a single "request" composed of a batch of RequestIdentified chunks, and then a single "reply" composed of a batch of RequestIdentified result chunks is sent back allowing the stream to close.  If there is enough data being sent back and forth, it might even keep the stream open.
+
+
+## Backends, Frontends, and how they are composed
+
+While the transport layer is super important, it is also abstracted away.  A frontend choice combined with a backend choice in effect creates an application.  Every frontend has exactly one backend.  Backends, on the other hand, can be composed of multiple other backends, or they may virtualize parts of the tree via agentic generation.
+
+A special remark for supporting web applications is that http3_server_cpp has wwatp behavior only for the magic wwatp tree root.  Otherwise, index.html will provide the dom bootstrap logic which can usually make "something" out of the tree in terms of css and dom elements.  I'm expecting to create an LLM tool called a css-watcher that watches both the css file and the tree, synchronizing them, and providing the css as a node in the tree that the index.html will reference. Then mostly what is required by the js_client_lib is to apply the dom_link_javascript frontend.
+
+Current architecture has the following details:
+cpp_client_lib supports developing a tool (tools can be applications with UIs):
+* frontend is direct_cpp for a tool
+* backend is http3_client for a tool
+js_client_lib supports developing a web application:
+* frontend is direct_javascript for a web application
+* backend is http3_client for a web application
+The server program generally supports simple services without additional development, including services that need to restructure or remap the tree in simple ways, and services which can be backed by trees in memory (and on disk):
+* frontend is http3_server_cpp for a service
+* backend is http3_client, memory, or composite (which composes more composite, http3_client, and memory backends)
+cpp_client_lib also supports developing custom services (for example, a custom postgres service)
+* frontend is http3_server_cpp for a custom service
+* backend implements interface
+* If using the server program for all composition needs is too burdensome on system resources, a custom service can also use composite and other backends
+
+To summarize what goes into the two libraries, everything from common:
+cpp_client_lib: frontend; direct_cpp http3_server_cpp, backend_cpp; composite interface http3_client memory 
+js_client_lib: frontend; direct_javascript dom_link_javascript, backend_js; http3_client
+
+Here are some examples:
+* A game client composed of an unreal_engine frontend using an http3_client backend_cpp.
+* A game client server composed of an http3_server_cpp frontend and a postgres backend_cpp.
+* A digital employee composed of:
+    * A browser dom_link_javascript frontend using an http3_client backend_js.
+    * A composer for browser with http3_server_cpp frontend presenting the curent task, backlog, status, and the css blob (memory backend?)
+    * A css watcher tool with css_watcher frontend and http3_client backend_js informing the composer.
+    * A wwatp hub http3_server_cpp frontend using a postgres backend_cpp.
+    * A worker manager using direct_cpp frontend and http3_client backend_cpp, which can create worker/tool processes:
+    * Multiple worker/tool processes using direct_cpp frontend and http3_client backend_cpp, additionally tools having various ways to transform tree information to additional tree information.  For example, performing algebra on equations using maxima.  Or watching a yaml file, and keeping the tree in sync with the yaml file.

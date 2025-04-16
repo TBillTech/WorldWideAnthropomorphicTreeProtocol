@@ -52,6 +52,8 @@ message(STATUS "HAVE_LINUX_RTNETLINK_H: ${HAVE_LINUX_RTNETLINK_H}")
 # Include directories
 include_directories(
     ${Boost_INCLUDE_DIRS}
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/interface
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/include
     ${PROJECT_SOURCE_DIR}/common/transport/include 
     ${PROJECT_SOURCE_DIR}/libraries/boringssl/include
 )
@@ -79,6 +81,8 @@ set(COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/common/transport/src/debug.cc
     ${PROJECT_SOURCE_DIR}/common/transport/src/shared.cc
     ${PROJECT_SOURCE_DIR}/common/transport/src/siphash.cc
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/memory_tree.cpp
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/simple_backend.cpp
 )
 
 # Add test executables
