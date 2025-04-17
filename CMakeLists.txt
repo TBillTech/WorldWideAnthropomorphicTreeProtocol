@@ -83,6 +83,7 @@ set(COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/common/transport/src/siphash.cc
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/memory_tree.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/simple_backend.cpp
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/transactional_backend.cpp
 )
 
 # Add test executables

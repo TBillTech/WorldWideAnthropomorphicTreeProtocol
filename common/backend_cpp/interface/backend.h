@@ -4,6 +4,7 @@
 #include <vector>
 #include <optional>
 #include <cstdint> // For uint8_t
+#include <functional> // For std::function
 
 // Represents a node in the tree structure.
 struct TreeNode {
@@ -43,6 +44,11 @@ using SubTransaction = std::pair<NewNodeVersion, std::vector<NewNodeVersion>>;
 // A transaction is a list of subtransactions.  The transaction is atomic, meaning that all the
 using Transaction = std::vector<SubTransaction>;
 
+class Backend;
+
+// Define a callback type for node listeners.
+using NodeListenerCallback = std::function<void(Backend&, const std::string, const std::optional<TreeNode>)>;
+
 // Pure virtual class representing the backend interface for the Tree.
 class Backend {
 public:
@@ -70,18 +76,9 @@ public:
 
     virtual std::vector<TreeNode> relativeQueryNodes(const TreeNode& node, const std::string& label_rule) const = 0;
 
-    // Initiate transaction (versus versioning).
-    // Depending on the policy, transactions will work differently.  In the large, however, a "user"
-    // attempts a transaction by implicitly creating from-to versions of modified nodes.
-    // When the transaction is attempted, the backend will "atomically" update all the nodes to the new versions.  
-    // Or else it will fail the transaction.  The argument is an independent parent node that needs to be
-    // transactionally handled.  (Any children of this node do not need to be passed to this method.)
-    virtual bool openTransactionLayer(const TreeNode& node) = 0;
-
-    // Commit the transaction layer.  Note that this operation is done "in memory" unless it is the base transaction layer.
-    // If this is the base transaction layer, then it can fail if the transaction is not valid, which is equivalent to
-    // rollback.  Higher transaction layer fails also rollback in memory.
-    virtual bool closeTransactionLayers(void) = 0;
+    // The standard backend interface does not support operations on transactions, it only supports applying a 
+    // transaction.  This allows for separating the concerns of building a transaction from the underlying tree functionality.
+    virtual bool applyTransaction(const Transaction& transaction) = 0;
 
     // Retrieve the entire tree structure (for debugging or full sync purposes).  Obviously, this will not
     // return nodes that the user does not have permission to read.
@@ -91,7 +88,11 @@ public:
     // For token ring nodes, the listener will get notified only after the token has been passed to it.
     // Technically, this means you cannot listen to sub components of data-structures.
     // Which also means that implementations should not modify data blocks without updating the version.
-    virtual void registerNodeListener(const std::string& label_rule) = 0;
-    virtual void deregisterNodeListener(const std::string& label_rule) = 0;
+    virtual void registerNodeListener(const std::string listener_name, const std::string label_rule, NodeListenerCallback callback) = 0;
+    virtual void deregisterNodeListener(const std::string listener_name, const std::string label_rule) = 0;
+
+    // Sometimes a higher level backend needs to tell a lower level backend to notify a listener of something,
+    // even though the higher level backend is not explicitly tracking the listeners. So, notifyListeners is in this interface:
+    virtual void notifyListeners(const std::string& label_rule, const std::optional<TreeNode>& node) = 0;
 };
 
