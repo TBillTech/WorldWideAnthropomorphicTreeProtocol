@@ -3,6 +3,7 @@
 #include <regex>
 
 using namespace std;
+using namespace fplus;
 
 // This function will check two nodes and verify that the label_rules to not overlap.
 // label rules overlap if the label rule of one node is a prefix of the other.
@@ -59,7 +60,7 @@ bool checkLabelRuleOverlap(const string& label_rule_1, const string& label_rule_
     return false;
 }
 
-std::optional<TreeNode> SimpleBackend::getNode(const std::string& label_rule) const {
+maybe<TreeNode> SimpleBackend::getNode(const std::string& label_rule) const {
     return memory_tree_.getNode(label_rule);
 }
 
@@ -68,7 +69,7 @@ bool SimpleBackend::upsertNode(const std::vector<TreeNode>& nodes) {
     memory_tree_.upsertNode(nodes);
     // Notify listeners for each node
     for (const auto& node : nodes) {
-        auto label_rule = node.label_rule;
+        auto label_rule = node.getLabelRule();
         notifyListeners(label_rule, node);
     }
     return true;
@@ -78,7 +79,7 @@ bool SimpleBackend::deleteNode(const std::string& label_rule) {
     // If there is no transaction stack, then just apply the delete to the tree
     memory_tree_.deleteNode(label_rule);
     // Notify listeners for each node
-    notifyListeners(label_rule, nullopt);
+    notifyListeners(label_rule, maybe<TreeNode>());
     return true;
 }
 
@@ -124,7 +125,7 @@ void SimpleBackend::deregisterNodeListener(const std::string listener_name, cons
     }
 }
 
-void SimpleBackend::notifyListeners(const std::string& label_rule, const std::optional<TreeNode>& node) {
+void SimpleBackend::notifyListeners(const std::string& label_rule, const maybe<TreeNode>& node) {
     auto found = node_listeners_.find(label_rule);
     if (found != node_listeners_.end()) {
         auto listeners = found->second.second;

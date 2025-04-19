@@ -4,7 +4,7 @@
 #include "memory_tree.h"
 #include <map>
 
-bool checkLabelRuleOverlap(const std::string& label_rule_1, const std::string& label_rule_2);
+bool checkLabelRuleOverlap(const string& label_rule_1, const string& label_rule_2);
 
 // A simple in-memory implementation of the Backend interface.
 class SimpleBackend : public Backend {
@@ -13,7 +13,7 @@ public:
     ~SimpleBackend() override = default;
 
     // Retrieve a node by its label rule.
-    std::optional<TreeNode> getNode(const std::string& label_rule) const override;
+    fplus::maybe<TreeNode> getNode(const std::string& label_rule) const override;
 
     // Add or update a parent node and its children in the tree.
     bool upsertNode(const std::vector<TreeNode>& nodes) override;
@@ -33,7 +33,7 @@ public:
     void deregisterNodeListener(const std::string listener_name, const std::string label_rule) override;
 
     // Notify listeners for a specific label rule.
-    void notifyListeners(const std::string& label_rule, const std::optional<TreeNode>& node);
+    void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node);
 
 private:
     MemoryTree &memory_tree_;

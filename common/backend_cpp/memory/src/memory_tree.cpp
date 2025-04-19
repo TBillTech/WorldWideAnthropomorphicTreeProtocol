@@ -2,47 +2,39 @@
 #include <algorithm>
 #include <stdexcept>
 
-std::optional<TreeNode> MemoryTree::getNode(const std::string& label_rule) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return unsafeGetNode(label_rule);
-}
+using namespace fplus;
 
-std::optional<TreeNode> MemoryTree::unsafeGetNode(const std::string& label_rule) const {
+maybe<TreeNode> MemoryTree::getNode(const std::string& label_rule) const {
     auto it = tree_.find(label_rule);
     if (it != tree_.end()) {
         return it->second;
     }
-    return std::nullopt;
+    return maybe<TreeNode>();
 }
 
 bool MemoryTree::upsertNode(const std::vector<TreeNode>& nodes) {
-    std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& node : nodes) {
-        tree_[node.label_rule] = node;
+        tree_[node.getLabelRule()] = node;
     }
     return true;
 }
 
 bool MemoryTree::deleteNode(const std::string& label_rule) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return unsafeDeleteNode(label_rule);
-}
-
-bool MemoryTree::unsafeDeleteNode(const std::string& label_rule) {
-    auto node = unsafeGetNode(label_rule);
-    if (!node) {
+    auto findnode = tree_.find(label_rule);
+    if (findnode == tree_.end()) {
         return false;
     }
+    std::vector<std::string> to_delete = findnode->second.getChildNames();
+    tree_.erase(findnode);
 
     // Recursively delete children
-    std::vector<std::string> to_delete = {label_rule};
     while (!to_delete.empty()) {
         auto current = to_delete.back();
         to_delete.pop_back();
 
-        auto current_node = unsafeGetNode(current);
-        if (current_node) {
-            const auto& children = current_node->child_names;
+        auto current_node = tree_.find(current);
+        if (current_node != tree_.end()) {
+            auto children = current_node->second.getChildNames();
             to_delete.insert(to_delete.end(), children.begin(), children.end());
             tree_.erase(current);
         }
@@ -52,7 +44,6 @@ bool MemoryTree::unsafeDeleteNode(const std::string& label_rule) {
 }
 
 std::vector<TreeNode> MemoryTree::queryNodes(const std::string& label_rule) const {
-    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<TreeNode> result;
     for (const auto& [key, node] : tree_) {
         if (key.find(label_rule) != std::string::npos) {
@@ -63,7 +54,6 @@ std::vector<TreeNode> MemoryTree::queryNodes(const std::string& label_rule) cons
 }
 
 std::vector<TreeNode> MemoryTree::getFullTree() const {
-    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<TreeNode> result;
     for (const auto& [key, node] : tree_) {
         result.push_back(node);
@@ -75,7 +65,6 @@ std::vector<TreeNode> MemoryTree::getFullTree() const {
 // This will throw an exception if canPerformSubTransaction() fails.
 bool MemoryTree::applyTransaction(const Transaction& transaction)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     // First check all the sub transactions to verify them.
     for (const auto& sub_transaction : transaction) {
         if (!canPerformSubTransaction(sub_transaction)) {
@@ -102,38 +91,36 @@ bool MemoryTree::canPerformSubTransaction(const SubTransaction& sub_transaction)
     const auto& parent_node_label = sub_transaction.first.second.first;
     auto it = tree_.find(parent_node_label);
     if (it == tree_.end()) {
-        if (!sub_transaction.first.first.has_value()) {
+        if (sub_transaction.first.first.is_nothing()) {
             return true; // The transaction expected there was no prior node at all, and it is missing, so good.
         }
         return false; // Parent node does not exist, but was expected by the transaction
     }
     // Then check if the parent node sequence number matches the old version 
-    if (it->second.version.version_number != sub_transaction.first.first.value()) {
+    if (maybe(it->second.getVersion().version_number) != sub_transaction.first.first) {
         return false; // Parent node version does not match
     }
     // Check that the new version number is 1 greater than the old version number, (or wraps to 0 if at max)
-    uint16_t next_version = (it->second.version.version_number + 1) % (it->second.version.max_version_sequence);
-    if (sub_transaction.first.second.second.has_value()) {
-        if (next_version != sub_transaction.first.second.second.value().version.version_number) {
-            return false; // New version number is not an increment
-        }
+    maybe<uint16_t> next_version((it->second.getVersion().version_number + 1) % (it->second.getVersion().max_version_sequence));
+    if (next_version != sub_transaction.first.second.second.and_then([](const auto& node) { return maybe(node.getVersion().version_number); })) {
+        return false; // New version number is not an increment
     }
 
     // Check each of the child nodes to make sure some other modification has not occurred
-    for (const auto& child : sub_transaction.second) {
+    for (auto child : sub_transaction.second) {
         auto old_child_it = tree_.find(child.second.first);
         if (old_child_it != tree_.end()) {
-            if (!child.first.has_value()) { // No version supplied so
+            if (child.first.is_nothing()) { // No version supplied so
                 // The attempted transaction was expecting no child in the tree
                 // This is OK if and only if the child is being deleted
-                if (child.second.second.has_value()) {
+                if (child.second.second.is_just()) {
                     return false; // Child node is not being deleted, but the transaction was expecting it to exist
                 }
-            } else if (old_child_it->second.version.version_number != child.first.value()) {
+            } else if (maybe(old_child_it->second.getVersion().version_number) != child.first) {
                 return false; // Child node version does not match that expected by the transaction
             }    
-        } else {
-            if (child.first.has_value()) {
+        } else { // old_child_it == tree_.end()
+            if (child.first.is_just()) {
                 return false; // Child node does not exist, but the transaction was expecting it to
             }
         }
@@ -147,8 +134,8 @@ bool MemoryTree::performSubTransaction(const SubTransaction& sub_transaction)
 {
     // Update the parent node
     auto& parent_node = sub_transaction.first.second.second;
-    if (parent_node.has_value()) {
-        tree_[parent_node.value().label_rule] = parent_node.value();
+    if (parent_node.is_just()) {
+        tree_[parent_node.unsafe_get_just().getLabelRule()] = parent_node.unsafe_get_just();
     } else {
         tree_.erase(sub_transaction.first.second.first); // Delete the parent node
     }
@@ -156,8 +143,8 @@ bool MemoryTree::performSubTransaction(const SubTransaction& sub_transaction)
     // Update or delete child nodes
     for (const auto& child : sub_transaction.second) {
         const auto& child_node = child.second;
-        if (child.second.second.has_value()) {
-            tree_[child.second.first] = child.second.second.value(); // Update existing child node
+        if (child.second.second.is_just()) {
+            tree_[child.second.first] = child.second.second.unsafe_get_just(); // Update existing child node
         } else {
             tree_.erase(child.second.first); // Delete child node
         }

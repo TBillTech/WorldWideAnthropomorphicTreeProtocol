@@ -49,6 +49,13 @@ message(STATUS "HAVE_LINUX_RTNETLINK_H: ${HAVE_LINUX_RTNETLINK_H}")
 #  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_XOPEN_SOURCE=700")
 #endif()
 
+# cd libraries
+# git clone https://github.com/Dobiasd/FunctionalPlus
+# cmake -S FunctionalPlus -B FunctionalPlus/build
+# cmake --build FunctionalPlus/build
+# sudo cmake --install FunctionalPlus/build
+find_package(FunctionalPlus REQUIRED)
+
 # Include directories
 include_directories(
     ${Boost_INCLUDE_DIRS}
@@ -81,6 +88,7 @@ set(COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/common/transport/src/debug.cc
     ${PROJECT_SOURCE_DIR}/common/transport/src/shared.cc
     ${PROJECT_SOURCE_DIR}/common/transport/src/siphash.cc
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/interface/tree_node.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/memory_tree.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/simple_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/transactional_backend.cpp
@@ -185,9 +193,9 @@ add_dependencies(shared_chunk_tester ngtcp2 nghttp3 boringssl)
 add_dependencies(memory_pool_tester ngtcp2 nghttp3 boringssl)
 
 # Link libraries (if any)
-target_link_libraries(library_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev)
-target_link_libraries(shared_chunk_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev)
-target_link_libraries(memory_pool_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev)
+target_link_libraries(library_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus)
+target_link_libraries(shared_chunk_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus)
+target_link_libraries(memory_pool_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus)
 
 # Enable verbose linker output
 # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--verbose")

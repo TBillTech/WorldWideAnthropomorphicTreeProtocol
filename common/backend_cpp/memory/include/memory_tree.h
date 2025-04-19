@@ -11,7 +11,7 @@ public:
     ~MemoryTree() = default;
 
     // Retrieve a node by its label rule.
-    std::optional<TreeNode> getNode(const std::string& label_rule) const;
+    fplus::maybe<TreeNode> getNode(const std::string& label_rule) const;
 
     // Add or update a parent node and its children in the tree.
     bool upsertNode(const std::vector<TreeNode>& nodes);
@@ -30,9 +30,6 @@ public:
     bool applyTransaction(const Transaction& transaction);
 
 private:
-    // no mutex locking unsafe methods:
-    // Retrieve a node by its label rule without locking.
-    std::optional<TreeNode> unsafeGetNode(const std::string& label_rule) const;
     // Delete a node and its children from the tree without locking.
     bool unsafeDeleteNode(const std::string& label_rule);
     
@@ -42,6 +39,5 @@ private:
     // ASSUMING THAT THE TRANSACTION IS VALID, perform the transaction.
     bool performSubTransaction(const SubTransaction& sub_transaction);
 
-    mutable std::mutex mutex_; // Protects access to the tree
     std::unordered_map<std::string, TreeNode> tree_; // In-memory storage for the tree
 };

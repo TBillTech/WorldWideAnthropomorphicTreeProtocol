@@ -4,24 +4,27 @@
 #include <regex>
 
 using namespace std;
+using namespace fplus;
 
-std::optional<TreeNode> TransactionalBackend::getNode(const std::string& label_rule) const {
+fplus::maybe<TreeNode> TransactionalBackend::getNode(const std::string& label_rule) const {
     // If the label_rule overlaps with one of the nodes in the transaction stack,
     // then one of twp conditions should hold:
     // 1. The label_rule matches a parent node in the transaction stack
     // 2. The label_rule matches a child node in the transaction stack
     // So, test each subtransaction in the stack to see if the label_rule overlaps with any of them.
     for (const auto& sub_transaction : transaction_stack_) {
-        auto parent_node_label = sub_transaction.first.second.first;
-        if (checkLabelRuleOverlap(label_rule, parent_node_label)) {
-            if (label_rule == parent_node_label) {
+        maybe<string> m_parent_node_label(sub_transaction.first.second.second.lift(&TreeNode::getLabelRule));
+        if (m_parent_node_label.lift_def(false, [label_rule](auto parent_label) 
+                { return checkLabelRuleOverlap(label_rule, parent_label); })) {
+            if (m_parent_node_label.lift_def(false, [label_rule](auto parent_label) { return label_rule == parent_label; })) {
                 // If the label_rule matches the parent node in the transaction stack, then return the parent node
                 return sub_transaction.first.second.second;
             }
             // Not the parent node, so check each child node in the transaction stack
             for (const auto& child : sub_transaction.second) {
                 // It is expected to either match a child exactly, or the label_rule is independent of the transaction so far
-                if (label_rule == child.second.first) {
+                if (child.second.second.lift_def(false, [label_rule](auto child_node) 
+                    { return label_rule == child_node.getLabelRule(); })) {
                     // If the label_rule matches a child node in the transaction stack, then return the child node
                     return child.second.second;
                 }
@@ -42,18 +45,20 @@ bool TransactionalBackend::upsertNode(const std::vector<TreeNode>& nodes) {
     for (const auto& node : nodes) {
         // Check if the node overlaps with any of the nodes in the transaction stack
         for (auto& sub_transaction : transaction_stack_) {
-            const auto& parent_node = sub_transaction.first.second.second;
-            if (checkLabelRuleOverlap(node.label_rule, sub_transaction.first.second.first)) {
+            auto m_parent_node = sub_transaction.first.second.second;
+            if (m_parent_node.lift_def(false, [node](auto parent_node) 
+                { return checkLabelRuleOverlap(node.getLabelRule(), parent_node.getLabelRule()); })) {
                 // If the node overlaps with a parent node in the transaction stack, then update the transaction
-                if (node.label_rule == sub_transaction.first.second.first) {
+                if (m_parent_node.lift_def(false, [node](auto parent_node) { return node.getLabelRule() == parent_node.getLabelRule(); })) {
                     // If the node matches the parent node in the transaction stack, then update the parent node
                     sub_transaction.first.second.second = node;
                     return true;
                 } else {
                     // Otherwise, look for an exact match to the child node
                     for (auto& child : sub_transaction.second) {
-                        if (node.label_rule == child.second.first) {
-                            // If the node matches a child node in the transaction stack, then update the child node
+                        if (child.second.second.lift_def(false, [node](auto child_node) 
+                            { return node.getLabelRule() == child_node.getLabelRule(); })) {
+                                // If the node matches a child node in the transaction stack, then update the child node
                             child.second.second = node;
                             return true;
                         }
@@ -74,8 +79,9 @@ bool TransactionalBackend::deleteNode(const std::string& label_rule) {
     // If there is an ongoing transaction, then all the nodes had better overlap with the transaction stack
     // Moreover, the changes will be logged to the transcation, not directly applied to the tree (yet).
     for (auto& sub_transaction : transaction_stack_) {
-        const auto& parent_node = sub_transaction.first.second.second;
-        if (checkLabelRuleOverlap(label_rule, sub_transaction.first.second.first)) {
+        const auto& m_parent_node = sub_transaction.first.second.second;
+        if (m_parent_node.lift_def(false, [label_rule](auto parent_node) 
+            { return checkLabelRuleOverlap(label_rule, parent_node.getLabelRule()); })) {
             // If the label_rule overlaps with a parent node in the transaction stack, then delete something
             // DANGER: deleting things in a transaction is super complex, because tracking the versions of things
             // that evaporate during the transaction is difficult.  So, we take a lazy approach for now, and assume
@@ -83,16 +89,17 @@ bool TransactionalBackend::deleteNode(const std::string& label_rule) {
             // which gets deleted is not a problem.  In other words, that deleting can delete the future accidentally.
             // In other, other words, if you want versions checked on deleted children, they need to explicitly be in the
             // transaction stack.
-            if (label_rule == sub_transaction.first.second.first) {
+            if (m_parent_node.lift_def(false, [label_rule](auto parent_node) { return label_rule == parent_node.getLabelRule(); })) {
                 // If the label_rule matches the parent node in the transaction stack, then delete the parent node
-                sub_transaction.first.second.second.reset();
+                sub_transaction.first.second.second = maybe<TreeNode>();
                 return true;
             } else {
                 // Otherwise, look for an exact match to the child node
                 for (auto& child : sub_transaction.second) {
-                    if (label_rule == child.second.first) {
+                    if (child.second.second.lift_def(false, [label_rule](auto child_node) 
+                            { return label_rule == child_node.getLabelRule(); })) {
                         // If the label_rule matches a child node in the transaction stack, then delete the child node
-                        child.second.second.reset();
+                        child.second.second = maybe<TreeNode>();
                         return true;
                     }
                 }
@@ -101,7 +108,7 @@ bool TransactionalBackend::deleteNode(const std::string& label_rule) {
             // It needs to be added to the sub_transaction.second vector
             // as a new child node with the label_rule.  
             // nullopt for the version is carved out as a special case in the transaction validity check for deletion.
-            auto child_node = std::make_pair(std::nullopt, std::make_pair(label_rule, std::nullopt));
+            NewNodeVersion child_node = std::make_pair(maybe<uint16_t>(), std::make_pair(label_rule, maybe<TreeNode>()));
             sub_transaction.second.push_back(child_node);
             return true;
         }
@@ -124,20 +131,22 @@ std::vector<TreeNode> TransactionalBackend::queryNodes(const std::string& label_
         bool foundit = false;
         // Check if the node overlaps with any of the nodes in the transaction stack
         for (auto& sub_transaction : transaction_stack_) {
-            const auto& parent_node = sub_transaction.first.second.second;
-            if (checkLabelRuleOverlap(node.label_rule, sub_transaction.first.second.first)) {
+            const auto& m_parent_node = sub_transaction.first.second.second;
+            if (m_parent_node.lift_def(false, [label_rule](auto parent_node) 
+                    { return checkLabelRuleOverlap(label_rule, parent_node.getLabelRule()); })) {
                 // If the node overlaps with a parent node in the transaction stack, push that onto the results instead
-                if (node.label_rule == sub_transaction.first.second.first) {
+                if (m_parent_node.lift_def(false, [label_rule](auto parent_node) { return label_rule == parent_node.getLabelRule(); })) {
                     // If the node matches the parent node in the transaction stack, then return that instead
-                    results.push_back(sub_transaction.first.second.second.value());
+                    results.push_back(sub_transaction.first.second.second.unsafe_get_just());
                     foundit = true;
                     break;
                 } else {
                     // Otherwise, look for an exact match to the child node
                     for (auto& child : sub_transaction.second) {
-                        if (node.label_rule == child.second.first) {
-                            // If the node matches a child node in the transaction stack, then update the child node
-                            results.push_back(child.second.second.value());
+                        if (child.second.second.lift_def(false, [label_rule](auto child_node) 
+                            { return label_rule == child_node.getLabelRule(); })) {
+                        // If the node matches a child node in the transaction stack, then update the child node
+                            results.push_back(child.second.second.unsafe_get_just());
                             foundit = true;
                             break;
                         }
@@ -169,8 +178,9 @@ std::vector<TreeNode> TransactionalBackend::getFullTree() const {
 bool TransactionalBackend::openTransactionLayer(const TreeNode& node) {
     // throw an exception if this node has a label rule overlap with any other node in the transaction stack
     for (const auto& sub_transaction : transaction_stack_) {
-        const auto& parent_label = sub_transaction.first.second.first;
-        if (checkLabelRuleOverlap(node.label_rule, parent_label)) {
+        const auto& m_parent_node = sub_transaction.first.second.second;
+        if (m_parent_node.lift_def(false, [node](auto parent_node) 
+                { return checkLabelRuleOverlap(node.getLabelRule(), parent_node.getLabelRule()); })) {
             throw std::runtime_error("Label rule overlap detected in transaction stack");
         }
     }
@@ -179,15 +189,16 @@ bool TransactionalBackend::openTransactionLayer(const TreeNode& node) {
     // until the transaction is closed.
     // The old version of the node should be read from the tree, and the new version should be set to the next version
     // number of the parent node.
-    auto parent_node = tree_.getNode(node.label_rule);
-    if (!parent_node.has_value()) {
+    auto m_parent_node = tree_.getNode(node.getLabelRule());
+    if (m_parent_node.is_nothing()) {
         // If the parent node does not exist, then the last version is nullopt
-        auto parent_newnode_version = std::make_pair(std::nullopt, std::make_pair(node.label_rule, node));
+        NewNodeVersion parent_newnode_version = std::make_pair(maybe<uint16_t>(), std::make_pair(node.getLabelRule(), maybe(node)));
         transaction_stack_.emplace_back(std::make_pair(parent_newnode_version, std::vector<NewNodeVersion>()));
     } else {
         // If the parent node exists, then use its version number as the last version
-        auto next_version = (parent_node->version.version_number + 1) % (parent_node->version.max_version_sequence);
-        auto parent_newnode_version = std::make_pair(parent_node->version.version_number, std::make_pair(node.label_rule, node));
+        auto version = m_parent_node.unsafe_get_just().getVersion();
+        uint16_t next_version = (version.version_number + 1) % (version.max_version_sequence);
+        NewNodeVersion parent_newnode_version = std::make_pair(maybe(next_version), std::make_pair(node.getLabelRule(), maybe(node)));
         transaction_stack_.emplace_back(std::make_pair(parent_newnode_version, std::vector<NewNodeVersion>()));
     }
     return true;
@@ -213,6 +224,6 @@ void TransactionalBackend::deregisterNodeListener(const std::string listener_nam
     tree_.deregisterNodeListener(listener_name, label_rule);
 }
 
-void TransactionalBackend::notifyListeners(const std::string& label_rule, const std::optional<TreeNode>& node) {
+void TransactionalBackend::notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node) {
     tree_.notifyListeners(label_rule, node);
 }

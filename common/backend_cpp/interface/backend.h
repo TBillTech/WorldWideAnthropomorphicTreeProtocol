@@ -2,40 +2,13 @@
 
 #include <string>
 #include <vector>
-#include <optional>
 #include <cstdint> // For uint8_t
 #include <functional> // For std::function
-
-// Represents a node in the tree structure.
-struct TreeNode {
-    std::string label_rule; // Unique global label rule (UTF8 encoded string)
-    std::string description; // UTF8 encoded string OR a node reference
-    std::optional<std::string> query_how_to; // Optional: how to query and unpack nodes
-    std::optional<std::string> qa_sequence; // Optional: Q&A sequence about the node
-    std::vector<std::string> literal_types; // UTF8 encoded type names
-    std::optional<std::string> policy; // Optional: versioning policy
-    struct Version {
-        uint16_t version_number;
-        uint16_t max_version_sequence;
-        std::string policy;
-        std::optional<std::string> authorial_proof;
-        // Being author always implies being reader
-        // The control idiom is that the supervisor is author at node S0
-        // The write priviledge authors are authors and readers at node S1
-        // The read priviledge readers are just readers at node S1
-        // Thus, the authors may freely modify and change anything S2 and above
-        // This also implies that generally authors cannot modify the authors list
-        std::optional<std::string> authors; // Either a simple list or a node reference
-        std::optional<std::string> readers;
-        std::optional<int> collision_depth;
-    } version;
-    std::vector<std::string> child_names; // List of UTF8 label templates
-    std::vector<uint8_t> contents; // Length-Value bytes
-};
+#include "tree_node.h" // Include the new header file for TreeNode
 
 // For tracking transactions on nodes, each tree node modification has a prior version sequence number
 // attached to the Node. 
-using NewNodeVersion = std::pair<std::optional<uint16_t>, std::pair<std::string, std::optional<TreeNode>>>;
+using NewNodeVersion = std::pair<fplus::maybe<uint16_t>, std::pair<std::string, fplus::maybe<TreeNode>>>;
 // A transactional node modification tracks the parent node, and all the descendants.  The prior version
 // of the descendants is tracked for one reason:  If the transaction has a prior version that does not match
 // at the time the transaction is being applied, then the transaction will fail.  However, the new
@@ -47,7 +20,8 @@ using Transaction = std::vector<SubTransaction>;
 class Backend;
 
 // Define a callback type for node listeners.
-using NodeListenerCallback = std::function<void(Backend&, const std::string, const std::optional<TreeNode>)>;
+using NodeListenerCallback = std::function<void(Backend&, const std::string, const fplus::maybe<TreeNode>)>;
+using NodeListenerCallbackArgs = std::tuple<const std::string, const fplus::maybe<TreeNode>>;
 
 // Pure virtual class representing the backend interface for the Tree.
 class Backend {
@@ -56,7 +30,7 @@ public:
 
     // It is possible, but often not ideal to perform a raw point query.
     // This is a query that returns a single node literally matching the label rule or not.
-    virtual std::optional<TreeNode> getNode(const std::string& literal_label_rule) const = 0;
+    virtual fplus::maybe<TreeNode> getNode(const std::string& literal_label_rule) const = 0;
 
     // Add or update a parent node and its children in the tree.
     virtual bool upsertNode(const std::vector<TreeNode>& nodes) = 0;
@@ -93,6 +67,6 @@ public:
 
     // Sometimes a higher level backend needs to tell a lower level backend to notify a listener of something,
     // even though the higher level backend is not explicitly tracking the listeners. So, notifyListeners is in this interface:
-    virtual void notifyListeners(const std::string& label_rule, const std::optional<TreeNode>& node) = 0;
+    virtual void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node) = 0;
 };
 

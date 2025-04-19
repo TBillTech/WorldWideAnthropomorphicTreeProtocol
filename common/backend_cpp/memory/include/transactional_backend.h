@@ -10,7 +10,7 @@ public:
     ~TransactionalBackend() override = default;
 
     // Retrieve a node by its label rule.
-    std::optional<TreeNode> getNode(const std::string& label_rule) const override;
+    fplus::maybe<TreeNode> getNode(const std::string& label_rule) const override;
 
     // Add or update a parent node and its children in the tree.
     bool upsertNode(const std::vector<TreeNode>& nodes) override;
@@ -33,7 +33,7 @@ public:
     void registerNodeListener(const std::string listener_name, const std::string label_rule, NodeListenerCallback callback) override;
     void deregisterNodeListener(const std::string listener_name, const std::string label_rule) override;
 
-    void notifyListeners(const std::string& label_rule, const std::optional<TreeNode>& node);
+    void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node);
 
 private:
     Backend& tree_;

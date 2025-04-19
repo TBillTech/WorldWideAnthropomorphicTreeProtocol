@@ -227,6 +227,7 @@ public:
     }
 
     constexpr shared_span<ChunkType>& operator=(const shared_span<ChunkType>&& other) {
+        chunks.clear();
         chunks = move(other.chunks);
         signal_type = other.signal_type;
         return *this;
