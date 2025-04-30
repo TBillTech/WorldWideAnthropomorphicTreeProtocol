@@ -13,6 +13,9 @@ public:
     // Retrieve a node by its label rule.
     fplus::maybe<TreeNode> getNode(const std::string& label_rule) const;
 
+    // Retrieve multiple nodes by their label rules.
+    std::vector<TreeNode> getNodes(const std::vector<std::string>& label_rules) const;
+
     // Add or update a parent node and its children in the tree.
     bool upsertNode(const std::vector<TreeNode>& nodes);
 

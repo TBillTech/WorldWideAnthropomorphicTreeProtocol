@@ -21,9 +21,15 @@ public:
     // Delete a node and its children from the tree.
     bool deleteNode(const std::string& label_rule) override;
 
+    std::vector<TreeNode> getPageTree(const std::string& page_node_label_rule) const override;
+    std::vector<TreeNode> relativeGetPageTree(const TreeNode& node, const std::string& page_node_label_rule) const override;
+
     // Query nodes matching a label rule.
     std::vector<TreeNode> queryNodes(const std::string& label_rule) const override;
+    std::vector<TreeNode> relativeQueryNodes(const TreeNode& node, const std::string& label_rule) const override;
 
+    bool openTransactionLayer(const TreeNode& node) override;
+    bool closeTransactionLayers(void) override;
     bool applyTransaction(const Transaction& transaction) override;
 
     // Retrieve the entire tree structure (for debugging or full sync purposes).
@@ -34,6 +40,8 @@ public:
 
     // Notify listeners for a specific label rule.
     void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node);
+
+    void processNotification() override {};
 
 private:
     MemoryTree &memory_tree_;

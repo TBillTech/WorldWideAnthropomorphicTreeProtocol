@@ -14,6 +14,16 @@ struct TreeNodeVersion {
     fplus::maybe<std::string> authors;
     fplus::maybe<std::string> readers;
     fplus::maybe<int> collision_depth;
+
+    bool operator==( const TreeNodeVersion& other ) const {
+        return version_number == other.version_number &&
+               max_version_sequence == other.max_version_sequence &&
+               policy == other.policy &&
+               authorial_proof == other.authorial_proof &&
+               authors == other.authors &&
+               readers == other.readers &&
+               collision_depth == other.collision_depth;
+    }
 };
 
 // Represents a node in the tree structure.
@@ -56,6 +66,7 @@ public:
     void setPolicy(const string& policy);
 
     const std::vector<std::string>& getChildNames() const;
+    std::vector<std::string> getAbsoluteChildNames() const;
     void setChildNames(const std::vector<std::string>& child_names);
 
     const shared_span<>& getContents() const;
@@ -63,6 +74,11 @@ public:
 
     const TreeNodeVersion& getVersion() const;
     void setVersion(const TreeNodeVersion& version);
+
+    bool operator==(const TreeNode& other) const;
+    bool operator!=(const TreeNode& other) const {
+        return !(*this == other);
+    }
 
 private:
     std::string label_rule;

@@ -119,6 +119,14 @@ const std::vector<std::string>& TreeNode::getChildNames() const {
     return child_names;
 }
 
+std::vector<std::string> TreeNode::getAbsoluteChildNames() const {
+    std::vector<std::string> absolute_child_names;
+    for (const auto& child_name : child_names) {
+        absolute_child_names.push_back(label_rule + "/" + child_name);
+    }
+    return move(absolute_child_names);
+}
+
 void TreeNode::setChildNames(const std::vector<std::string>& child_names) {
     this->child_names = child_names;
 }
@@ -137,4 +145,28 @@ const TreeNodeVersion& TreeNode::getVersion() const {
 
 void TreeNode::setVersion(const TreeNodeVersion& version) {
     this->version = version;
+}
+
+bool TreeNode::operator==(const TreeNode& other) const {
+    bool properties_equal = label_rule == other.label_rule &&
+           description == other.description &&
+           literal_types == other.literal_types &&
+           version == other.version &&
+           child_names == other.child_names &&
+           query_how_to == other.query_how_to &&
+           qa_sequence == other.qa_sequence;
+    bool contents_equal = contents.size() == other.contents.size();
+    if (contents_equal) {
+        auto this_it = contents.begin<uint8_t>();
+        auto other_it = other.contents.begin<uint8_t>();
+        for (size_t i = 0; i < contents.size(); ++i) {
+            if (*this_it != *other_it) {
+                contents_equal = false;
+                break;
+            }
+            ++this_it;
+            ++other_it;
+        }
+    }
+    return properties_equal && contents_equal;
 }

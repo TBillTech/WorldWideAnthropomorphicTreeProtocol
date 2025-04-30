@@ -65,7 +65,6 @@ maybe<TreeNode> SimpleBackend::getNode(const std::string& label_rule) const {
 }
 
 bool SimpleBackend::upsertNode(const std::vector<TreeNode>& nodes) {
-    // If there is no transaction stack, then just apply the nodes to the tree
     memory_tree_.upsertNode(nodes);
     // Notify listeners for each node
     for (const auto& node : nodes) {
@@ -76,15 +75,56 @@ bool SimpleBackend::upsertNode(const std::vector<TreeNode>& nodes) {
 }
 
 bool SimpleBackend::deleteNode(const std::string& label_rule) {
-    // If there is no transaction stack, then just apply the delete to the tree
     memory_tree_.deleteNode(label_rule);
     // Notify listeners for each node
     notifyListeners(label_rule, maybe<TreeNode>());
     return true;
 }
 
+std::vector<TreeNode> SimpleBackend::getPageTree(const std::string& page_node_label_rule) const {
+    // Check if the page node exists
+    auto page_node = memory_tree_.getNode(page_node_label_rule);
+    if (page_node.is_nothing()) {
+        throw std::runtime_error("Page node not found: " + page_node_label_rule);
+    }
+    // Now collect the children label rules
+    auto children_label_rules = page_node.lift_def(std::vector<std::string>{}, [](const TreeNode& node) {
+        return node.getChildNames();
+    });
+    return memory_tree_.getNodes(children_label_rules);
+}
+
+std::vector<TreeNode> SimpleBackend::relativeGetPageTree(const TreeNode& node, const std::string& page_node_label_rule) const {
+    // concatenate the label rule of the node with the label rule of the page node
+    std::string full_label_rule = node.getLabelRule() + "/" + page_node_label_rule;
+    // Check if the page node exists
+    auto page_node = memory_tree_.getNode(full_label_rule);
+    if (page_node.is_nothing()) {
+        throw std::runtime_error("Page node not found: " + full_label_rule);
+    }
+    return getPageTree(full_label_rule);
+}
+
 std::vector<TreeNode> SimpleBackend::queryNodes(const std::string& label_rule) const {
     return memory_tree_.queryNodes(label_rule);
+}
+
+std::vector<TreeNode> SimpleBackend::relativeQueryNodes(const TreeNode& node, const std::string& label_rule) const {
+    // concatenate the label rule of the node with the label rule of the query
+    std::string full_label_rule = node.getLabelRule() + "/" + label_rule;
+    return queryNodes(full_label_rule);
+}
+
+bool SimpleBackend::openTransactionLayer(const TreeNode& node) {
+    // throw an exception: SimpleBackend does not support opening Transaction layers
+    throw std::runtime_error("SimpleBackend does not support opening transaction layers");
+    return false;
+}
+
+bool SimpleBackend::closeTransactionLayers(void) {
+    // throw an exception: SimpleBackend does not support closing Transaction layers
+    throw std::runtime_error("SimpleBackend does not support closing transaction layers");
+    return false;
 }
 
 bool SimpleBackend::applyTransaction(const Transaction& transaction) {
@@ -92,7 +132,6 @@ bool SimpleBackend::applyTransaction(const Transaction& transaction) {
 }
 
 std::vector<TreeNode> SimpleBackend::getFullTree() const {
-    // If there is no transaction stack, then just apply the query to the tree
     return memory_tree_.getFullTree();
 }
 

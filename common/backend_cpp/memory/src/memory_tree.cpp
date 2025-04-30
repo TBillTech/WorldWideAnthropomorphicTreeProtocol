@@ -12,6 +12,17 @@ maybe<TreeNode> MemoryTree::getNode(const std::string& label_rule) const {
     return maybe<TreeNode>();
 }
 
+vector<TreeNode> MemoryTree::getNodes(const std::vector<std::string>& label_rules) const {
+    std::vector<TreeNode> result;
+    for (const auto& label_rule : label_rules) {
+        auto it = tree_.find(label_rule);
+        if (it != tree_.end()) {
+            result.push_back(it->second);
+        }
+    }
+    return result;
+}
+
 bool MemoryTree::upsertNode(const std::vector<TreeNode>& nodes) {
     for (const auto& node : nodes) {
         tree_[node.getLabelRule()] = node;
@@ -24,17 +35,23 @@ bool MemoryTree::deleteNode(const std::string& label_rule) {
     if (findnode == tree_.end()) {
         return false;
     }
-    std::vector<std::string> to_delete = findnode->second.getChildNames();
+    std::vector<std::string> to_delete = findnode->second.getAbsoluteChildNames();
     tree_.erase(findnode);
 
-    // Recursively delete children
+    // Recursively delete children, if and only if they are in the "path" of the label_rule.
+    // This allows other nodes to have these same "children", but in essense an un-owning link to them.
     while (!to_delete.empty()) {
         auto current = to_delete.back();
         to_delete.pop_back();
 
         auto current_node = tree_.find(current);
         if (current_node != tree_.end()) {
-            auto children = current_node->second.getChildNames();
+            vector<string> children = current_node->second.getAbsoluteChildNames();
+            // filter out any children not in the path of the label_rule
+            children.erase(std::remove_if(children.begin(), children.end(),
+                [&label_rule](const std::string& child) {
+                    return child.find(label_rule) == std::string::npos;
+                }), children.end());
             to_delete.insert(to_delete.end(), children.begin(), children.end());
             tree_.erase(current);
         }
@@ -44,6 +61,8 @@ bool MemoryTree::deleteNode(const std::string& label_rule) {
 }
 
 std::vector<TreeNode> MemoryTree::queryNodes(const std::string& label_rule) const {
+    // TODO:  This whole concept is currently half baked.  I'm waiting to see what the use cases are before designing it further.
+    // For now, just return all nodes that match the label rule.
     std::vector<TreeNode> result;
     for (const auto& [key, node] : tree_) {
         if (key.find(label_rule) != std::string::npos) {

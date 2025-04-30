@@ -296,6 +296,12 @@ public:
         return data_offset;
     }
 
+    shared_span restrict_upto(pair<size_t, size_t> end_point) const {
+        pair<size_t, size_t> range = {0, end_point.first - get_signal_size() 
+            + end_point.second*sizeof(ChunkType) - get_signal_size()*end_point.second};
+        return restrict(range);
+    }
+
     template <typename SignalType>
     SignalType const& get_signal() const {
         if (chunks.empty()) {
@@ -429,11 +435,12 @@ public:
     }
 
     template <typename PODType>
-    void copy_span(span<PODType> data, pair<bool, pair<size_t, size_t>> start = {false, {0, 0}}) const {
+    pair<size_t, size_t> copy_span(span<PODType> data, pair<bool, pair<size_t, size_t>> start = {false, {0, 0}}) const {
         for (size_t i = 0; i < data.size(); i++) {
             auto next_start = copy_type(data[i], start);
             start = {true, next_start};
         }
+        return start.second;
     }
 
     pair<size_t, size_t> expand_use(size_t size) {

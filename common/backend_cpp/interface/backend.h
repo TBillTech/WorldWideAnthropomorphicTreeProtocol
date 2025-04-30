@@ -42,16 +42,14 @@ public:
     // The page node is a special node that contains a list of label rules.
     // The subtree is returned as a vector of TreeNode objects.
     virtual std::vector<TreeNode> getPageTree(const std::string& page_node_label_rule) const = 0;
-
     virtual std::vector<TreeNode> relativeGetPageTree(const TreeNode& node, const std::string& page_node_label_rule) const = 0;
 
     // Query nodes matching a label rule.
     virtual std::vector<TreeNode> queryNodes(const std::string& label_rule) const = 0;
-
     virtual std::vector<TreeNode> relativeQueryNodes(const TreeNode& node, const std::string& label_rule) const = 0;
 
-    // The standard backend interface does not support operations on transactions, it only supports applying a 
-    // transaction.  This allows for separating the concerns of building a transaction from the underlying tree functionality.
+    virtual bool openTransactionLayer(const TreeNode& node) = 0;
+    virtual bool closeTransactionLayers(void) = 0;
     virtual bool applyTransaction(const Transaction& transaction) = 0;
 
     // Retrieve the entire tree structure (for debugging or full sync purposes).  Obviously, this will not
@@ -68,5 +66,8 @@ public:
     // Sometimes a higher level backend needs to tell a lower level backend to notify a listener of something,
     // even though the higher level backend is not explicitly tracking the listeners. So, notifyListeners is in this interface:
     virtual void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node) = 0;
+
+    // Process one notification for a specific label rule (if the backend supports it).  This is used to process notifications in a worker thread.
+    virtual void processNotification() = 0;
 };
 

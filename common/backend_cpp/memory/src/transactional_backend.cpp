@@ -116,6 +116,38 @@ bool TransactionalBackend::deleteNode(const std::string& label_rule) {
     throw std::runtime_error("Trying to delete a node in a transaction that is not tracked in the transaction stack");
 }
 
+std::vector<TreeNode> TransactionalBackend::getPageTree(const std::string& page_node_label_rule) const {
+    if (transaction_stack_.empty()) {
+        // If there is no transaction stack, then just apply the query to the tree
+        return tree_.getPageTree(page_node_label_rule);
+    }
+    // Otherwise, delegate to getNode
+    auto page_node = getNode(page_node_label_rule);
+    if (page_node.is_nothing()) {
+        throw std::runtime_error("Page node not found: " + page_node_label_rule);
+    }
+    // Now collect the children label rules
+    auto children_label_rules = page_node.lift_def(std::vector<std::string>{}, [](const TreeNode& node) {
+        return node.getChildNames();
+    });
+    // Now get the nodes for the children
+    std::vector<TreeNode> child_nodes;
+    for (const auto& child_label_rule : children_label_rules) {
+        auto child_node = getNode(child_label_rule);
+        if (child_node.is_just()) {
+            child_nodes.push_back(child_node.unsafe_get_just());
+        }
+    } 
+    return child_nodes;
+}
+
+std::vector<TreeNode> TransactionalBackend::relativeGetPageTree(const TreeNode& node, const std::string& page_node_label_rule) const {
+    // concatenate the label rule of the node with the label rule of the page node
+    std::string full_label_rule = node.getLabelRule() + "/" + page_node_label_rule;
+    // Check if the page node exists
+    return getPageTree(full_label_rule);
+}
+
 std::vector<TreeNode> TransactionalBackend::queryNodes(const std::string& label_rule) const {
     if (transaction_stack_.empty()) {
         // If there is no transaction stack, then just apply the query to the tree
@@ -160,6 +192,12 @@ std::vector<TreeNode> TransactionalBackend::queryNodes(const std::string& label_
         }
     }
     return results;
+}
+
+std::vector<TreeNode> TransactionalBackend::relativeQueryNodes(const TreeNode& node, const std::string& label_rule) const {
+    // concatenate the label rule of the node with the label rule of the query
+    std::string full_label_rule = node.getLabelRule() + "/" + label_rule;
+    return queryNodes(full_label_rule);
 }
 
 bool TransactionalBackend::applyTransaction(const Transaction& transaction) {

@@ -92,12 +92,14 @@ set(COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/memory_tree.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/simple_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/transactional_backend.cpp
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/threadsafe_backend.cpp
 )
 
 # Add test executables
 add_executable(library_tester ${COMMON_SOURCES} test_instances/library_tester/library_tester.cpp)
 add_executable(shared_chunk_tester ${COMMON_SOURCES} test_instances/shared_chunk_tester/shared_chunk_tester.cpp)
 add_executable(memory_pool_tester ${COMMON_SOURCES} test_instances/memory_pool_tester/memory_pool_tester.cpp)
+add_executable(backend_cpp_tester ${COMMON_SOURCES} test_instances/backend_cpp_tester/backend_cpp_tester.cpp)
 
 # Define preprocessor macros
 #add_definitions(-DENABLE_EXAMPLE_BORINGSSL -DWITH_EXAMPLE_BORINGSSL -DHAVE_ARPA_INET_H)
@@ -191,11 +193,13 @@ set_target_properties(ngtcp2_crypto_lib PROPERTIES
 add_dependencies(library_tester ngtcp2 nghttp3 boringssl)
 add_dependencies(shared_chunk_tester ngtcp2 nghttp3 boringssl)
 add_dependencies(memory_pool_tester ngtcp2 nghttp3 boringssl)
+add_dependencies(backend_cpp_tester ngtcp2 nghttp3 boringssl)
 
 # Link libraries (if any)
 target_link_libraries(library_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus)
 target_link_libraries(shared_chunk_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus)
 target_link_libraries(memory_pool_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus)
+target_link_libraries(backend_cpp_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus)
 
 # Enable verbose linker output
 # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--verbose")

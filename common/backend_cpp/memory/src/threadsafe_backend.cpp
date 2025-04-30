@@ -16,9 +16,34 @@ bool ThreadsafeBackend::deleteNode(const std::string& label_rule) {
     return tree_.deleteNode(label_rule);
 }
 
+std::vector<TreeNode> ThreadsafeBackend::getPageTree(const std::string& page_node_label_rule) const {
+    std::lock_guard<std::mutex> lock(tree_mutex_);
+    return tree_.getPageTree(page_node_label_rule);
+}
+
+std::vector<TreeNode> ThreadsafeBackend::relativeGetPageTree(const TreeNode& node, const std::string& page_node_label_rule) const {
+    std::lock_guard<std::mutex> lock(tree_mutex_);
+    return tree_.relativeGetPageTree(node, page_node_label_rule);
+}
+
 std::vector<TreeNode> ThreadsafeBackend::queryNodes(const std::string& label_rule) const {
     std::lock_guard<std::mutex> lock(tree_mutex_);
     return tree_.queryNodes(label_rule);
+}
+
+std::vector<TreeNode> ThreadsafeBackend::relativeQueryNodes(const TreeNode& node, const std::string& label_rule) const {
+    std::lock_guard<std::mutex> lock(tree_mutex_);
+    return tree_.relativeQueryNodes(node, label_rule);
+}
+
+bool ThreadsafeBackend::openTransactionLayer(const TreeNode& node) {
+    std::lock_guard<std::mutex> lock(tree_mutex_);
+    return tree_.openTransactionLayer(node);
+}
+
+bool ThreadsafeBackend::closeTransactionLayers(void) {
+    std::lock_guard<std::mutex> lock(tree_mutex_);
+    return tree_.closeTransactionLayers();
 }
 
 bool ThreadsafeBackend::applyTransaction(const Transaction& transaction) {
