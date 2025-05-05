@@ -83,12 +83,16 @@ void TreeNode::setDescription(const std::string& description) {
     this->description = description;
 }
 
-const fplus::maybe<std::string>& TreeNode::getQueryHowTo() const {
+const fplus::maybe<std::string>& TreeNode::getQueryHowTo() const {    
     return query_how_to;
 }
 
 void TreeNode::setQueryHowTo(const fplus::maybe<std::string>& query_how_to) {
-    this->query_how_to = query_how_to;
+    if (query_how_to == fplus::maybe<string>("")) {
+        this->query_how_to = fplus::maybe<string>();
+    }else {
+        this->query_how_to = query_how_to;
+    }
 }
 
 const fplus::maybe<std::string>& TreeNode::getQaSequence() const {
@@ -96,7 +100,11 @@ const fplus::maybe<std::string>& TreeNode::getQaSequence() const {
 }
 
 void TreeNode::setQaSequence(const fplus::maybe<std::string>& qa_sequence) {
-    this->qa_sequence = qa_sequence;
+    if (qa_sequence == fplus::maybe<string>("")) {
+        this->qa_sequence = fplus::maybe<string>();
+    } else {
+        this->qa_sequence = qa_sequence;
+    }
 }
 
 const std::vector<std::string>& TreeNode::getLiteralTypes() const {
@@ -148,13 +156,17 @@ void TreeNode::setVersion(const TreeNodeVersion& version) {
 }
 
 bool TreeNode::operator==(const TreeNode& other) const {
-    bool properties_equal = label_rule == other.label_rule &&
-           description == other.description &&
-           literal_types == other.literal_types &&
-           version == other.version &&
-           child_names == other.child_names &&
-           query_how_to == other.query_how_to &&
-           qa_sequence == other.qa_sequence;
+    bool properties_equal = true;
+    properties_equal = label_rule == other.label_rule && properties_equal;
+    properties_equal = description == other.description && properties_equal;
+    properties_equal =  literal_types == other.literal_types && properties_equal;
+    properties_equal =  version == other.version && properties_equal;
+    properties_equal =  child_names == other.child_names && properties_equal;
+    auto query_how_to_value = query_how_to.get_with_default("");
+    auto other_query_how_to_value = other.query_how_to.get_with_default("");
+    properties_equal = query_how_to_value == other_query_how_to_value && properties_equal;
+    properties_equal =  qa_sequence == other.qa_sequence && properties_equal;
+    properties_equal = label_rule == other.label_rule && properties_equal;
     bool contents_equal = contents.size() == other.contents.size();
     if (contents_equal) {
         auto this_it = contents.begin<uint8_t>();
@@ -169,4 +181,137 @@ bool TreeNode::operator==(const TreeNode& other) const {
         }
     }
     return properties_equal && contents_equal;
+}
+
+// We need a string-length-value function in order to implement stream operators for long strings that contain arbitrary data.
+// In particular, the concern is that sometimes description might contain statements about literal_types or TreeNodes and so on.
+// So, this function accepts a label for the string, and writes out the length of the string, followed by the string itself.
+void write_length_string(std::ostream& os, const std::string& label, const std::string& str) {
+    os << label << " " << str.size() << " :\n";
+    os << str;
+    os << "\n";
+}
+pair<string,string> read_length_string(std::istream& is) {
+    size_t length;
+    std::string label;
+    is >> label;
+    is >> length;
+    std::string delimiter;
+    is >> delimiter; // Read the delimiter (":")
+    is.get(); // Consume the newline after the delimiter
+    string out_str;
+    out_str.resize(length);
+    is.read(&out_str[0], length);
+    is.get(); // Consume the newline after the string
+    return {label, out_str};
+}
+
+std::ostream& operator<<(std::ostream& os, const TreeNode& node)
+{
+    os << "TreeNode(\n";
+    os << "label_rule: " << node.getLabelRule() << "\n";
+    write_length_string(os, "description", node.getDescription());
+    os << "literal_types: [ ";
+    for (const auto& type : node.getLiteralTypes()) {
+        os << type << ", ";
+    }
+    os << "], ";
+    os << "version: " << node.getVersion() << ", ";
+
+    os << "child_names: [ ";
+    for (const auto& child_name : node.getChildNames()) {
+        os << child_name << ", ";
+    }
+    os << "], ";
+
+    write_length_string(os, "query_how_to", node.getQueryHowTo().get_with_default(""));
+    write_length_string(os, "qa_sequence", node.getQaSequence().get_with_default(""));
+
+    os << node.getContents();
+
+    os << ")\n";
+    return os;
+}
+
+std::istream& operator>>(std::istream& is, TreeNode& node)
+{
+    std::string label;
+    is >> label; // Consume "TreeNode("
+
+    std::string label_rule;
+    is >> label >> label_rule; // Read "label_rule:" and the value
+    node.setLabelRule(label_rule);
+
+    auto description = read_length_string(is);
+    node.setDescription(description.second);
+
+    std::vector<std::string> literal_types;
+    is >> label; // Consume "literal_types:"
+    is >> label; // Consume " ["
+    is.get(); // Consume the space after "["
+    while (is.peek() != ']') {
+        std::string type;
+        is >> type;
+        if (type.back() == ',') {
+            type.pop_back(); // Remove the trailing comma
+        }
+        if (is.peek() == ' ') {
+            is.get(); // Consume the space after the comma
+        }
+        literal_types.push_back(type);
+    }
+    is >> label; // Consume "]"
+    node.setLiteralTypes(literal_types);
+
+    TreeNodeVersion version;
+    is >> label >> version; // Read "version:" and the value
+    node.setVersion(version);
+    is >> label; // Consume "," after version
+
+    std::vector<std::string> child_names;
+    is >> label; // Consume "child_names:"
+    is >> label; // Consume " ["
+    is.get(); // Consume the space after "["
+    while (is.peek() != ']') {
+        std::string child_name;
+        is >> child_name;
+        if (child_name.back() == ',') {
+            child_name.pop_back(); // Remove the trailing comma
+        }
+        child_names.push_back(child_name);
+        if (is.peek() == ' ') {
+            is.get(); // Consume the space after the comma
+        }
+    }
+    is >> label; // Consume "]"
+    node.setChildNames(child_names);
+
+    auto query_how_to_str = read_length_string(is);
+    if (query_how_to_str.first == "query_how_to") {
+        if (query_how_to_str.second.empty()) {
+            node.setQueryHowTo(fplus::nothing<std::string>());
+        } else {
+            node.setQueryHowTo(fplus::just(query_how_to_str.second));
+        }
+    } else {
+        throw std::runtime_error("Expected 'query_how_to' label, got: " + query_how_to_str.first);
+    }
+
+    auto qa_sequence_str = read_length_string(is);
+    if (qa_sequence_str.first == "qa_sequence") {
+        if (qa_sequence_str.second.empty()) {
+            node.setQaSequence(fplus::nothing<std::string>());
+        } else {
+            node.setQaSequence(fplus::just(qa_sequence_str.second));
+        }
+    } else {
+        throw std::runtime_error("Expected 'qa_sequence' label, got: " + qa_sequence_str.first);
+    }
+
+    is >> node.contents; // Read the contents
+
+    is >> label; // Consume ")"
+    is.get(); // Consume the newline after the closing parenthesis
+
+    return is;
 }

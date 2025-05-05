@@ -229,6 +229,41 @@ bool test_string_shared_span_iteration() {
     return true;
 }
 
+bool test_shared_span_iostreams() {
+    // First test a full span block
+    {
+        shared_span<> sspan(global_no_chunk_header, true);
+        const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_chunk_header);
+        copy_data_into_span(sspan, std::span<const uint8_t>(memoryBlock0, ChunkDataSize));
+        std::ostringstream oss;
+        oss << sspan;
+        string output = oss.str();
+        std::istringstream iss(output);
+        shared_span<> new_sspan(global_no_chunk_header, false);
+        iss >> new_sspan;
+        if (!check_span_data(new_sspan, std::span<const uint8_t>(memoryBlock0, ChunkDataSize))) {
+            return false;
+        }
+    }
+    // Next, test a restricted span
+    {
+        shared_span<> sspan(global_no_chunk_header, true);
+        const size_t ChunkDataSize = shared_span<>::chunk_size - sizeof(no_chunk_header);
+        copy_data_into_span(sspan, std::span<const uint8_t>(memoryBlock0, ChunkDataSize));
+        auto restricted_span = sspan.restrict(make_pair(7, 50));
+        std::ostringstream oss;
+        oss << restricted_span;
+        string output = oss.str();
+        std::istringstream iss(output);
+        shared_span<> new_sspan(global_no_chunk_header, false);
+        iss >> new_sspan;
+        if (!check_span_data(new_sspan, std::span<const uint8_t>(memoryBlock0 + 7, 50))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 int main() {
     init_sizes();
     cout << "Sizes initialized" << endl << flush;
@@ -263,6 +298,10 @@ int main() {
     }
     cout << "Shared span POD iterator test passed" << endl << flush;
     if (!test_string_shared_span_iteration()) {
+        return 1;
+    }
+    cout << "Shared span string iteration test passed" << endl << flush;
+    if (!test_shared_span_iostreams()) {
         return 1;
     }
     cout << "All tests passed!" << endl << flush;

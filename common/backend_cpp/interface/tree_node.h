@@ -6,6 +6,33 @@
 #include <fplus/fplus.hpp>
 #include "shared_chunk.h"
 
+// operators for reading and writing a fplus::maybe<T> to a stream
+namespace fplus {
+    template<typename T>
+    std::ostream& operator<<(std::ostream& os, const maybe<T>& m) {
+        if (m.is_just()) {
+            os << "Just " << m.get_with_default(T());
+        } else {
+            os << "Nothing";
+        }
+        return os;
+    }
+
+    template<typename T>
+    std::istream& operator>>(std::istream& is, maybe<T>& m) {
+        std::string str;
+        is >> str;
+        if (str == "Nothing") {
+            m = maybe<T>();
+        } else {
+            T value;
+            is >> value;
+            m = just(value);
+        }
+        return is;
+    }
+}
+
 struct TreeNodeVersion {
     uint16_t version_number;
     uint16_t max_version_sequence;
@@ -23,6 +50,24 @@ struct TreeNodeVersion {
                authors == other.authors &&
                readers == other.readers &&
                collision_depth == other.collision_depth;
+    }
+    friend std::ostream& operator<<(std::ostream& os, const TreeNodeVersion& version) {
+        os << "Version: " << version.version_number << " Max_Version: " << version.max_version_sequence
+           << " Policy: " << version.policy << " Authorial_Proof: " << version.authorial_proof
+           << " Authors: " << version.authors << " Readers: " << version.readers
+           << " Collision_Depth: " << version.collision_depth;
+        return os;
+    }
+    friend std::istream& operator>>(std::istream& is, TreeNodeVersion& version) {
+        std::string label;
+        is >> label >> version.version_number;
+        is >> label >> version.max_version_sequence;
+        is >> label >> version.policy;
+        is >> label >> version.authorial_proof;
+        is >> label >> version.authors;
+        is >> label >> version.readers;
+        is >> label >> version.collision_depth;
+        return is;
     }
 };
 
@@ -79,6 +124,10 @@ public:
     bool operator!=(const TreeNode& other) const {
         return !(*this == other);
     }
+
+    // Operators for reading and writing to a stream
+    friend std::ostream& operator<<(std::ostream& os, const TreeNode& node);
+    friend std::istream& operator>>(std::istream& is, TreeNode& node);
 
 private:
     std::string label_rule;

@@ -171,3 +171,54 @@ bool MemoryTree::performSubTransaction(const SubTransaction& sub_transaction)
 
     return true;
 }
+
+std::ostream& operator<<(std::ostream& os, const MemoryTree& tree)
+{
+    os << "MemoryTree( ";
+    for (const auto& [key, node] : tree.tree_) {
+        os << key << ": " << node << ", ";
+    }
+    os << ")";
+    return os;
+}
+
+std::istream& operator>>(std::istream& is, MemoryTree& tree)
+{
+    std::string label;
+    is >> label; // Consume "MemoryTree("
+    if (is.peek() == ' ') {
+        is.get(); // Consume the space after the open parenthesis
+    }
+    while (is.peek() != ')') {
+        std::string key;
+        is >> key; // Read the key
+        if (key.back() == ':') {
+            key.pop_back(); // Remove the trailing colon
+        }
+        TreeNode node;
+        is >> node; // Read the TreeNode
+        tree.tree_[key] = node;
+        if (is.peek() == ',') {
+            is.get(); // Consume the comma
+        }
+        if (is.peek() == ' ') {
+            is.get(); // Consume the space after the comma
+        }
+    }
+    is.get(); // Consume the closing parenthesis
+    return is;    
+}
+
+bool MemoryTree::operator==(const MemoryTree& other) const
+{
+    if (tree_.size() != other.tree_.size()) {
+        return false;
+    }
+    for (const auto& [key, node] : tree_) {
+        auto it = other.tree_.find(key);
+        if (it == other.tree_.end() || !(node == it->second)) {
+            return false;
+        }
+    }
+    return true;
+}

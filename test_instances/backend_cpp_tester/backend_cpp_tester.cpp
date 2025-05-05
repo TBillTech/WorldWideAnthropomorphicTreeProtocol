@@ -27,7 +27,17 @@ TreeNode createAnimalNode(string animal, string description, vector<string> lite
         next.second = animal_data.copy_span<const char>(std::span<const char>(a_string.c_str(), a_string.size()), next);
     }
     auto only_animal_data = animal_data.restrict_upto(next.second);
-    return TreeNode(animal, description, literal_types, version, child_names, move(only_animal_data), maybe<string>(query_how_to), maybe<string>(qa_sequence));
+    auto m_query_how_to = maybe<string>(query_how_to);
+    if (m_query_how_to.get_with_default("") != query_how_to) {
+        cerr << "Animal node has incorrect query_how_to" << endl;
+        throw runtime_error("Animal node has incorrect query_how_to");
+    }
+    auto m_qa_sequence = maybe<string>(qa_sequence);
+    if (m_qa_sequence.get_with_default("") != qa_sequence) {
+        cerr << "Animal node has incorrect qa_sequence" << endl;
+        throw runtime_error("Animal node has incorrect qa_sequence");
+    }
+    return TreeNode(animal, description, literal_types, version, child_names, move(only_animal_data), m_query_how_to, m_qa_sequence);
 }
 
 vector<TreeNode> createAnimalDossiers(TreeNode &animal_node) {
@@ -83,6 +93,10 @@ vector<TreeNode> createElephantNodes()
     );
     vector<TreeNode> elephant_nodes = createAnimalDossiers(elephant);
     elephant_nodes.insert(elephant_nodes.begin(), elephant);
+    if (elephant.getQueryHowTo().get_with_default("") != "url duh!") {
+        cerr << "Elephant node has incorrect qa_sequence" << endl;
+        throw runtime_error("Elephant node has incorrect qa_sequence");
+    }
     return elephant_nodes;
 }
 
@@ -204,8 +218,6 @@ void addNotesPageTree(Backend &backend)
 
 void testBackendLogically(Backend &backend)
 {
-    addAnimalsToBackend(backend);
-    addNotesPageTree(backend);
     cout << "Backend upsertNode utilized." << endl;
     checkMultipleGetNode(backend, createLionNodes());
     checkMultipleGetNode(backend, createElephantNodes());
@@ -319,6 +331,8 @@ void testBackendLogically(Backend &backend)
 void testSimpleBackend() {
     MemoryTree memory_tree;
     SimpleBackend simple_backend(memory_tree);
+    addAnimalsToBackend(simple_backend);
+    addNotesPageTree(simple_backend);
     testBackendLogically(simple_backend);
     cout << "SimpleBackend test passed." << endl;
 }
@@ -327,6 +341,8 @@ void testThreadsafeBackend() {
     MemoryTree memory_tree;
     SimpleBackend simple_backend(memory_tree);
     ThreadsafeBackend threadsafe_backend(simple_backend);
+    addAnimalsToBackend(threadsafe_backend);
+    addNotesPageTree(threadsafe_backend);
     testBackendLogically(threadsafe_backend);
     cout << "ThreadsafeBackend test passed." << endl;
 }
@@ -335,13 +351,37 @@ void testTransactionalBackend() {
     MemoryTree memory_tree;
     SimpleBackend simple_backend(memory_tree);
     TransactionalBackend transactional_backend(simple_backend);
+    addAnimalsToBackend(transactional_backend);
+    addNotesPageTree(transactional_backend);
     testBackendLogically(transactional_backend);
     cout << "TransactionalBackend test passed." << endl;
 }
+
+void testMemoryTreeIO() {
+    MemoryTree memory_tree;
+    SimpleBackend simple_backend(memory_tree);
+    addAnimalsToBackend(simple_backend);
+    addNotesPageTree(simple_backend);
+    // Test the stream write operator << and read operator >>
+    std::ostringstream oss;
+    oss << memory_tree;
+    string output = oss.str();
+    std::istringstream iss(output);
+    MemoryTree loaded_tree;
+    iss >> loaded_tree;
+    if (memory_tree != loaded_tree) {
+        cerr << "MemoryTree IO test failed." << endl;
+        throw runtime_error("MemoryTree IO test failed.");
+    } else {
+        cout << "MemoryTree IO test passed." << endl;
+    }
+}
+
 
 int main() {
     testSimpleBackend();
     testThreadsafeBackend();
     testTransactionalBackend();
+    testMemoryTreeIO();
     return 0;
 }

@@ -7,6 +7,7 @@
 #include <boost/iterator/iterator_facade.hpp>
 #include <boost/core/demangle.hpp>
 #include <type_traits>
+#include <iomanip>
 
 #include "memory_pool.h"
 
@@ -65,7 +66,7 @@ PODType pod_from_chunk(typename std::remove_const<PODType>::type &result, vector
 struct payload_chunk_header {
     payload_chunk_header() :
         request_id(0), signal(0), data_length(0) {}
-    payload_chunk_header(uint64_t request_id, uint64_t signal, uint64_t data_length)
+    payload_chunk_header(uint16_t request_id, uint8_t signal, uint16_t data_length)
         : request_id(request_id), signal(signal), data_length(data_length) 
         {
             if (data_length == 0) {
@@ -321,10 +322,10 @@ public:
                 throw invalid_argument("Unknown signal type");
         }
     }
-    uint64_t get_signal_type() const {
+    uint8_t get_signal_type() const {
         return signal_type;
     }
-    uint64_t get_signal_size() const {
+    size_t get_signal_size() const {
         if (chunks.empty()) {
             return 0;
         }
@@ -796,6 +797,10 @@ public:
         }
         return total;
     }
+
+    std::ostream& write(std::ostream& os) const;
+    std::istream& read(std::istream& is);
+
 private:
     vector<pair<shared_ptr<ChunkType>, pair<size_t, size_t>>> chunks;
     uint8_t signal_type; // If non-zero, indicates that this shared_span is a signal_type, and cannot be combined with other shared_spans
@@ -804,3 +809,100 @@ private:
 typedef vector<shared_span<> > chunks;
 
 
+template<typename ChunkType>
+std::ostream& shared_span<ChunkType>::write(std::ostream& os) const {
+    os << "shared_span( ";
+    if (chunks.empty()) {
+        os << "signal_type: 0 ";
+        os << "signal_size: 0 ";
+        os << "data_size: 0 ";
+        os << "chunk_data: [\n";
+        os << "])\n";
+        return os;
+    }
+    os << "signal_type: " << (uint16_t)get_signal_type() << " ";
+    os << "signal_size: " << get_signal_size() << " ";
+    os << "data_size: " << size() << " ";
+    os << "chunk_data: [\n";
+    uint32_t count = 0;
+    // First, write out the header
+    uint8_t *header = chunks[0].first.get()->data;
+    for (size_t i = 0; i < get_signal_size(); ++i) {
+        // Write bytes out contiguously using UUEncoding
+        os << std::hex << std::setw(2) << std::setfill('0') << (uint16_t)header[i];
+        // Every 16 bytes, add a newline
+        if (count % 16 == 15) {
+            os << "\n";
+        }
+        count++;
+    }
+    for (auto byte: range<uint8_t>()) {
+        // Write bytes out contiguously using UUEncoding
+        os << std::hex << std::setw(2) << std::setfill('0') << (uint16_t)byte;
+        // Every 16 bytes, add a newline
+        if (count % 16 == 15) {
+            os << "\n";
+        }
+        count++;
+    }
+    os << "])\n" << std::dec;
+    return os;
+}
+
+template <typename ChunkType>
+std::istream& shared_span<ChunkType>::read(std::istream& is) {
+    std::string label;
+    is >> label; // Read and discard "shared_span("
+
+    uint16_t signal_type;
+    is >> label >> signal_type; // Read "signal_type:" and the value
+    size_t signal_size;
+    is >> label >> signal_size; // Read "signal_size:" and the value
+    size_t data_size;
+    is >> label >> data_size; // Read "data_size:" and the value
+    // Construct the header structure
+    size_t total_size = signal_size + data_size;
+
+    is >> label; // Read and discard "chunk_data:"
+    is >> label; // discard " ["
+
+    std::vector<uint8_t> data(total_size);
+    for (size_t i = 0; i < total_size; ++i) {
+        char hex_byte[3] = {0}; // Buffer for two hex characters + null terminator
+        char c;
+        size_t count = 0;
+        while (count < 2 && is.get(c)) {
+            if (!std::isspace(c)) {
+                hex_byte[count++] = c;
+            }
+        }
+        if (count < 2) {
+            throw std::runtime_error("Unexpected end of stream while reading UUEncoded bytes");
+        }
+        int byte;
+        std::istringstream(hex_byte) >> std::hex >> byte;
+        data[i] = static_cast<uint8_t>(byte);
+    }
+
+    is >> label; // Read and discard "])"
+
+    if (total_size == 0) {
+        // If the total size is 0, then we have an empty shared_span
+        chunks.clear();
+        signal_type = 0;
+        return is;
+    }
+    *this = move(shared_span<ChunkType>(std::span<const uint8_t>(data.data(), data.size())));
+    return is;
+}
+
+
+template <typename ChunkType>
+std::ostream& operator<<(std::ostream& os, const shared_span<ChunkType>& span) {
+    return span.write(os);
+}
+
+template <typename ChunkType>
+std::istream& operator>>(std::istream& is, shared_span<ChunkType>& span) {
+    return span.read(is);
+}

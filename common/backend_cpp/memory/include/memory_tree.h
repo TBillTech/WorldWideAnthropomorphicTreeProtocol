@@ -32,6 +32,12 @@ public:
     // This will throw an exception if canPerformSubTransaction() fails.
     bool applyTransaction(const Transaction& transaction);
 
+    // stream operators for reading and writing the tree
+    friend std::ostream& operator<<(std::ostream& os, const MemoryTree& tree);
+    friend std::istream& operator>>(std::istream& is, MemoryTree& tree);
+
+    bool operator==(const MemoryTree& other) const;
+
 private:
     // Delete a node and its children from the tree without locking.
     bool unsafeDeleteNode(const std::string& label_rule);
@@ -42,5 +48,5 @@ private:
     // ASSUMING THAT THE TRANSACTION IS VALID, perform the transaction.
     bool performSubTransaction(const SubTransaction& sub_transaction);
 
-    std::unordered_map<std::string, TreeNode> tree_; // In-memory storage for the tree
+    std::map<std::string, TreeNode> tree_; // In-memory storage for the tree
 };
