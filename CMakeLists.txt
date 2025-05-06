@@ -62,6 +62,7 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/interface
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/include
     ${PROJECT_SOURCE_DIR}/common/transport/include 
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/composite
     ${PROJECT_SOURCE_DIR}/libraries/boringssl/include
 )
 
@@ -93,6 +94,8 @@ set(COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/simple_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/transactional_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/threadsafe_backend.cpp
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/transactional_backend.cpp
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/composite/composite_backend.cpp
 )
 
 # Add test executables

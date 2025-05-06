@@ -5,7 +5,7 @@
 using namespace std;
 using namespace fplus;
 
-// This function will check two nodes and verify that the label_rules to not overlap.
+// This function will check two label rules to determine if they overlap.
 // label rules overlap if the label rule of one node is a prefix of the other.
 // For example, "A" and "A/B" overlap, but "A/C" and "A/CB" do not.
 bool checkLabelRuleOverlap(const string& label_rule_1, const string& label_rule_2) {
