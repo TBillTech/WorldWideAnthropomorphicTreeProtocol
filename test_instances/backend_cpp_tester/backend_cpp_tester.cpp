@@ -1,6 +1,7 @@
 #include "simple_backend.h"
 #include "threadsafe_backend.h"
 #include "transactional_backend.h"
+#include "composite_backend.h"
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -132,8 +133,7 @@ void checkGetNode(Backend &backend, const string& label_rule, TreeNode const &ex
     if (node.is_just()) {
         auto found_node = node.get_with_default(TreeNode());
         if (found_node.getLabelRule() == expected_node.getLabelRule()) {
-            cout << "Node found: " << found_node.getLabelRule() << endl;
-            cout << "Expected: " << expected_node.getLabelRule() << endl;
+            cout << "Correct Node found: " << found_node.getLabelRule() << " matched expected: " << expected_node.getLabelRule() << endl;
         } else {
             cerr << "Node mismatch: " << found_node.getLabelRule() << " != " << expected_node.getLabelRule() << endl;
             throw runtime_error("Node mismatch looking for: " + label_rule);
@@ -141,8 +141,6 @@ void checkGetNode(Backend &backend, const string& label_rule, TreeNode const &ex
         if (found_node != expected_node) {
             cerr << "Node mismatch for: " << label_rule << endl;
             throw runtime_error("Node content mismatch looking for: " + label_rule);
-        } else {
-            cout << "Node found: " << label_rule << endl;
         }
     } else {
         cerr << "Node not found: " << label_rule << endl;
@@ -216,19 +214,31 @@ void addNotesPageTree(Backend &backend)
     backend.upsertNode({createNotesPageTree()});
 }
 
-void testBackendLogically(Backend &backend)
+vector<TreeNode> prefixNodeLabels(string label_prefix, vector<TreeNode> nodes) {
+    for (auto& node : nodes) {
+        node.setLabelRule(label_prefix + node.getLabelRule());
+        auto child_names = node.getChildNames();
+        for (auto& child_name : child_names) {
+            child_name = label_prefix + child_name;
+        }
+        node.setChildNames(child_names);
+    }
+    return nodes;
+}
+
+void testBackendLogically(Backend &backend, string label_prefix = "")
 {
     cout << "Backend upsertNode utilized." << endl;
-    checkMultipleGetNode(backend, createLionNodes());
-    checkMultipleGetNode(backend, createElephantNodes());
-    checkMultipleGetNode(backend, createParrotNodes());
+    checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createLionNodes()));
+    checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createElephantNodes()));
+    checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createParrotNodes()));
     cout << "Backend getNode test passed." << endl;
 
     // Upsert node is being implicitly tested in the addAnimalsToBackend function combined with the checkMultipleGetNode function.
 
     // Check the page tree
-    auto notes_pages = backend.getPageTree("notes");
-    if (notes_pages != collectAllNotes()) {
+    auto notes_pages = backend.getPageTree(label_prefix + "notes");
+    if (notes_pages != prefixNodeLabels(label_prefix, collectAllNotes())) {
         cerr << "Page tree mismatch" << endl;
         throw runtime_error("Page tree mismatch");
     } else {
@@ -240,11 +250,11 @@ void testBackendLogically(Backend &backend)
         MemoryTree temp_tree;
         SimpleBackend temp_backend(temp_tree);
         temp_backend.upsertNode(backend.getFullTree());
-        checkMultipleGetNode(temp_backend, createElephantNodes());
-        checkMultipleGetNode(temp_backend, createLionNodes());
-        checkMultipleGetNode(temp_backend, createParrotNodes());
-        auto notes_pages = temp_backend.getPageTree("notes");
-        if (notes_pages != collectAllNotes()) {
+        checkMultipleGetNode(temp_backend, prefixNodeLabels(label_prefix, createElephantNodes()));
+        checkMultipleGetNode(temp_backend, prefixNodeLabels(label_prefix, createLionNodes()));
+        checkMultipleGetNode(temp_backend, prefixNodeLabels(label_prefix, createParrotNodes()));
+        auto notes_pages = temp_backend.getPageTree(label_prefix + "notes");
+        if (notes_pages != prefixNodeLabels(label_prefix, collectAllNotes())) {
             cerr << "Page tree mismatch" << endl;
             throw runtime_error("Page tree mismatch");
         } else {
@@ -254,10 +264,10 @@ void testBackendLogically(Backend &backend)
     }
     
     // Delete the elephant node, and the elephant node and dossiers should be deleted, and the lion and parrot nodes should still be there
-    backend.deleteNode("elephant");
-    checkMultipleDeletedNode(backend, createElephantNodes());
-    checkMultipleGetNode(backend, createLionNodes());
-    checkMultipleGetNode(backend, createParrotNodes());
+    backend.deleteNode(label_prefix + "elephant");
+    checkMultipleDeletedNode(backend, prefixNodeLabels(label_prefix, createElephantNodes()));
+    checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createLionNodes()));
+    checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createParrotNodes()));
     cout << "Backend deleteNode test passed." << endl;
 
     // TODO: Not going to test queryNodes or relativeQueryNodes yet, because the feature has not been designed yet.
@@ -267,11 +277,12 @@ void testBackendLogically(Backend &backend)
     // Register a listener for the lion node
     bool lion_node_created = false;
     bool lion_node_deleted = false;
-    backend.registerNodeListener("lion_listener", "lion", [&lion_node_created, &lion_node_deleted](Backend& backend, const string listener_name, const fplus::maybe<TreeNode> node) {
+    string lion_label = label_prefix + "lion";
+    backend.registerNodeListener("lion_listener", lion_label, [lion_label, &lion_node_created, &lion_node_deleted](Backend& backend, const string listener_name, const fplus::maybe<TreeNode> node) {
         cout << "Listener " << listener_name << " notified for node: " << node.get_with_default(TreeNode()).getLabelRule() << endl;
         if (node.is_just()) {
             auto found_node = node.get_with_default(TreeNode());
-            if (found_node.getLabelRule() == "lion") {
+            if (found_node.getLabelRule() == lion_label) {
                 lion_node_created = true;
                 cout << "Lion node created: " << found_node.getLabelRule() << endl;
             } else {
@@ -282,7 +293,7 @@ void testBackendLogically(Backend &backend)
         }
     });
     // Upsert the lion node again to trigger the listener
-    backend.upsertNode(createLionNodes());
+    backend.upsertNode(prefixNodeLabels(label_prefix, createLionNodes()));
     backend.processNotification();
     // Check that the listener was notified
     if (!lion_node_created) {
@@ -292,7 +303,7 @@ void testBackendLogically(Backend &backend)
         cout << "Lion node listener notified on upsert" << endl;
     }
     // Delete the lion node to trigger the listener
-    backend.deleteNode("lion");
+    backend.deleteNode(lion_label);
     backend.processNotification();
     // Check that the listener was notified
     if (!lion_node_deleted) {
@@ -302,11 +313,11 @@ void testBackendLogically(Backend &backend)
         cout << "Lion node listener notified on delete" << endl;
     }
     // Deregister the listener
-    backend.deregisterNodeListener("lion_listener", "lion");
+    backend.deregisterNodeListener("lion_listener", lion_label);
     // Check that the listener is no longer notified
     lion_node_created = false;
     lion_node_deleted = false;
-    backend.upsertNode(createLionNodes());
+    backend.upsertNode(prefixNodeLabels(label_prefix, createLionNodes()));
     backend.processNotification();
     // Check that the listener was not notified
     if (lion_node_created) {
@@ -315,7 +326,7 @@ void testBackendLogically(Backend &backend)
     } else {
         cout << "Lion node listener not notified on upsert after deregistering" << endl;
     }
-    backend.deleteNode("lion");
+    backend.deleteNode(lion_label);
     backend.processNotification();
     // Check that the listener was not notified
     if (lion_node_deleted) {
@@ -377,11 +388,41 @@ void testMemoryTreeIO() {
     }
 }
 
+void testCompositeBackend() {
+    {
+        MemoryTree memory_tree;
+        SimpleBackend simple_backend(memory_tree);
+        CompositeBackend composite_backend(simple_backend);
+        addAnimalsToBackend(composite_backend);
+        addNotesPageTree(composite_backend);
+        testBackendLogically(composite_backend);
+        cout << "CompositeBackend basic test passed." << endl;
+    }
+    {
+        MemoryTree memory_tree;
+        SimpleBackend simple_backend(memory_tree);
+        CompositeBackend composite_backend(simple_backend);
+        MemoryTree zoo_memory_tree;
+        SimpleBackend zoo_backend(zoo_memory_tree);
+        composite_backend.mountBackend("zoo", zoo_backend);
+        MemoryTree museum_memory_tree;
+        SimpleBackend museum_backend(museum_memory_tree);
+        composite_backend.mountBackend("museum", museum_backend);
+        addAnimalsToBackend(zoo_backend);
+        addNotesPageTree(zoo_backend);
+        addAnimalsToBackend(museum_backend);
+        addNotesPageTree(museum_backend);
+        testBackendLogically(composite_backend, "zoo/");
+        testBackendLogically(composite_backend, "museum/");
+        cout << "CompositeBackend mountBackend test passed." << endl;
+    }
+}
 
 int main() {
     testSimpleBackend();
     testThreadsafeBackend();
     testTransactionalBackend();
     testMemoryTreeIO();
+    testCompositeBackend();
     return 0;
 }

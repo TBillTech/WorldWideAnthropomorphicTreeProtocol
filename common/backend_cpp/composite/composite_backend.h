@@ -48,5 +48,4 @@ class CompositeBackend : public Backend {
 
         Backend &root_backend_;
         std::map<std::string, Backend& > mounted_backends_;
-        Transaction mounted_transaction;
 };

@@ -129,6 +129,9 @@ public:
     friend std::ostream& operator<<(std::ostream& os, const TreeNode& node);
     friend std::istream& operator>>(std::istream& is, TreeNode& node);
 
+    void prefixLabels(const std::string& prefix);
+    void shortenLabels(const std::string& prefix);
+
 private:
     std::string label_rule;
     std::string description;
@@ -139,3 +142,23 @@ private:
     fplus::maybe<std::string> query_how_to;
     fplus::maybe<std::string> qa_sequence;
 };
+
+// For tracking transactions on nodes, each tree node modification has a prior version sequence number
+// attached to the Node. 
+using NewNodeVersion = std::pair<fplus::maybe<uint16_t>, std::pair<std::string, fplus::maybe<TreeNode>>>;
+// A transactional node modification tracks the parent node, and all the descendants.  The prior version
+// of the descendants is tracked for one reason:  If the transaction has a prior version that does not match
+// at the time the transaction is being applied, then the transaction will fail.  However, the new
+// version of the descendants is allowed to be anything at all, because it is being completely "overwritten".
+using SubTransaction = std::pair<NewNodeVersion, std::vector<NewNodeVersion>>;
+// A transaction is a list of subtransactions.  The transaction is atomic, meaning that all the
+using Transaction = std::vector<SubTransaction>;
+
+void prefixTransactionLabels(const std::string& prefix, Transaction& transaction);
+void shortenTransactionLabels(const std::string& prefix, Transaction& transaction);
+
+void prefixSubTransactionLabels(const std::string& prefix, SubTransaction& sub_transaction);
+void shortenSubTransactionLabels(const std::string& prefix, SubTransaction& sub_transaction);
+
+void prefixNewNodeVersionLabels(const std::string& prefix, NewNodeVersion& new_node_version);
+void shortenNewNodeVersionLabels(const std::string& prefix, NewNodeVersion& new_node_version);

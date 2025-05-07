@@ -315,3 +315,112 @@ std::istream& operator>>(std::istream& is, TreeNode& node)
 
     return is;
 }
+
+void TreeNode::prefixLabels(const std::string& prefix)
+{
+    if (prefix.empty()) {
+        return;
+    }
+    if (prefix.back() != '/') {
+        throw std::runtime_error("Prefix must end with a '/'");
+    }
+    if (label_rule.find(prefix) != 0) {
+        label_rule = prefix + label_rule;
+    }
+    auto new_child_names = std::vector<std::string>(child_names.size());
+    for (size_t i = 0; i < child_names.size(); ++i) {
+        if (child_names[i].find(prefix) != 0) {
+            new_child_names[i] = prefix + child_names[i];
+        } else {
+            new_child_names[i] = child_names[i];
+        }
+    }
+    child_names = std::move(new_child_names);
+}
+
+void TreeNode::shortenLabels(const std::string& prefix)
+{
+    if (prefix.empty()) {
+        return;
+    }
+    if (label_rule.find(prefix) == 0) {
+        label_rule = label_rule.substr(prefix.size());
+    }
+    for (auto& child_name : child_names) {
+        if (child_name.find(prefix) == 0) {
+            child_name = child_name.substr(prefix.size());
+        }
+    }
+}
+
+
+void prefixTransactionLabels(const std::string& prefix, Transaction& transaction)
+{
+    if (prefix.empty()) {
+        return;
+    }
+    for (auto& sub_transaction : transaction) {
+        prefixSubTransactionLabels(prefix, sub_transaction);
+    }
+}
+
+void shortenTransactionLabels(const std::string& prefix, Transaction& transaction)
+{
+    if (prefix.empty()) {
+        return;
+    }
+    for (auto& sub_transaction : transaction) {
+        shortenSubTransactionLabels(prefix, sub_transaction);
+    }
+}
+
+void prefixSubTransactionLabels(const std::string& prefix, SubTransaction& sub_transaction)
+{
+    if (prefix.empty()) {
+        return;
+    }
+    prefixNewNodeVersionLabels(prefix, sub_transaction.first);
+    for (auto& new_node_version : sub_transaction.second) {
+        prefixNewNodeVersionLabels(prefix, new_node_version);
+    }
+}
+
+void shortenSubTransactionLabels(const std::string& prefix, SubTransaction& sub_transaction)
+{
+    if (prefix.empty()) {
+        return;
+    }
+    shortenNewNodeVersionLabels(prefix, sub_transaction.first);
+    for (auto& new_node_version : sub_transaction.second) {
+        shortenNewNodeVersionLabels(prefix, new_node_version);
+    }
+}
+
+void prefixNewNodeVersionLabels(const std::string& prefix, NewNodeVersion& new_node_version)
+{
+    if (prefix.empty()) {
+        return;
+    }
+    if (prefix.back() != '/') {
+        throw std::runtime_error("Prefix must end with a '/'");
+    }
+    if (new_node_version.second.second.is_just()) {
+        new_node_version.second.second.unsafe_get_just().prefixLabels(prefix);
+    }
+    if (new_node_version.second.first.find(prefix) != 0) {
+        new_node_version.second.first = prefix + new_node_version.second.first;
+    }
+}
+
+void shortenNewNodeVersionLabels(const std::string& prefix, NewNodeVersion& new_node_version)
+{
+    if (prefix.empty()) {
+        return;
+    }
+    if (new_node_version.second.first.find(prefix) == 0) {
+        new_node_version.second.first = new_node_version.second.first.substr(prefix.size());
+    }
+    if (new_node_version.second.second.is_just()) {
+        new_node_version.second.second.unsafe_get_just().shortenLabels(prefix);
+    }
+}

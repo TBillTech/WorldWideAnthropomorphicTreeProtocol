@@ -6,17 +6,6 @@
 #include <functional> // For std::function
 #include "tree_node.h" // Include the new header file for TreeNode
 
-// For tracking transactions on nodes, each tree node modification has a prior version sequence number
-// attached to the Node. 
-using NewNodeVersion = std::pair<fplus::maybe<uint16_t>, std::pair<std::string, fplus::maybe<TreeNode>>>;
-// A transactional node modification tracks the parent node, and all the descendants.  The prior version
-// of the descendants is tracked for one reason:  If the transaction has a prior version that does not match
-// at the time the transaction is being applied, then the transaction will fail.  However, the new
-// version of the descendants is allowed to be anything at all, because it is being completely "overwritten".
-using SubTransaction = std::pair<NewNodeVersion, std::vector<NewNodeVersion>>;
-// A transaction is a list of subtransactions.  The transaction is atomic, meaning that all the
-using Transaction = std::vector<SubTransaction>;
-
 class Backend;
 
 // Define a callback type for node listeners.

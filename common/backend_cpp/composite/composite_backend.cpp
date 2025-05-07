@@ -4,10 +4,10 @@
 fplus::maybe<TreeNode> CompositeBackend::getNode(const std::string& label_rule) const {
     auto index_backend = getRelevantBackend(label_rule);
     fplus::maybe<TreeNode> result = index_backend.second.getNode(label_rule.substr(index_backend.first));
-    if (result.is_nothing()) {
+    if (result.is_nothing() || index_backend.first == 0) {
         return result;
     } else {
-        result.unsafe_get_just().setLabelRule(label_rule.substr(0, index_backend.first) + '/' + result.unsafe_get_just().getLabelRule());
+        result.unsafe_get_just().prefixLabels(label_rule.substr(0, index_backend.first));
     }
     return result;
 }
@@ -17,7 +17,7 @@ bool CompositeBackend::upsertNode(const std::vector<TreeNode>& nodes) {
     for (const auto& node : nodes) {
         auto index_backend = getRelevantBackend(node.getLabelRule());
         auto new_node = node;
-        new_node.setLabelRule(node.getLabelRule().substr(index_backend.first));
+        new_node.shortenLabels(node.getLabelRule().substr(0, index_backend.first));
         index_backend.second.upsertNode({new_node});
     }
     return true;
@@ -31,8 +31,12 @@ bool CompositeBackend::deleteNode(const std::string& label_rule) {
 std::vector<TreeNode> CompositeBackend::getPageTree(const std::string& page_node_label_rule) const {
     auto index_backend = getRelevantBackend(page_node_label_rule);
     auto result = index_backend.second.getPageTree(page_node_label_rule.substr(index_backend.first));
+    if (index_backend.first == 0) {
+        return result;
+    }
+    // We need to modify the label rules of the nodes in the result to match the label rule of the backend.
     for (auto& node : result) {
-        node.setLabelRule(page_node_label_rule.substr(0, index_backend.first) + '/' + node.getLabelRule());
+        node.prefixLabels(page_node_label_rule.substr(0, index_backend.first));
     } 
     return result;
 }
@@ -45,8 +49,11 @@ std::vector<TreeNode> CompositeBackend::relativeGetPageTree(const TreeNode& node
 std::vector<TreeNode> CompositeBackend::queryNodes(const std::string& label_rule) const {
     auto index_backend = getRelevantBackend(label_rule);
     auto result = index_backend.second.queryNodes(label_rule.substr(index_backend.first));
+    if (index_backend.first == 0) {
+        return result;
+    }
     for (auto& node : result) {
-        node.setLabelRule(label_rule.substr(0, index_backend.first) + '/' + node.getLabelRule());
+        node.prefixLabels(label_rule.substr(0, index_backend.first));
     }
     return result;
 }
@@ -59,7 +66,7 @@ std::vector<TreeNode> CompositeBackend::relativeQueryNodes(const TreeNode& node,
 bool CompositeBackend::openTransactionLayer(const TreeNode& node) {
     auto index_backend = getRelevantBackend(node.getLabelRule());
     auto new_node = node;
-    new_node.setLabelRule(node.getLabelRule().substr(index_backend.first));
+    new_node.shortenLabels(node.getLabelRule().substr(0, index_backend.first));
     return index_backend.second.openTransactionLayer(new_node);
 }
 
@@ -76,26 +83,29 @@ bool CompositeBackend::applyTransaction(const Transaction& transaction) {
     // If they are not, throw an exception.
     auto index_backend = getRelevantBackend(transaction.begin()->first.second.first);
     auto prefix = transaction.begin()->first.second.first.substr(0, index_backend.first);
-    mounted_transaction.clear(); 
+    Transaction mounted_transaction;
     for (auto sub_transaction : transaction) {
         auto sub_index_backend = getRelevantBackend(sub_transaction.first.second.first);
         auto sub_prefix = sub_transaction.first.second.first.substr(0, sub_index_backend.first);
         if (sub_prefix != prefix) {
             throw std::runtime_error("Transaction contains SubTransactions for different backends");
         }
-        auto relative_label_rule = sub_transaction.first.second.first.substr(sub_index_backend.first);
-        mounted_transaction.push_back({{sub_transaction.first.first, {relative_label_rule, sub_transaction.first.second.second}}, sub_transaction.second});
+        auto sub_transaction_copy = sub_transaction;
+        shortenSubTransactionLabels(sub_prefix, sub_transaction_copy);
+        mounted_transaction.push_back(sub_transaction_copy);
     }
 
-    return index_backend.second.applyTransaction(mounted_transaction);
+    auto result = index_backend.second.applyTransaction(mounted_transaction);
+    return result;
 }
 
 std::vector<TreeNode> CompositeBackend::getFullTree() const {
     std::vector<TreeNode> full_tree = root_backend_.getFullTree();
     for (const auto& [label_rule, backend] : mounted_backends_) {
         auto relative_tree = backend.getFullTree();
+        auto label_rule_slash = label_rule + '/';
         for (auto& node : relative_tree) {
-            node.setLabelRule(label_rule + '/' + node.getLabelRule());
+            node.prefixLabels(label_rule_slash);
         }
         full_tree.insert(full_tree.end(), relative_tree.begin(), relative_tree.end());
     }
@@ -105,13 +115,23 @@ std::vector<TreeNode> CompositeBackend::getFullTree() const {
 void CompositeBackend::registerNodeListener(const std::string listener_name, const std::string label_rule, NodeListenerCallback callback) {
     auto index_backend = getRelevantBackend(label_rule);
     auto relative_label_rule = label_rule.substr(index_backend.first);
-    index_backend.second.registerNodeListener(listener_name, relative_label_rule, callback);
+    auto relative_callback = [this, index_backend, callback, label_rule](Backend& backend, const std::string& relative_label_rule, const fplus::maybe<TreeNode>& node) {
+        auto composite_label_rule = label_rule.substr(0, index_backend.first) + relative_label_rule;
+        if (node.is_just()) {
+            auto node_copy = node.unsafe_get_just();
+            node_copy.prefixLabels(label_rule.substr(0, index_backend.first));
+            callback(*this, composite_label_rule, node_copy);
+        } else {
+            callback(*this, composite_label_rule, node);
+        }
+    };
+    index_backend.second.registerNodeListener(listener_name, relative_label_rule, relative_callback);
 }
 
 void CompositeBackend::deregisterNodeListener(const std::string listener_name, const std::string label_rule) {
     auto index_backend = getRelevantBackend(label_rule);
     auto relative_label_rule = label_rule.substr(index_backend.first);
-    root_backend_.deregisterNodeListener(listener_name, relative_label_rule);
+    index_backend.second.deregisterNodeListener(listener_name, relative_label_rule);
 }
 
 void CompositeBackend::notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node) {
@@ -122,8 +142,8 @@ void CompositeBackend::notifyListeners(const std::string& label_rule, const fplu
         return;
     }
     auto node_copy = node.unsafe_get_just();
-    node_copy.setLabelRule(node_copy.getLabelRule().substr(index_backend.first));
-    index_backend.second.notifyListeners(relative_label_rule, node);
+    node_copy.shortenLabels(node_copy.getLabelRule().substr(0, index_backend.first));
+    index_backend.second.notifyListeners(relative_label_rule, node_copy);
 }
 
 void CompositeBackend::processNotification() {
@@ -157,11 +177,18 @@ pair<int, Backend&> CompositeBackend::getRelevantBackend(const std::string& labe
     // then decrement once to find the _only_ possible relevant backend.
     auto it = mounted_backends_.upper_bound(label_rule);
     if (it == mounted_backends_.begin()) {
-        throw std::runtime_error("No relevant backend found for label rule: " + label_rule);
+        return {0, root_backend_};
     }
     --it;
     if (label_rule.compare(0, it->first.size(), it->first) == 0) {
-        return {it->first.size(), it->second};
+        // So far so good, but make sure that the label_rule either has no more characters or a '/' at the it->first.size() position.
+        // For example, if the mounted_backend is "zoo", but the label_rule is "zoo1", then we don't want to return the mounted_backend.
+        if (label_rule.size() == it->first.size()) {
+            return {it->first.size(), it->second};
+        }
+        if (label_rule[it->first.size()] == '/') {
+            return {it->first.size()+1, it->second};  // +1 to skip the '/' character
+        }
     }
     return {0, root_backend_};
 }
