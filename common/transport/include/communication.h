@@ -46,7 +46,6 @@ class StreamIdentifier {
     // but is important for server side to identify the handler object associated with the connection.
     ngtcp2_cid cid; 
     // logical_id identifies which stream in the connection defines this request;
-    // consecutive even numbers for client requests, consecutive odd numbers for server pushes (legacy)
     uint16_t logical_id;
 
 

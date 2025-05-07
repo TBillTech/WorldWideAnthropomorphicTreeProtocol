@@ -62,7 +62,9 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/interface
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/include
     ${PROJECT_SOURCE_DIR}/common/transport/include 
-    ${PROJECT_SOURCE_DIR}/common/backend_cpp/composite
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/structure
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/http3_client
+    ${PROJECT_SOURCE_DIR}/common/frontend/http3_server_cpp
     ${PROJECT_SOURCE_DIR}/libraries/boringssl/include
 )
 
@@ -95,7 +97,9 @@ set(COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/transactional_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/threadsafe_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/transactional_backend.cpp
-    ${PROJECT_SOURCE_DIR}/common/backend_cpp/composite/composite_backend.cpp
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/structure/composite_backend.cpp
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/http3_client/http3_client_backend.cpp
+    ${PROJECT_SOURCE_DIR}/common/frontend/http3_server_cpp/http3_server.cpp
 )
 
 # Add test executables
