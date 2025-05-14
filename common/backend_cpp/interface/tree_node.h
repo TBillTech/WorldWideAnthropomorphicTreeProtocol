@@ -33,6 +33,10 @@ namespace fplus {
     }
 }
 
+void write_length_string(std::ostream& os, const std::string& label, const std::string& str);
+pair<string,string> read_length_string(std::istream& is);
+
+
 struct TreeNodeVersion {
     uint16_t version_number;
     uint16_t max_version_sequence;

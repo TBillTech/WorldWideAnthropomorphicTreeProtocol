@@ -35,7 +35,7 @@ public:
     // Retrieve the entire tree structure (for debugging or full sync purposes).
     std::vector<TreeNode> getFullTree() const override;
 
-    void registerNodeListener(const std::string listener_name, const std::string label_rule, NodeListenerCallback callback) override;
+    void registerNodeListener(const std::string listener_name, const std::string label_rule, bool child_notify, NodeListenerCallback callback) override;
     void deregisterNodeListener(const std::string listener_name, const std::string label_rule) override;
 
     // Notify listeners for a specific label rule.
@@ -45,5 +45,6 @@ public:
 
 private:
     MemoryTree &memory_tree_;
-    std::map<std::string, std::pair<NodeListenerCallback, std::vector<std::string>>> node_listeners_;
+    using ListenerInfo = std::pair<std::string, std::pair<bool, NodeListenerCallback>>;
+    std::map<std::string, std::vector<ListenerInfo> > node_listeners_;
 };

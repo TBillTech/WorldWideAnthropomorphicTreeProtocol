@@ -254,8 +254,8 @@ bool TransactionalBackend::closeTransactionLayers(void) {
     return true;
 }
 
-void TransactionalBackend::registerNodeListener(const std::string listener_name, const std::string label_rule, NodeListenerCallback callback) {
-    tree_.registerNodeListener(listener_name, label_rule, callback);
+void TransactionalBackend::registerNodeListener(const std::string listener_name, const std::string label_rule, bool child_notify, NodeListenerCallback callback) {
+    tree_.registerNodeListener(listener_name, label_rule, child_notify, callback);
 }
 
 void TransactionalBackend::deregisterNodeListener(const std::string listener_name, const std::string label_rule) {

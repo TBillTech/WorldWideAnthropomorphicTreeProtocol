@@ -112,7 +112,7 @@ std::vector<TreeNode> CompositeBackend::getFullTree() const {
     return full_tree;
 }
 
-void CompositeBackend::registerNodeListener(const std::string listener_name, const std::string label_rule, NodeListenerCallback callback) {
+void CompositeBackend::registerNodeListener(const std::string listener_name, const std::string label_rule, bool child_notify, NodeListenerCallback callback) {
     auto index_backend = getRelevantBackend(label_rule);
     auto relative_label_rule = label_rule.substr(index_backend.first);
     auto relative_callback = [this, index_backend, callback, label_rule](Backend& backend, const std::string& relative_label_rule, const fplus::maybe<TreeNode>& node) {
@@ -125,7 +125,7 @@ void CompositeBackend::registerNodeListener(const std::string listener_name, con
             callback(*this, composite_label_rule, node);
         }
     };
-    index_backend.second.registerNodeListener(listener_name, relative_label_rule, relative_callback);
+    index_backend.second.registerNodeListener(listener_name, relative_label_rule, child_notify, relative_callback);
 }
 
 void CompositeBackend::deregisterNodeListener(const std::string listener_name, const std::string label_rule) {

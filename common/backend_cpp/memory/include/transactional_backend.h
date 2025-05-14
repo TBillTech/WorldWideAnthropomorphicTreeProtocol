@@ -32,7 +32,7 @@ public:
     // Retrieve the entire tree structure (for debugging or full sync purposes).
     std::vector<TreeNode> getFullTree() const override;
 
-    void registerNodeListener(const std::string listener_name, const std::string label_rule, NodeListenerCallback callback) override;
+    void registerNodeListener(const std::string listener_name, const std::string label_rule, bool child_notify, NodeListenerCallback callback) override;
     void deregisterNodeListener(const std::string listener_name, const std::string label_rule) override;
 
     void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node);

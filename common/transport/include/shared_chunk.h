@@ -89,9 +89,44 @@ struct payload_chunk_header {
     uint16_t request_id;
     uint16_t data_length;
     static constexpr uint8_t GLOBAL_SIGNAL_TYPE = 2;
-    static constexpr uint8_t SIGNAL_NORMAL_CHUNK = 0x00000000;
-    static constexpr uint8_t SIGNAL_CLOSE_STREAM = 0x00000001;
-    static constexpr uint8_t SIGNAL_HEARTBEAT = 0x00000002;
+    static constexpr uint8_t SIGNAL_OTHER_CHUNK = 0x00;
+    static constexpr uint8_t SIGNAL_CLOSE_STREAM = 0x01;
+    static constexpr uint8_t SIGNAL_HEARTBEAT = 0x02;
+    //Since the entirety of the transport logic exists only to support the http3 server and client for WWATP,
+    //the various signal codes for used by the http3_tree_messages can be defined here. These track the backend.h interface,
+    //but also have the journaling api.
+    static constexpr uint8_t SIGNAL_WWATP_REQUEST_CONTINUE = 0x03;
+    static constexpr uint8_t SIGNAL_WWATP_RESPONSE_CONTINUE = 0x04;
+    static constexpr uint8_t SIGNAL_WWATP_REQUEST_FINAL = 0x05;
+    static constexpr uint8_t SIGNAL_WWATP_RESPONSE_FINAL = 0x06;
+    static constexpr uint8_t SIGNAL_WWATP_GET_NODE_REQUEST = 0x07;
+    static constexpr uint8_t SIGNAL_WWATP_GET_NODE_RESPONSE = 0x08;
+    static constexpr uint8_t SIGNAL_WWATP_UPSERT_NODE_REQUEST = 0x09;
+    static constexpr uint8_t SIGNAL_WWATP_UPSERT_NODE_RESPONSE = 0x0A;
+    static constexpr uint8_t SIGNAL_WWATP_DELETE_NODE_REQUEST = 0x0B;
+    static constexpr uint8_t SIGNAL_WWATP_DELETE_NODE_RESPONSE = 0x0C;
+    static constexpr uint8_t SIGNAL_WWATP_GET_PAGE_TREE_REQUEST = 0x0D;
+    static constexpr uint8_t SIGNAL_WWATP_GET_PAGE_TREE_RESPONSE = 0x0E;
+    static constexpr uint8_t SIGNAL_WWATP_QUERY_NODES_REQUEST = 0x0F;
+    static constexpr uint8_t SIGNAL_WWATP_QUERY_NODES_RESPONSE = 0x10;
+    static constexpr uint8_t SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_REQUEST = 0x11;
+    static constexpr uint8_t SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_RESPONSE = 0x12;
+    static constexpr uint8_t SIGNAL_WWATP_CLOSE_TRANSACTION_LAYERS_REQUEST = 0x13;
+    static constexpr uint8_t SIGNAL_WWATP_CLOSE_TRANSACTION_LAYERS_RESPONSE = 0x14;
+    static constexpr uint8_t SIGNAL_WWATP_APPLY_TRANSACTION_REQUEST = 0x15;
+    static constexpr uint8_t SIGNAL_WWATP_APPLY_TRANSACTION_RESPONSE = 0x16;
+    static constexpr uint8_t SIGNAL_WWATP_GET_FULL_TREE_REQUEST = 0x17;
+    static constexpr uint8_t SIGNAL_WWATP_GET_FULL_TREE_RESPONSE = 0x18;
+    static constexpr uint8_t SIGNAL_WWATP_REGISTER_LISTENER_REQUEST = 0x19;
+    static constexpr uint8_t SIGNAL_WWATP_REGISTER_LISTENER_RESPONSE = 0x1A;
+    static constexpr uint8_t SIGNAL_WWATP_DEREGISTER_LISTENER_REQUEST = 0x1B;
+    static constexpr uint8_t SIGNAL_WWATP_DEREGISTER_LISTENER_RESPONSE = 0x1C;
+    static constexpr uint8_t SIGNAL_WWATP_NOTIFY_LISTENERS_REQUEST = 0x1D;
+    static constexpr uint8_t SIGNAL_WWATP_NOTIFY_LISTENERS_RESPONSE = 0x1E;
+    static constexpr uint8_t SIGNAL_WWATP_PROCESS_NOTIFICATION_REQUEST = 0x1F;
+    static constexpr uint8_t SIGNAL_WWATP_PROCESS_NOTIFICATION_RESPONSE = 0x20;
+    static constexpr uint8_t SIGNAL_WWATP_GET_JOURNAL_REQUEST = 0x21;
+    static constexpr uint8_t SIGNAL_WWATP_GET_JOURNAL_RESPONSE = 0x22;
 };
 
 struct signal_chunk_header {
@@ -132,6 +167,12 @@ public:
     static constexpr size_t chunk_size = ChunkType::chunk_size;
 
     shared_span(const shared_span &other) : chunks(other.chunks), signal_type(other.signal_type) {
+    }
+    template <typename InputIt>
+    shared_span(InputIt begin, InputIt end) : signal_type(begin->signal_type) {
+        for (auto it = begin; it != end; ++it) {
+            chunks.insert(chunks.end(), it->chunks.begin(), it->chunks.end());
+        }
     }
     // the default constructor uses the memory pool to allocate a new chunk (the memory pool is parameterized by the chunk type)
     template <typename SignalType = no_chunk_header>
@@ -304,7 +345,7 @@ public:
     }
 
     template <typename SignalType>
-    SignalType const& get_signal() const {
+    SignalType& get_signal() {
         if (chunks.empty()) {
             throw invalid_argument("No signal in the shared_span");
         }
@@ -313,15 +354,16 @@ public:
         }
         switch (signal_type) {
             case no_chunk_header::GLOBAL_SIGNAL_TYPE:
-                return *reinterpret_cast<const SignalType*>(chunks.front().first->data);
+                return *reinterpret_cast<SignalType*>(chunks.front().first->data);
             case signal_chunk_header::GLOBAL_SIGNAL_TYPE:
-                return *reinterpret_cast<const SignalType*>(chunks.front().first->data);
+                return *reinterpret_cast<SignalType*>(chunks.front().first->data);
             case payload_chunk_header::GLOBAL_SIGNAL_TYPE:
-                return *reinterpret_cast<const SignalType*>(chunks.front().first->data);
+                return *reinterpret_cast<SignalType*>(chunks.front().first->data);
             default:
                 throw invalid_argument("Unknown signal type");
         }
     }
+
     uint8_t get_signal_type() const {
         return signal_type;
     }
@@ -349,14 +391,46 @@ public:
             case no_chunk_header::GLOBAL_SIGNAL_TYPE:
                 throw invalid_argument("No chunk header should not exist on the wire.");
             case signal_chunk_header::GLOBAL_SIGNAL_TYPE:
-                return min(read_size, get_signal<signal_chunk_header>().get_wire_size());
+                return min(read_size, reinterpret_cast<signal_chunk_header*>(chunks.front().first->data)->get_wire_size());
             case payload_chunk_header::GLOBAL_SIGNAL_TYPE:
                 if(read_size < sizeof(payload_chunk_header)) {
                     return read_size;
                 }
-                return get_signal<payload_chunk_header>().get_wire_size();
+                return reinterpret_cast<payload_chunk_header*>(chunks.front().first->data)->get_wire_size();
             default:
                 throw invalid_argument("Wire size of signal not implemented.");
+        }
+    }
+    uint8_t get_signal_signal() const {
+        if (chunks.empty()) {
+            throw invalid_argument("No signal in the shared_span");
+        }
+        switch (signal_type) {
+            case no_chunk_header::GLOBAL_SIGNAL_TYPE:
+                throw invalid_argument("Global signal does not have a signal value");
+            case signal_chunk_header::GLOBAL_SIGNAL_TYPE:
+                return reinterpret_cast<signal_chunk_header*>(chunks.front().first->data)->signal;
+            case payload_chunk_header::GLOBAL_SIGNAL_TYPE:
+                return reinterpret_cast<payload_chunk_header*>(chunks.front().first->data)->signal;
+            default:
+                throw invalid_argument("Unknown signal type");
+        }
+    }
+    void set_signal_signal(uint8_t signal) {
+        if (chunks.empty()) {
+            throw invalid_argument("No signal in the shared_span");
+        }
+        switch (signal_type) {
+            case no_chunk_header::GLOBAL_SIGNAL_TYPE:
+                throw invalid_argument("No chunk header should not exist on the wire.");
+            case signal_chunk_header::GLOBAL_SIGNAL_TYPE:
+                get_signal<signal_chunk_header>().signal = signal;
+                break;
+            case payload_chunk_header::GLOBAL_SIGNAL_TYPE:
+                get_signal<payload_chunk_header>().signal = signal;
+                break;
+            default:
+                throw invalid_argument("Unknown signal type");
         }
     }
     uint16_t get_request_id() const {
@@ -367,9 +441,26 @@ public:
             case no_chunk_header::GLOBAL_SIGNAL_TYPE:
                 throw invalid_argument("Empty chunk header does not have request id.");
             case signal_chunk_header::GLOBAL_SIGNAL_TYPE:
-                return get_signal<signal_chunk_header>().request_id;
+                return reinterpret_cast<signal_chunk_header*>(chunks.front().first->data)->request_id;
             case payload_chunk_header::GLOBAL_SIGNAL_TYPE:
-                return get_signal<payload_chunk_header>().request_id;
+                return reinterpret_cast<payload_chunk_header*>(chunks.front().first->data)->request_id;
+            default:
+                throw invalid_argument("Could not decode request id, signal_type unknown.");
+        }
+    }
+    void set_request_id(uint16_t request_id) {
+        if (chunks.empty()) {
+            throw invalid_argument("No request id in empty shared_span");
+        }
+        switch (signal_type) {
+            case no_chunk_header::GLOBAL_SIGNAL_TYPE:
+                throw invalid_argument("Empty chunk header does not have request id.");
+            case signal_chunk_header::GLOBAL_SIGNAL_TYPE:
+                get_signal<signal_chunk_header>().request_id = request_id;
+                break;
+            case payload_chunk_header::GLOBAL_SIGNAL_TYPE:
+                get_signal<payload_chunk_header>().request_id = request_id;
+                break;
             default:
                 throw invalid_argument("Could not decode request id, signal_type unknown.");
         }
@@ -389,6 +480,17 @@ public:
             throw invalid_argument("use_chunk_size can only be called on a shared_span with one chunk");
         }
         return chunks[0].second.second + get_signal_size();
+    }
+
+    template <typename SignalType = no_chunk_header>
+    vector<shared_span<ChunkType>> flatten_with_signal(SignalType signal) const {
+        vector<shared_span<ChunkType>> result;
+        for (auto& chunk : chunks) {
+            span<uint8_t> chunk_data(chunk.first->data + chunk.second.first, chunk.second.second);
+            signal.data_length = chunk_data.size();
+            result.emplace_back(signal, chunk_data);
+        }
+        return result;
     }
 
     shared_span append(shared_span &other) const {

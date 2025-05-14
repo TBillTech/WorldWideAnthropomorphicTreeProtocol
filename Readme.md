@@ -164,20 +164,27 @@ Nominally, displayable Trees contain several important content values, which can
 * attributes: For this node, any attributes as key value pairs (isomorphic to DOM attributes, direct object adjectives)
 
 For use case writing a book and writing a paper, we want the following features.  We want to be able to edit scenes and chapter context (or anything really) directly with a straight YAML representation of the tree.  We want the ability to edit equations in the web browser.  We want the web browser to be able to display charts.  We want to be able to export it all to a Static HTML for EPUB.  We want to be able to have an LLM convert the structured data to prose.  We want the LLM to convert the structured data to SSML. To acheive these goals, the following frontend and backends will be needed:
-* Threadsafe Backend at the DAG root, using Simple Backend with disk image.
-* Composite Backend, for restricting the Static HTML Domain
-* HTTP3_Client Backend, for supporting the HTML and DomLink Frontends
-* HTTP3_Server Frontend, for supporting the HTTP3_Client Backend
-* File Mediator Frontend, for supporting writing out YAML and HTML files 
+* Threadsafe Backend at the DAG root, using Simple Backend with read and write.
+* Composite & Redirection Backends, for restricting the Static HTML Domain
+* HTTP3_Client Backend in cpp
+* HTTP3_Server Frontend, for supporting HTTP3_Client cpp, HTTP3_Client javascript, Flat HTML Mediator, Static HTML Watcher, Flat SSML Mediator, DOMLink Frontend
+* HTTP3_Client Backend in javascript, which is the ONLY javascript backend 
+* Cloning Mediator Frontend + (if lazy flag, use earlier version notification in one tree to cause update)
+* File Backend, for supporting writing out YAML and HTML files, which is isomorphic to directories with a node.txt and contents 
 * YAML Mediator Frontend (WWATP Trees implicitly use MathJSON "representation", declarative Chart "representation")
 * Flat HTML Mediator Frontend, using MathLive for LaTeX front <-> MathJSON back, PlotLY for declarative PlotLy front <- declarative Chart back
 * Static HTML Watcher Frontend, using MathLive for HTML front <- LaTeX <- MathJSON back to LaTeX to HTML, PlotLY for PNG <- declarative PlotLy front <- declarative Chart back, and can use pandoc to convert to EPUB
 * Flat SSML Mediator Frontend, which simply converts DOM elements into SSML markdown
 * DOMLink Frontend, which also uses MathLive LaTeX DOM, implying HTTP3ServerFrontend should convert LaTeX front <-> MathJSON back, PlotLY for declarative PlotLy front <- declarative Chart back
-* Merge Tool Mediator Frontend
 * In a different project: Careful Prose Tool Mediator Frontend
 
-There should be a lot of overlap between the Flat HTML Mediator and the DOMLink, especially when it comes to editing formulas.  MathLive is probably the right library to use in the DOMLink: https://github.com/arnog/mathlive .  PlotLY seems to be the Chart library of choice.
+There should be a lot of overlap between the Flat HTML Mediator (javacript? on node.js?) and the DOMLink, especially when it comes to editing formulas.  MathLive is probably the right library to use in the DOMLink: https://github.com/arnog/mathlive .  PlotLY seems to be the Chart library of choice.
+
+Here are some additional front and backends that may eventually be useful:
+* c FFI frontend, providing a variety of other FFI language backends using it.
+* Unreal Engine Frontend
+* Maxima Mediator Frontend
+* Caching Backend, to speed up using File Backends and complicated queryable backends
 
 ## Third party libraries used
 

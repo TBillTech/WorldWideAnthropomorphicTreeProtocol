@@ -100,6 +100,7 @@ set(COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/structure/composite_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/http3_client/http3_client_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/frontend/http3_server_cpp/http3_server.cpp
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/interface/http3_tree_message.cpp
 )
 
 # Add test executables

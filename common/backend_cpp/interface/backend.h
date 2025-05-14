@@ -49,7 +49,7 @@ public:
     // For token ring nodes, the listener will get notified only after the token has been passed to it.
     // Technically, this means you cannot listen to sub components of data-structures.
     // Which also means that implementations should not modify data blocks without updating the version.
-    virtual void registerNodeListener(const std::string listener_name, const std::string label_rule, NodeListenerCallback callback) = 0;
+    virtual void registerNodeListener(const std::string listener_name, const std::string label_rule, bool child_notify, NodeListenerCallback callback) = 0;
     virtual void deregisterNodeListener(const std::string listener_name, const std::string label_rule) = 0;
 
     // Sometimes a higher level backend needs to tell a lower level backend to notify a listener of something,
@@ -60,3 +60,5 @@ public:
     virtual void processNotification() = 0;
 };
 
+using Notification = std::pair<std::string, fplus::maybe<TreeNode>>;
+using SequentialNotification = std::pair<uint64_t, Notification>;

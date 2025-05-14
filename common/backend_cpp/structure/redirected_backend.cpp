@@ -85,7 +85,7 @@ std::vector<TreeNode> RedirectedBackend::getFullTree() const {
     return full_tree;
 }
 
-void RedirectedBackend::registerNodeListener(const std::string listener_name, const std::string label_rule, NodeListenerCallback callback) {
+void RedirectedBackend::registerNodeListener(const std::string listener_name, const std::string label_rule, bool child_notify, NodeListenerCallback callback) {
     auto relative_label_rule = prefix_ + label_rule;
     auto relative_callback = [this, callback](Backend& backend, const std::string& relative_label_rule, const fplus::maybe<TreeNode>& node) {
         auto redirected_label_rule = relative_label_rule.substr(prefix_.size());
@@ -97,7 +97,7 @@ void RedirectedBackend::registerNodeListener(const std::string listener_name, co
             callback(*this, redirected_label_rule, node);
         }
     };
-    root_backend_.registerNodeListener(listener_name, relative_label_rule, relative_callback);
+    root_backend_.registerNodeListener(listener_name, relative_label_rule, child_notify, relative_callback);
 }
 
 void RedirectedBackend::deregisterNodeListener(const std::string listener_name, const std::string label_rule) {

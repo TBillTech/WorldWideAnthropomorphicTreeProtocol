@@ -56,7 +56,7 @@ std::vector<TreeNode> ThreadsafeBackend::getFullTree() const {
     return tree_.getFullTree();
 }
 
-void ThreadsafeBackend::registerNodeListener(const std::string listener_name, const std::string label_rule, NodeListenerCallback callback) {
+void ThreadsafeBackend::registerNodeListener(const std::string listener_name, const std::string label_rule, bool child_notify, NodeListenerCallback callback) {
     std::lock_guard<std::mutex> lock(tree_mutex_);
 
     // Create a wrapper callback that captures the original callback and this pointer
@@ -67,7 +67,7 @@ void ThreadsafeBackend::registerNodeListener(const std::string listener_name, co
     };
 
     // Register the wrapped callback with the tree_
-    tree_.registerNodeListener(listener_name, label_rule, wrapped_callback);
+    tree_.registerNodeListener(listener_name, label_rule, child_notify, wrapped_callback);
 }
 
 void ThreadsafeBackend::deregisterNodeListener(const std::string listener_name, const std::string label_rule) {

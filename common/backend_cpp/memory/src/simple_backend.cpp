@@ -17,9 +17,13 @@ bool checkLabelRuleOverlap(const string& label_rule_1, const string& label_rule_
     std::string stripped_label1 = stripQuery(label_rule_1);
     std::string stripped_label2 = stripQuery(label_rule_2);
 
+    if (stripped_label1.empty() || stripped_label2.empty()) {
+        return true; // By definition, empty label rules overlap with everything
+    }
     if (stripped_label1 == stripped_label2) {
         return true;
     }
+    
 
     auto last_slash1 = stripped_label1.find_last_of('/');
     auto last_slash2 = stripped_label2.find_last_of('/');
@@ -128,32 +132,49 @@ bool SimpleBackend::closeTransactionLayers(void) {
 }
 
 bool SimpleBackend::applyTransaction(const Transaction& transaction) {
-    return memory_tree_.applyTransaction(transaction);
+    auto success = memory_tree_.applyTransaction(transaction);
+    if (success) {
+        // Notify listeners for each operation in the transaction
+        for (const auto& sub_transaction : transaction) {
+            auto parent_node_update = sub_transaction.first;
+            auto label_rule = parent_node_update.second.first;
+            notifyListeners(label_rule, parent_node_update.second.second);
+            for (const auto& child_node_update : sub_transaction.second) {
+                auto child_label_rule = child_node_update.second.first;
+                notifyListeners(child_label_rule, child_node_update.second.second);
+            }
+        }
+    }
+    return success;
 }
 
 std::vector<TreeNode> SimpleBackend::getFullTree() const {
     return memory_tree_.getFullTree();
 }
 
-void SimpleBackend::registerNodeListener(const std::string listener_name, const std::string label_rule, NodeListenerCallback callback) {
-    auto findit = node_listeners_.find(label_rule);
+void SimpleBackend::registerNodeListener(const std::string listener_name, const std::string notification_rule, bool child_notify, NodeListenerCallback callback) {
+    deregisterNodeListener(listener_name, notification_rule);
+    auto findit = node_listeners_.find(notification_rule);
+    ListenerInfo a_listener = {listener_name, {child_notify, callback}};
     if (findit != node_listeners_.end()) {
         // If the label_rule already exists, add the listener to the existing list
-        auto& listeners = findit->second.second;
-        listeners.push_back(listener_name);
+        auto& listeners = findit->second;
+        listeners.push_back(a_listener);
     } else {
         // If the label_rule does not exist, create a new entry
-        node_listeners_[label_rule] = std::make_pair(callback, std::vector<std::string>{listener_name});
+        node_listeners_.emplace(notification_rule, std::vector<ListenerInfo>{a_listener});
     }
 }
 
-void SimpleBackend::deregisterNodeListener(const std::string listener_name, const std::string label_rule) {
+void SimpleBackend::deregisterNodeListener(const std::string listener_name, const std::string notification_rule) {
     // Deregister a listener for a specific label rule
-    auto found = node_listeners_.find(label_rule);
+    auto found = node_listeners_.find(notification_rule);
     if (found != node_listeners_.end()) {
-        auto& listeners = found->second.second;
+        auto& listeners = found->second;
         // Remove the listener from the list
-        auto it = std::remove(listeners.begin(), listeners.end(), listener_name);
+        auto it = std::remove_if(listeners.begin(), listeners.end(), [&](const ListenerInfo& listener) {
+            return listener.first == listener_name;
+        });
         if (it != listeners.end()) {
             listeners.erase(it, listeners.end());
         }
@@ -164,14 +185,51 @@ void SimpleBackend::deregisterNodeListener(const std::string listener_name, cons
     }
 }
 
+bool partialLabelRuleMatch(const std::string& label_rule, const std::string& notification_rule) {
+    // Strip the query parth from the label_rule
+    auto stripQuery = [](const std::string& label_rule) {
+        size_t query_pos = label_rule.find('?');
+        return query_pos == std::string::npos ? label_rule : label_rule.substr(0, query_pos);
+    };
+    std::string stripped_label_rule = stripQuery(label_rule);
+    // If the rules exactly match, return true:
+    if (stripped_label_rule == notification_rule) {
+        return true;
+    }
+    if (notification_rule.size() > stripped_label_rule.size()) {
+        return false;
+    }
+    // If the notification_rule is a prefix of the label_rule, return true:
+    return stripped_label_rule.find(notification_rule) == 0;
+}
+
 void SimpleBackend::notifyListeners(const std::string& label_rule, const maybe<TreeNode>& node) {
-    auto found = node_listeners_.find(label_rule);
-    if (found != node_listeners_.end()) {
-        auto listeners = found->second.second;
-        auto callback = found->second.first;
+    if (node_listeners_.empty()) {
+        return; // No listeners registered
+    }
+    auto found = node_listeners_.upper_bound(label_rule);
+    if (found != node_listeners_.begin()) {
+        // Since found is not begin(), it proves there is at least one element
+        --found; // Move to the last element that is less than or equal to label_rule
+    } else {
+        return; // No elements to check
+    }
+    while (partialLabelRuleMatch(found->first, label_rule)) {
+        auto listeners = found->second;
         // Notify all listeners for this label_rule
         for (auto listener : listeners) {
-            callback(*this, listener, node);
+            if (found->first == label_rule) {
+                // The parent == label and callback is unconditionally met
+                listener.second.second(*this, listener.first, node);
+            } else if (listener.second.first && checkLabelRuleOverlap(found->first, label_rule)) {
+                // The label_rule contains the listener's label_rule, and the callback matches children
+                listener.second.second(*this, listener.first, node);
+            } // Otherwise, the label_rule contains the listener's label_rule, but the callback does not match children
+        }
+        if (found != node_listeners_.begin()) {
+            --found; // Move to the last element that is less than or equal to label_rule
+        } else {
+            break; // No more elements to check
         }
     }
 }

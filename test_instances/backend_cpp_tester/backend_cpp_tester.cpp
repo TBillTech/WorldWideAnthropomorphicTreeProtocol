@@ -278,7 +278,7 @@ void testBackendLogically(Backend &backend, string label_prefix = "")
     bool lion_node_created = false;
     bool lion_node_deleted = false;
     string lion_label = label_prefix + "lion";
-    backend.registerNodeListener("lion_listener", lion_label, [lion_label, &lion_node_created, &lion_node_deleted](Backend& backend, const string listener_name, const fplus::maybe<TreeNode> node) {
+    backend.registerNodeListener("lion_listener", lion_label, false, [lion_label, &lion_node_created, &lion_node_deleted](Backend& backend, const string listener_name, const fplus::maybe<TreeNode> node) {
         cout << "Listener " << listener_name << " notified for node: " << node.get_with_default(TreeNode()).getLabelRule() << endl;
         if (node.is_just()) {
             auto found_node = node.get_with_default(TreeNode());

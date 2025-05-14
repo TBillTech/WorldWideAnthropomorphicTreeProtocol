@@ -21,7 +21,8 @@ using ResumeCallback = std::function<pair<chunks, fplus::maybe<ResumeCallback> >
 // function independently of each other.
 class Http3Server {
 public:
-    Http3Server(Backend& backend);
+    Http3Server(Backend& backend, size_t max_journal_size = 1000) 
+        : backend_(backend), lastNotificationIndex_(0), maxJournalSize_(max_journal_size) {};
     ~Http3Server();
 
     // A some things of note:
@@ -51,10 +52,9 @@ private:
     // then the client will have to "start over" and request the mutable part of the tree again.
     // Of course, the client is allowed to request static parts of the tree as well.
     uint64_t lastNotificationIndex_;
-    using Notification = std::pair<std::string, fplus::maybe<TreeNode>>;
-    using SequentialNotification = std::pair<uint64_t, Notification>;
-    std::vector<SequentialNotification> journal_;
+    std::map<uint64_t, SequentialNotification> journal_;
     std::set<std::string> listeningLabels_;
+    size_t maxJournalSize_;
 };
 
 class HTTP3ServerRouter {
@@ -73,8 +73,6 @@ class HTTP3ServerRouter {
         // The static asset method servers static assets from the server, and also has special case logic for /index.html (and /),
         // and will ususally compose it from the backend index node page. It will also usually inject the css and js from the tree into the page.
         chunks staticAsset(std::string const& url) const;
-        // The chunk stream handler in the router contains logic to interpret request chunks as calls to the WWATB backend, and route them correctly.
-        chunks processResponseStream(const StreamIdentifier& stream_id, chunks& request);    
 
     private:
         std::map<std::string, Http3Server> servers_;
