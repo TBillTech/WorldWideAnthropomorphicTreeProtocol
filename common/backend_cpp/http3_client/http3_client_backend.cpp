@@ -407,14 +407,30 @@ void Http3ClientBackend::processHTTP3Response(HTTP3TreeMessage& response) {
             break;
         case payload_chunk_header::SIGNAL_WWATP_GET_JOURNAL_RESPONSE: {
                 std::vector<SequentialNotification> notifications = response.decode_getJournalResponse();
-                if ((notifications.front().first == 0) && (notifications.back().first > notifications.size() - 1)) {
-                    getMutablePageTree();
-                } else {
-                    for (const auto& notification : notifications) {
-                        processNotification(notification);
+                // loop backwards through the notifications for the last solicited notification
+                // (unsolicited notifications are (uint64_t)-1, indicating usually reverted/rejected changes)
+                auto lastNotification = notifications.begin();
+                bool notificationGap = false;
+                uint64_t curNotificationIndex = notifications.front().first;
+                for (auto it = notifications.begin(); it != notifications.end(); ++it) {
+                    if (!notificationGap) {
+                        processOneNotification(*it);
                     }
+                    if (it->first == (uint64_t)-1) {
+                        continue;
+                    }
+                    if (curNotificationIndex != (uint64_t)-1) {
+                        if (it->first != curNotificationIndex + 1) {
+                            notificationGap = true;
+                        }
+                    }
+                    curNotificationIndex = it->first;
+                    lastNotification = it;
                 }
-                updateLastNotification(notifications.back());
+                if (notificationGap) {
+                    getMutablePageTreeInMode(false);
+                }
+                updateLastNotification(*lastNotification);
             }
             break;
         default:
@@ -424,12 +440,12 @@ void Http3ClientBackend::processHTTP3Response(HTTP3TreeMessage& response) {
         }
 }
 
-fplus::maybe<HTTP3TreeMessage> Http3ClientBackend::popNextRequest() {
+HTTP3TreeMessage Http3ClientBackend::popNextRequest() {
     std::lock_guard<std::mutex> lock(handlerMutex_);
     if (pendingRequests_.empty()) {
-        return fplus::nothing<HTTP3TreeMessage>();
+        throw std::runtime_error("No pending requests");
     }
-    HTTP3TreeMessage request(pendingRequests_.front());
+    HTTP3TreeMessage request(std::move(pendingRequests_.front()));
     pendingRequests_.pop_front();
     return request;
 }
@@ -462,6 +478,10 @@ void Http3ClientBackend::requestFullTreeSync() {
 }
 
 void Http3ClientBackend::getMutablePageTree() {
+    getMutablePageTreeInMode(blockingMode_);
+}
+
+void Http3ClientBackend::getMutablePageTreeInMode(bool blocking_mode) {
     // Use the caching localBackend_ to get the mutable page tree
     string label_rule = "MutableNodes";
     {
@@ -474,7 +494,7 @@ void Http3ClientBackend::getMutablePageTree() {
         std::lock_guard<std::mutex> lock(handlerMutex_);
         pendingRequests_.push_back(std::move(request));
     }
-    if(!blockingMode_) {
+    if(!blocking_mode) {
         return;
     }
     // Wait for the response
@@ -486,10 +506,14 @@ void Http3ClientBackend::getMutablePageTree() {
     needMutablePageTreeSync_ = false;
 }
 
-void Http3ClientBackend::processNotification(SequentialNotification const& notification) {
+void Http3ClientBackend::processOneNotification(SequentialNotification const& notification) {
     uint64_t sequence_num = notification.first;
     Notification const& notification_data = notification.second;
     std::string label_rule = notification_data.first;
+    if (label_rule == "") { // For tracking purposes, 
+        // for example, the client does not have premission to view the node.
+        return;
+    }
     fplus::maybe<TreeNode> const& node = notification_data.second;
     if (node.is_just()) {
         disableServerSync();
@@ -505,4 +529,84 @@ void Http3ClientBackend::processNotification(SequentialNotification const& notif
 void Http3ClientBackend::updateLastNotification(SequentialNotification const& notification) {
     std::lock_guard<std::mutex> lock(backendMutex_);
     lastNotification_ = notification;
+}
+
+void Http3ClientBackendUpdater::addBackend(Backend& local_backend, bool blocking_mode, Request request){
+    backends_.emplace_back(local_backend, blocking_mode, request);
+}
+
+Http3ClientBackend& Http3ClientBackendUpdater::getBackend(const std::string& url) {
+    for (auto& backend : backends_) {
+        if (url.find(backend.getRequestUrlInfo().path) != std::string::npos) {
+            return backend;
+        }
+    }
+    throw std::runtime_error("Backend not found");
+}
+
+void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector, double time) {
+    auto timeDelta = time - lastTime_;
+    bool solicit_journal = false;
+    if (timeDelta*60 > journalRequestsPerMinute_) {
+        solicit_journal = true;
+    } 
+    for (auto& backend : backends_) {
+        if (backend.hasNextRequest()) {
+            auto req = backend.getRequestUrlInfo();
+            StreamIdentifier stream_id = connector.getNewRequestStreamIdentifier(req);
+            auto theRequest = ongoingRequests_.emplace(stream_id, backend.popNextRequest());
+            theRequest.first->second.setRequestId(stream_id.logical_id);
+            stream_callback_fn messageHandler = [&backend, &theRequest](StreamIdentifier const& stream_identifier, chunks& response) {
+                chunks request;
+                auto& theMessage = theRequest.first->second;
+                auto requestChunk = theMessage.popRequestChunk();
+                while(requestChunk.is_just()) {
+                    auto chunk = requestChunk.unsafe_get_just();
+                    request.push_back(chunk);
+                }
+                for (auto& chunk : response) {
+                    theMessage.pushResponseChunk(chunk);
+                }
+                if (theMessage.isResponseComplete()) {
+                    backend.processHTTP3Response(theMessage);
+                }
+                if (theMessage.isProcessingFinished()) {
+                    // return signal_chunk_header::SIGNAL_CLOSE_STREAM
+                    signal_chunk_header signal(signal_chunk_header::SIGNAL_CLOSE_STREAM, 0);
+                    request.push_back(shared_span<>(signal, true));
+                }
+                return request;
+            };
+            connector.registerResponseHandler(stream_id, messageHandler);
+        }
+        if (solicit_journal) {
+            auto req = backend.getRequestUrlInfo();
+            StreamIdentifier stream_id = connector.getNewRequestStreamIdentifier(req);
+            auto theRequest = ongoingRequests_.emplace(stream_id, backend.solicitJournalRequest());
+            theRequest.first->second.setRequestId(stream_id.logical_id);
+            stream_callback_fn messageHandler = [&backend, &theRequest](StreamIdentifier const& stream_identifier, chunks& response) {
+                chunks request;
+                auto& theMessage = theRequest.first->second;
+                auto requestChunk = theMessage.popRequestChunk();
+                while(requestChunk.is_just()) {
+                    auto chunk = requestChunk.unsafe_get_just();
+                    request.push_back(chunk);
+                }
+                for (auto& chunk : response) {
+                    theMessage.pushResponseChunk(chunk);
+                }
+                if (theMessage.isResponseComplete()) {
+                    backend.processHTTP3Response(theMessage);
+                }
+                if (theMessage.isProcessingFinished()) {
+                    // return signal_chunk_header::SIGNAL_CLOSE_STREAM
+                    signal_chunk_header signal(signal_chunk_header::SIGNAL_CLOSE_STREAM, 0);
+                    request.push_back(shared_span<>(signal, true));
+                }
+                return request;
+            };
+            connector.registerResponseHandler(stream_id, messageHandler);
+        }
+    }
+    lastTime_ = time;
 }

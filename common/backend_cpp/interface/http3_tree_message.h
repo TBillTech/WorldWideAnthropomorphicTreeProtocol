@@ -60,8 +60,8 @@ fplus::maybe<size_t> can_decode_VectorTreeNode(size_t start_chunk, chunkList enc
 
 class HTTP3TreeMessage {
 public:
-    HTTP3TreeMessage(uint16_t request_id) 
-        : request_id_(request_id) {
+    HTTP3TreeMessage(uint16_t request_id = 0, uint8_t signal = 0) 
+        : request_id_(request_id), signal_(signal) {
         // Constructor
     };
     ~HTTP3TreeMessage() = default;
@@ -168,29 +168,16 @@ public:
     }
  
     // assignment operator
-    HTTP3TreeMessage(const HTTP3TreeMessage& other) {
-        request_id_ = other.request_id_;
-        signal_ = other.signal_;
-        isInitialized_ = other.isInitialized_;
-        requestChunks = other.requestChunks;
-        requestComplete = other.requestComplete;
-        responseChunks = other.responseChunks;
-        responseComplete = other.responseComplete;
-        processingFinished = other.processingFinished;
-    };
-    HTTP3TreeMessage& operator=(const HTTP3TreeMessage& other) {
-        if (this != &other) {
-            request_id_ = other.request_id_;
-            signal_ = other.signal_;
-            isInitialized_ = other.isInitialized_;
-            requestChunks = other.requestChunks;
-            requestComplete = other.requestComplete;
-            responseChunks = other.responseChunks;
-            responseComplete = other.responseComplete;
-            processingFinished = other.processingFinished;
-        }
-        return *this;    
-    };
+    HTTP3TreeMessage(const HTTP3TreeMessage&& other) :
+        request_id_(other.request_id_),
+        signal_(other.signal_),
+        isInitialized_(other.isInitialized_),
+        requestChunks(std::move(other.requestChunks)),
+        requestComplete(other.requestComplete),
+        responseChunks(std::move(other.responseChunks)),
+        responseComplete(other.responseComplete),
+        processingFinished(other.processingFinished) {
+    }
 
 private:
     // loosely, the process is broken down into stages:
@@ -201,8 +188,8 @@ private:
     // 4. The handler consumes the request chunkList and sends them to the server
     // 5. The handler appends response chunkList until the response is complete
     // 6. The HTTP3ClientBackend processFinishedRequest method is called, which will call the appropriate response method
-    uint16_t request_id_ = 0;
-    uint8_t signal_ = 0;
+    uint16_t request_id_;
+    uint8_t signal_;
 
     bool isInitialized_ = false;
     chunkList requestChunks;

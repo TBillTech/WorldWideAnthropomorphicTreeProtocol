@@ -1,5 +1,4 @@
 #include <vector>
-#include <fplus/fplus.hpp>
 
 #include "http3_tree_message.h"
 #include "shared_chunk.h"
@@ -1188,7 +1187,9 @@ void HTTP3TreeMessage::encode_getJournalRequest(SequentialNotification const& la
         throw invalid_argument("HTTP3TreeMessage is already initialized");
     }
     uint8_t signal_ = payload_chunk_header::SIGNAL_WWATP_GET_JOURNAL_REQUEST;
-    chunkList encoded = encode_SequentialNotification(request_id_, signal_, last_notification);
+    // Just send the uint64_t sequence number in the request
+    chunkList encoded = encode_SequentialNotification(request_id_, signal_, 
+        {last_notification.first, {"", fplus::maybe<TreeNode>()}});
     std::lock_guard<std::mutex> lock(requestChunksMutex);
     requestChunks.insert(requestChunks.end(), std::make_move_iterator(encoded.begin()), std::make_move_iterator(encoded.end()));
     isInitialized_ = true;
@@ -1313,6 +1314,9 @@ void HTTP3TreeMessage::pushRequestChunk(shared_span<> chunk) {
 fplus::maybe<shared_span<> > HTTP3TreeMessage::popResponseChunk() {
     std::lock_guard<std::mutex> lock(responseChunksMutex);
     if (responseChunks.empty()) {
+        if (responseComplete) {
+            processingFinished = true;
+        }
         return fplus::nothing<shared_span<>>();
     }
     auto chunk = fplus::maybe(responseChunks.front());

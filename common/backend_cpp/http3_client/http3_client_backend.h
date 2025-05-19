@@ -12,11 +12,17 @@ class Http3ClientBackend : public Backend {
 public:
     // Make sure blocking_mode is set to true if you want to block on the applyTransaction call, 
     // ESPECIALLY if you wrap this class in a TransactionalBackend.
-    Http3ClientBackend(Backend& local_backend, bool blocking_mode = true, 
+    Http3ClientBackend(Backend& local_backend, bool blocking_mode, 
                        Request request)
         : localBackend_(local_backend), lastNotification_({0, {}}), 
           blockingMode_(blocking_mode), requestUrlInfo_(request) {};
     ~Http3ClientBackend() override = default;
+
+    Http3ClientBackend(const Http3ClientBackend&& other) :
+        localBackend_(other.localBackend_), lastNotification_(other.lastNotification_),
+        blockingMode_(other.blockingMode_), requestUrlInfo_(other.requestUrlInfo_) {};
+    // Delete copy constructor
+    Http3ClientBackend& operator=(const Http3ClientBackend&) = delete;
 
     // Retrieve a node by its label rule.
     fplus::maybe<TreeNode> getNode(const std::string& label_rule) const override;
@@ -58,7 +64,11 @@ public:
     // synchronize the localBackend_ with the server and the journal.
     void processHTTP3Response(HTTP3TreeMessage& response); 
 
-    fplus::maybe<HTTP3TreeMessage> popNextRequest(); 
+    bool hasNextRequest() const {
+        std::lock_guard<std::mutex> lock(handlerMutex_);
+        return !pendingRequests_.empty();
+    }
+    HTTP3TreeMessage popNextRequest(); 
     HTTP3TreeMessage solicitJournalRequest() const;
     const Request getRequestUrlInfo() const { return requestUrlInfo_; }
 
@@ -70,6 +80,8 @@ public:
     void getMutablePageTree();
 
 private:
+    void getMutablePageTreeInMode(bool blocking_mode);
+
     void awaitResponse();
     bool awaitBoolResponse();
     fplus::maybe<TreeNode> awaitTreeResponse();
@@ -77,8 +89,8 @@ private:
 
     void responseSignal();
 
-    void processNotification(SequentialNotification const& notification);
-    void updateLastNotification(SequentialNotification const& notification);
+    void processOneNotification(SequentialNotification const& notification);
+    void updateLastNotification(SequentialNotification const& notifications);
 
     void disableServerSync() {
         std::lock_guard<std::mutex> lock(handlerMutex_);
@@ -115,28 +127,30 @@ private:
     std::list<HTTP3TreeMessage> pendingRequests_;
 };
 
-class QuickConnector;
+class Communication;
 
-// The Client Backend Updater sets up a StreamIdentifier for each Http3ClientBackend registered with it.
-// When processing the RequestStream, the handler registered with the Quic_Connector will call the Http3ClientBackend::chunkStreamHandler,
-// which will then lock the Http3ClientBackend and process the incoming information.
-// Meanwhile, the higher level client program will simply use the backends (and be forced to wait on the mutexes if they are busy). 
 class Http3ClientBackendUpdater {
     public:
-        Http3ClientBackendUpdater() = default;
+        Http3ClientBackendUpdater(size_t journalRequestsPerMinute = 60) 
+            : journalRequestsPerMinute_(journalRequestsPerMinute) {};
         ~Http3ClientBackendUpdater() = default;
+
+        // Delete copy constructor and copy assignment operator
+        Http3ClientBackendUpdater(const Http3ClientBackendUpdater& other) = delete;
+        Http3ClientBackendUpdater& operator=(const Http3ClientBackendUpdater&) = delete;
 
         // Add a backend to the updater. This method should only be used with Request object that are tree urls.
         // Getting static assets at Request urls is done elsewhere.
         // NOTE: Please add all backends before calling maintainRequestHandlers.
-        void addBackend(Http3ClientBackend& backend);
+        void addBackend(Backend& local_backend, bool blocking_mode, Request request);
+        Http3ClientBackend& getBackend(const std::string& url);
 
         // There can be multiple request streams per backend, so each new request
         // needs to get a new stream identifier from the quic connector, and then
         // establish the response handler which will be a wrapper of the
         // HTTP3ClientBackend processRequestStream.
         // This also will periodically solicit a journal request for the server (from each backend).
-        void maintainRequestHandlers(QuickConnector& quic_connector);
+        void maintainRequestHandlers(Communication& connector, double time);
 
         // The HTTP3ClientBackendUpdater does not need a processRequestStream method,
         // because the greater thread will call the Quic Connector processRequestStream method,
@@ -145,10 +159,12 @@ class Http3ClientBackendUpdater {
 
     private:
         // Track the backends which will be updated by this class.  
-        std::vector<Http3ClientBackend&> backends_;
+        std::vector<Http3ClientBackend> backends_;
 
         std::map<StreamIdentifier, HTTP3TreeMessage> ongoingRequests_;
         std::map<StreamIdentifier, Http3ClientBackend&> journalingRequests_;
+        size_t journalRequestsPerMinute_;
+        double lastTime_ = 0.0;
 
         std::list<StreamIdentifier> completeRequests_;
 };
