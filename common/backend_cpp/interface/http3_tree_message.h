@@ -139,6 +139,9 @@ public:
     void encode_getJournalResponse(const std::vector<SequentialNotification>& notifications);
     std::vector<SequentialNotification> decode_getJournalResponse();
 
+    void setup_staticNodeDataRequest();
+    // staticNodeDataRequest is a special case which has no explicit encoding or decoding
+
     // Controlling message request and response state methods
     bool isInitialized() const {
         return isInitialized_;

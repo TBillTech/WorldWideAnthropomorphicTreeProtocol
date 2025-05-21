@@ -1228,6 +1228,12 @@ std::vector<SequentialNotification> HTTP3TreeMessage::decode_getJournalResponse(
     return decoded.second;
 }
 
+void HTTP3TreeMessage::setup_staticNodeDataRequest(void) {
+    if (isInitialized_) {
+        throw invalid_argument("HTTP3TreeMessage is already initialized");
+    }
+    isInitialized_ = true;
+}
 
 void HTTP3TreeMessage::setRequestId(uint16_t request_id) {
     request_id_ = request_id;
@@ -1325,8 +1331,20 @@ fplus::maybe<shared_span<> > HTTP3TreeMessage::popResponseChunk() {
 }
 
 void HTTP3TreeMessage::pushResponseChunk(shared_span<> chunk) {
-    uint8_t signal = chunk.get_signal_signal();
     std::lock_guard<std::mutex> lock(responseChunksMutex);
+    uint8_t signal_type = chunk.get_signal_type();
+    if (signal_type == no_chunk_header::GLOBAL_SIGNAL_TYPE) {
+        responseChunks.push_back(chunk);
+        return;
+    }
+    uint8_t signal = chunk.get_signal_signal();
+    if (signal_type == signal_chunk_header::GLOBAL_SIGNAL_TYPE) {
+        if (signal == signal_chunk_header::SIGNAL_CLOSE_STREAM) {
+            responseComplete = true;
+            return;
+        }
+        return;
+    }
     responseChunks.push_back(chunk);
     auto can_decode = fplus::maybe<size_t>();
     switch (signal) {

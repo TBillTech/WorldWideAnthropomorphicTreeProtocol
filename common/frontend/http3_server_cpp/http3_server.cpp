@@ -218,8 +218,8 @@ chunks HTTP3Server::staticAsset(std::string const& url) const {
 }
 
 prepared_stream_callback HTTP3Server::getResponseCallback(const Request & req) {
-    if (req.path.find("wwatp/") != std::string::npos) {
-        // This is a chunk stream, so we need to find the backend
+    if (req.isWWATP()) {
+        // This is a chunk stream, so we need set up the response for the right backend
         auto it = servers_.find(req.path);
         if (it != servers_.end()) {
             stream_callback_fn callback = [&it](const StreamIdentifier& stream_id, chunks& request) {
@@ -228,7 +228,13 @@ prepared_stream_callback HTTP3Server::getResponseCallback(const Request & req) {
             return std::make_pair(uri_response_info{true, true, false, 0}, callback);
         }
     } else {
-        // This is a static asset, so we can return it directly
+        // This is a static asset, so we can return it directly.
+        // Note that each outstanding request on the client side will have a different stream id,
+        // so returning sum_size will apply to only this one asset.
+        // That will control when the server stops sending data.
+        // To control the number of times the chunks are sent, prepareHandler will directly
+        // call the callback with the stream id and immediately add them to the outgoing queue,
+        // while substituting a noop for the responder callback. 
         auto it = staticAssets_.find(req.path);
         if (it != staticAssets_.end()) {
             stream_callback_fn callback = [&it](const StreamIdentifier& stream_id, chunks& request) {

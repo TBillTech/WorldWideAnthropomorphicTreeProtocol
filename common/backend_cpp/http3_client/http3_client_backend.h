@@ -13,9 +13,16 @@ public:
     // Make sure blocking_mode is set to true if you want to block on the applyTransaction call, 
     // ESPECIALLY if you wrap this class in a TransactionalBackend.
     Http3ClientBackend(Backend& local_backend, bool blocking_mode, 
-                       Request request)
+                       Request request, size_t journalRequestsPerMinute = 60,
+                       fplus::maybe<TreeNode> staticNode = fplus::maybe<TreeNode>())
         : localBackend_(local_backend), lastNotification_({0, {}}), 
-          blockingMode_(blocking_mode), requestUrlInfo_(request) {};
+          blockingMode_(blocking_mode), requestUrlInfo_(request),
+          journalRequestsPerMinute_(journalRequestsPerMinute),
+          staticNode_(staticNode) {
+            if ((staticNode_.is_just()) && request.isWWATP()) {
+                throw std::runtime_error("Static node must be used with static request (not WWATP).");
+            }
+          };
     ~Http3ClientBackend() override = default;
 
     Http3ClientBackend(const Http3ClientBackend&& other) :
@@ -73,19 +80,30 @@ public:
     const Request getRequestUrlInfo() const { return requestUrlInfo_; }
 
     void requestFullTreeSync();
-    void setMutablePageTreeLabelRule(std::string label_rule = "MutableNodes") {
-        std::lock_guard<std::mutex> lock(handlerMutex_);
-        mutablePageTreeLabelRule_ = label_rule;
-    }
+    void setMutablePageTreeLabelRule(std::string label_rule = "MutableNodes");
     void getMutablePageTree();
 
+    bool haveJournalRequest(double time) {
+        if ((journalRequestsPerMinute_ == 0) || (lastJournalRequestTime_ <= 1.0)) {
+            lastJournalRequestTime_ = time;
+            return false;
+        }
+        double timeDelta = time - lastJournalRequestTime_;
+        lastJournalRequestTime_ = time;
+        return (timeDelta*journalRequestsPerMinute_ > 60.0);
+    }
+
 private:
+    void requestStaticNodeData();
+    void setNodeChunks(chunks& chunks);
+
     void getMutablePageTreeInMode(bool blocking_mode);
 
     void awaitResponse();
     bool awaitBoolResponse();
     fplus::maybe<TreeNode> awaitTreeResponse();
     std::vector<TreeNode> awaitVectorTreeResponse();
+    chunks awaitChunksResponse();
 
     void responseSignal();
 
@@ -121,18 +139,23 @@ private:
     bool boolResponse = false;
     fplus::maybe<TreeNode> maybeTreeResponse_;
     std::vector<TreeNode> vectorTreeResponse_;
+    chunks chunksResponse;
 
     const Request requestUrlInfo_;
     
     std::list<HTTP3TreeMessage> pendingRequests_;
+
+    size_t journalRequestsPerMinute_;
+    double lastJournalRequestTime_ = 0.0;
+
+    fplus::maybe<TreeNode> staticNode_;
 };
 
 class Communication;
 
 class Http3ClientBackendUpdater {
     public:
-        Http3ClientBackendUpdater(size_t journalRequestsPerMinute = 60) 
-            : journalRequestsPerMinute_(journalRequestsPerMinute) {};
+        Http3ClientBackendUpdater() = default;
         ~Http3ClientBackendUpdater() = default;
 
         // Delete copy constructor and copy assignment operator
@@ -163,7 +186,6 @@ class Http3ClientBackendUpdater {
 
         std::map<StreamIdentifier, HTTP3TreeMessage> ongoingRequests_;
         std::map<StreamIdentifier, Http3ClientBackend&> journalingRequests_;
-        size_t journalRequestsPerMinute_;
         double lastTime_ = 0.0;
 
         std::list<StreamIdentifier> completeRequests_;

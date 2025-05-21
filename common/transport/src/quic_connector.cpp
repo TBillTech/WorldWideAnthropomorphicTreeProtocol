@@ -126,7 +126,7 @@ void ClientStream::append_data(std::span<const uint8_t> data) {
     // Check if the chunk is complete
     if (partial_chunk.size() + partial_chunk.get_signal_size() == partial_chunk.get_wire_size()) {
         // If so, push it onto the incoming queue
-        handler->push_incoming_chunk(move(partial_chunk));
+        handler->push_incoming_chunk(move(partial_chunk), req);
         partial_chunk = shared_span<>(global_no_chunk_header, false);
     }
     append_data(remaining_span);
@@ -143,6 +143,12 @@ bool ClientStream::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, ng
 pair<size_t, vector<StreamIdentifier>> ClientStream::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
 {
     return handler->get_pending_chunks_size(stream_id, veccnt);
+}
+
+void ClientStream::sendCloseSignal() {
+    auto signal = signal_chunk_header(stream_id, signal_chunk_header::SIGNAL_CLOSE_STREAM);
+    shared_span<> chunk(signal, true);
+    handler->push_incoming_chunk(move(chunk), req);
 }
 
 
@@ -2018,11 +2024,11 @@ void Client::shared_span_decr_rc(uint8_t *locked_ptr)
     locked_chunks_.erase(locked_ptr);
 }
 
-void Client::push_incoming_chunk(shared_span<> &&chunk)
+void Client::push_incoming_chunk(shared_span<> &&chunk, Request const &req)
 {
     auto sid = get_dcid();
     // Push the chunk into the quic_connector_ requestResolutionQueue
-    quic_connector_.pushIncomingChunk(sid, move(chunk));
+    quic_connector_.pushIncomingChunk(sid, move(chunk), req);
 }
 
 namespace {
@@ -2435,11 +2441,15 @@ int Client::http_stream_close(int64_t stream_id, uint64_t app_error_code) {
   }
 
   // NOTE: The workaround for the new logical streams means that this even has no significance for the quic_connector_
+  // unless it is a static asset
 
   if (auto it = streams_.find(stream_id); it != std::end(streams_)) {
     if (!config.quiet) {
       std::cerr << "Client HTTP stream " << stream_id << " closed with error code "
                 << app_error_code << std::endl;
+    }
+    if(!it->second->req.isWWATP()) {
+        it->second->sendCloseSignal();
     }
     streams_.erase(it);
   }
@@ -2953,6 +2963,16 @@ Options:
 
 
 StreamIdentifier QuicConnector::getNewRequestStreamIdentifier(Request const &req) {
+    if (!req.isWWATP()) {
+        lock_guard<std::mutex> lock(returnPathsMutex);
+        // This is not a WWATP request, so check if it is already in the staticRequests
+        auto findit = staticRequests.find(req);
+        if (findit != staticRequests.end()) {
+            // This is a static request, so return the stream_id
+            returnPaths.insert(make_pair(findit->second, req));
+            return findit->second;
+        }
+    }
     // This needs to read the cid from the client, increment the global_stream_id per the client,
     // and also add the StreamIdentifier and Request to the stream_return_paths
     ngtcp2_cid cid = client->get_dcid();
@@ -2960,6 +2980,10 @@ StreamIdentifier QuicConnector::getNewRequestStreamIdentifier(Request const &req
     auto stream_id = stream_id_counter.fetch_add(1);
     auto newStreamIdentifier = StreamIdentifier(cid, stream_id);
     lock_guard<std::mutex> lock(returnPathsMutex);
+    if (!req.isWWATP()) {
+        // This is not a WWATP request, so add it to the staticRequests
+        staticRequests.insert(make_pair(req, newStreamIdentifier));
+    }
     returnPaths.insert(make_pair(newStreamIdentifier, req));
     return newStreamIdentifier;
 }
@@ -2983,8 +3007,6 @@ bool QuicConnector::processRequestStream() {
     if (!requestorQueue.empty()) {
         stream_callback stream_cb = requestorQueue.front();
         requestorQueue.erase(requestorQueue.begin());
-        requestorLock.unlock();
-        requestorLock.lock();
         requestorLock.unlock();
         StreamIdentifier stream_id = stream_cb.first;
         // Now the stream callback is not on the queue, so no other worker will try to service it while this is operational.
@@ -3059,6 +3081,7 @@ bool QuicConnector::processRequestStream() {
             {
                 lock_guard<std::mutex> lock(returnPathsMutex);
                 returnPaths.erase(stream_cb.first);
+                // Don't erase from the staticRequests though
             }
             // And by definition, it is not in the requestorQueue anymore
         }

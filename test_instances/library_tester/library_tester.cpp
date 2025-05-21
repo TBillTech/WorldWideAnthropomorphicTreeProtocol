@@ -223,7 +223,7 @@ int main() {
     this_thread::sleep_for(chrono::milliseconds(100));
     cout << "In Main: Client should be started up" << endl;
 
-    auto theRequest = Request{.scheme = "https", .authority = "localhost", .path = "/test"};
+    auto theRequest = Request{.scheme = "https", .authority = "localhost", .path = "/wwatp/"};
     auto theClientHandler = [&send_states](const StreamIdentifier& stream_id, chunks &response) {
         if (response.empty() && !send_states.client_sent_data) {
             cout << "Client is idle, so sending data" << endl;

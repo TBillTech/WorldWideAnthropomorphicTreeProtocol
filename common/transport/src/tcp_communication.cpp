@@ -127,8 +127,8 @@ void TcpCommunication::setupResponses() {
         return;
     }
     prepared_unhandled_response = true;
-    const std::string_view uri = "wwatp://localhost/test";
-    Request req = Request{.scheme = "https", .authority = "localhost", .path = "/test"};
+    const std::string_view uri = "tcp://localhost/wwatp/test";
+    Request req = Request{.scheme = "https", .authority = "localhost", .path = "/wwatp/test"};
     lock_guard<std::mutex> lock(preparerStackMutex);
     for (auto &preparer : preparersStack) {
         auto response = preparer.second(req);

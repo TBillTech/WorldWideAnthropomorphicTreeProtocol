@@ -145,10 +145,16 @@ public:
         return make_pair(size, vector<StreamIdentifier>(used_identifiers.begin(), used_identifiers.end()));
     }
 
-    void pushIncomingChunk(ngtcp2_cid const& sid, shared_span<> &&chunk)
+    void pushIncomingChunk(ngtcp2_cid const& sid, shared_span<> &&chunk, Request const & req)
     {
         lock_guard<std::mutex> lock(incomingChunksMutex);
-        StreamIdentifier stream_id(sid, chunk.get_request_id());
+        StreamIdentifier stream_id(sid, (uint16_t)0);
+        if (req.path.find("wwatp/") != std::string::npos) {
+            stream_id.logical_id = chunk.get_request_id();
+        } else {
+            auto findit = staticRequests.find(req);
+            stream_id = findit->second;
+        }
         auto incoming = incomingChunks.find(stream_id);
         if (incoming == incomingChunks.end()) {
             auto inserted = incomingChunks.insert(make_pair(stream_id, chunks()));
@@ -199,6 +205,7 @@ private:
     named_prepare_fns preparersStack;
     stream_callbacks responderQueue;
     stream_return_paths returnPaths;
+    map<Request, StreamIdentifier> staticRequests;
 
     stream_data_chunks incomingChunks;
     stream_data_chunks outgoingChunks;

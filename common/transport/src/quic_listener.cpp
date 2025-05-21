@@ -4193,6 +4193,8 @@ uri_response_info QuicListener::prepareInfo(const Request& req)
     return {false, false, false, 0};
 }
 
+stream_callback_fn global_noop_stream_callback = [](StreamIdentifier, chunks) { return chunks(); };
+
 uri_response_info QuicListener::prepareHandler(StreamIdentifier sid, const Request& req)
 {
     unique_lock<std::mutex> preparerlock(preparerStackMutex);
@@ -4204,6 +4206,23 @@ uri_response_info QuicListener::prepareHandler(StreamIdentifier sid, const Reque
         if (response_info.can_handle) {
             if (!response_info.is_file)
             {
+                if (!response_info.is_live_stream)
+                {
+                    chunks no_input;
+                    auto static_chunks = response.second(sid, no_input);
+                    lock_guard<std::mutex> lock(outgoingChunksMutex);
+                    auto outgoing = outgoingChunks.find(sid);
+                    if (outgoing == outgoingChunks.end()) {
+                        auto inserted = outgoingChunks.insert(make_pair(sid, chunks()));
+                        inserted.first->second.swap(static_chunks);
+                    }
+                    else {
+                        for (auto &chunk : static_chunks) {
+                            outgoing->second.emplace_back(chunk);
+                        }
+                    }
+                    stream_callback = make_pair(sid, global_noop_stream_callback);
+                }
                 {
                     lock_guard<std::mutex> lock(responderQueueMutex);
                     responderQueue.push_back(stream_callback);

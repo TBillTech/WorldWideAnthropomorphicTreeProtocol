@@ -50,4 +50,7 @@ struct Request {
         os << "Request: scheme=" << req.scheme << ", authority=" << req.authority << ", path=" << req.path << ", urgency=" << req.pri.urgency << ", inc=" << req.pri.inc;
         return os;
     }
+    bool isWWATP() const {
+        return path.find("wwatp/") != std::string::npos;
+    }
 };

@@ -61,6 +61,8 @@ struct ClientStream {
     bool lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3_vec *vec, size_t veccnt);
     pair<size_t, vector<StreamIdentifier>> get_pending_chunks_size(int64_t stream_id, size_t veccnt);   
 
+    void sendCloseSignal();
+
     Request req;
     int64_t stream_id;
     int fd;
@@ -162,7 +164,7 @@ public:
   void shared_span_incr_rc(uint8_t *locked_ptr, shared_span<> &&to_lock);
   void shared_span_decr_rc(uint8_t *locked_ptr);
 
-  void push_incoming_chunk(shared_span<> &&chunk);
+  void push_incoming_chunk(shared_span<> &&chunk, Request const &req);
 
   void writecb_start();
 

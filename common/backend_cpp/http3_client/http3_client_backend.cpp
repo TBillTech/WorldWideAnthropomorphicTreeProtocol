@@ -35,6 +35,15 @@ std::vector<TreeNode> Http3ClientBackend::awaitVectorTreeResponse()
     return result;
 }
 
+chunks Http3ClientBackend::awaitChunksResponse()
+{
+    awaitResponse();
+    std::lock_guard<std::mutex> lock(handlerMutex_);
+    chunks result = chunksResponse;
+    chunksResponse.clear(); // Reset for next response
+    return result;
+}
+
 void Http3ClientBackend::responseSignal()
 {
     std::lock_guard<std::mutex> lock(blockingMutex_);
@@ -260,6 +269,24 @@ void Http3ClientBackend::notifyListeners(const std::string& label_rule, const fp
 void Http3ClientBackend::processHTTP3Response(HTTP3TreeMessage& response) {
     // Process the response based on the signal
     switch (response.getSignal()) {
+        case payload_chunk_header::SIGNAL_OTHER_CHUNK: {
+                {
+                    std::lock_guard<std::mutex> lock(handlerMutex_);
+                    auto aChunk = response.popResponseChunk();
+                    while (aChunk.is_just()) {
+                        chunksResponse.push_back(aChunk.unsafe_get_just());
+                        aChunk = response.popResponseChunk();
+                    }
+                }
+                if (blockingMode_) {
+                    responseSignal();
+                } else {
+                    disableServerSync();
+                    setNodeChunks(chunksResponse);
+                    enableServerSync();
+                }
+            }
+            break;
         case payload_chunk_header::SIGNAL_WWATP_GET_NODE_RESPONSE: {
                 fplus::maybe<TreeNode> node = response.decode_getNodeResponse();
                 {
@@ -458,6 +485,10 @@ HTTP3TreeMessage Http3ClientBackend::solicitJournalRequest() const {
 }
 
 void Http3ClientBackend::requestFullTreeSync() {
+    if (staticNode_.is_just()) {
+        requestStaticNodeData();
+        return;
+    }
     // requestFullTreeSync explicitly from the server.
     {
         HTTP3TreeMessage request(0);
@@ -475,6 +506,41 @@ void Http3ClientBackend::requestFullTreeSync() {
     upsertNode(nodes);
     enableServerSync();
     std::lock_guard<std::mutex> lock(backendMutex_);
+}
+
+void Http3ClientBackend::requestStaticNodeData() {
+    // requestStaticNodeData explicitly from the server.
+    {
+        HTTP3TreeMessage request(0);
+        request.setup_staticNodeDataRequest();
+        std::lock_guard<std::mutex> lock(handlerMutex_);
+        pendingRequests_.push_back(std::move(request));
+    }
+    if(!blockingMode_) {
+        return;
+    }
+    // Wait for the response
+    auto chunks = awaitChunksResponse();
+
+    disableServerSync();
+    setNodeChunks(chunks);
+    enableServerSync();
+}
+
+void Http3ClientBackend::setNodeChunks(chunks& chunks) {
+    std::lock_guard<std::mutex> lock(backendMutex_);
+    if (staticNode_.is_just()) {
+        shared_span<> concatted(chunks.begin(), chunks.end());
+        staticNode_.unsafe_get_just().setContents(move(concatted));
+        localBackend_.upsertNode({staticNode_.unsafe_get_just()});
+    } else {
+        std::cerr << "Error: Static Node for storing contents is not defined" << std::endl;
+    }
+}
+
+void Http3ClientBackend::setMutablePageTreeLabelRule(std::string label_rule) {
+    std::lock_guard<std::mutex> lock(handlerMutex_);
+    mutablePageTreeLabelRule_ = label_rule;
 }
 
 void Http3ClientBackend::getMutablePageTree() {
@@ -545,11 +611,6 @@ Http3ClientBackend& Http3ClientBackendUpdater::getBackend(const std::string& url
 }
 
 void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector, double time) {
-    auto timeDelta = time - lastTime_;
-    bool solicit_journal = false;
-    if (timeDelta*60 > journalRequestsPerMinute_) {
-        solicit_journal = true;
-    } 
     for (auto& backend : backends_) {
         if (backend.hasNextRequest()) {
             auto req = backend.getRequestUrlInfo();
@@ -579,7 +640,7 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
             };
             connector.registerResponseHandler(stream_id, messageHandler);
         }
-        if (solicit_journal) {
+        if (backend.haveJournalRequest(time)) {
             auto req = backend.getRequestUrlInfo();
             StreamIdentifier stream_id = connector.getNewRequestStreamIdentifier(req);
             auto theRequest = ongoingRequests_.emplace(stream_id, backend.solicitJournalRequest());
