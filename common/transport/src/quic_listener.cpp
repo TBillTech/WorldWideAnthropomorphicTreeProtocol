@@ -100,6 +100,12 @@ namespace
 {
     Request request_path(const std::string_view &uri, bool is_connect)
     {
+        bool is_wwatp = uri.find("wwatp/") != std::string_view::npos;
+        string default_static = "/index.html";
+        if (is_wwatp)
+        {
+            default_static = "/";
+        }
         urlparse_url u;
         Request req{
             .pri =
@@ -125,18 +131,18 @@ namespace
             }
             if (!req.path.empty() && req.path.back() == '/')
             {
-                req.path += "index.html";
+                req.path += default_static.substr(1);
             }
         }
         else
         {
-            req.path = "/index.html";
+            req.path = default_static;
         }
 
         req.path = util::normalize_path(req.path);
         if (req.path == "/")
         {
-            req.path = "/index.html";
+            req.path = default_static;
         }
 
         if (u.field_set & (1 << URLPARSE_QUERY))
@@ -303,12 +309,6 @@ void Stream::append_data(std::span<const uint8_t> data) {
         auto next_start = partial_chunk.expand_use(copy_bytes);
         auto data_span = data.subspan(0, copy_bytes);
         partial_chunk.copy_span(data_span, {true, next_start});
-        auto end_span = data.subspan(copy_bytes-6, 12);
-        cerr << "Stream::end_span bytes: ";
-        for (auto byte : end_span) {
-            cerr << hex << static_cast<int>(byte) << " ";
-        }
-        cerr << endl << flush;
         remaining_span = data.subspan(copy_bytes, data.size() - copy_bytes);
     } else {
         // Otherwise, create a new chunk and copy the data into it
@@ -4256,35 +4256,33 @@ bool QuicListener::processResponseStream() {
                 to_process.swap(incoming->second);
             }
         }
-        for (auto &chunk : to_process) {
-            // IF the chunk is an signal_chunk_header CLOSING, then we need to set the signal_closed flag
-            if (chunk.get_signal_type() == signal_chunk_header::GLOBAL_SIGNAL_TYPE) {
-                auto signal = chunk.get_signal<signal_chunk_header>();
-                switch (signal.signal) {
-                    case signal_chunk_header::SIGNAL_CLOSE_STREAM:
-                        signal_closed = true;
-                        break;
-                
-                    // Add other cases here if needed
-                    default:
-                        // Handle unexpected signals if necessary
-                        break;
-                }
-            }
-        }
         chunks processed = fn(stream_cb.first, to_process);
         size_t chunk_count = processed.size();
         if(!processed.empty())
         {   
-            lock_guard<std::mutex> lock(outgoingChunksMutex);
+            unique_lock<std::mutex> lock(outgoingChunksMutex);
             auto outgoing = outgoingChunks.find(stream_cb.first);
-            if (outgoing == outgoingChunks.end()) {
-                auto inserted = outgoingChunks.insert(make_pair(stream_cb.first, chunks()));
-                inserted.first->second.swap(processed);
+            if (processed.size() == 1 && processed[0].get_signal_type() == signal_chunk_header::GLOBAL_SIGNAL_TYPE) {
+                // If the processed chunk is a signal chunk, we need to check if it is a close stream signal
+                auto signal = processed[0].get_signal<signal_chunk_header>();
+                if (signal.signal == signal_chunk_header::SIGNAL_CLOSE_STREAM) {
+                    if (outgoing == outgoingChunks.end()) {
+                        // No chunks left to send
+                        signal_closed = true;
+                        lock.unlock();
+                        processed = fn(stream_cb.first, processed);  // Feed the signal close back to the callback so it can cleanup too. 
+                    }
+                }
             }
             else {
-                for (auto &chunk : processed) {
-                    outgoing->second.emplace_back(chunk);
+                if (outgoing == outgoingChunks.end()) {
+                    auto inserted = outgoingChunks.insert(make_pair(stream_cb.first, chunks()));
+                    inserted.first->second.swap(processed);
+                }
+                else {
+                    for (auto &chunk : processed) {
+                        outgoing->second.emplace_back(chunk);
+                    }
                 }
             }
         }

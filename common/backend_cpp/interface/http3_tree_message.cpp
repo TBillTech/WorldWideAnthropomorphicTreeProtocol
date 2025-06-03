@@ -38,7 +38,7 @@ fplus::maybe<size_t> can_decode_label(size_t start_chunk, chunkList encoded) {
         return fplus::nothing<size_t>();
     }
     auto& chunk = *std::next(encoded.begin(), start_chunk);
-    if (chunk.size() < sizeof(payload_chunk_header)) {
+    if (chunk.get_wire_size() < sizeof(payload_chunk_header)) {
         throw invalid_argument("Chunk size is less than header size");
     }
     auto header = chunk.get_signal<payload_chunk_header>();

@@ -98,12 +98,6 @@ void ClientStream::append_data(std::span<const uint8_t> data) {
         auto next_start = partial_chunk.expand_use(copy_bytes);
         auto data_span = data.subspan(0, copy_bytes);
         partial_chunk.copy_span(data_span, {true, next_start});
-        auto end_span = data.subspan(copy_bytes-6, 12);
-        cerr << "Client Stream Decode  end_span bytes: ";
-        for (auto byte : end_span) {
-            cerr << hex << static_cast<int>(byte) << " ";
-        }
-        cerr << endl << flush;
         remaining_span = data.subspan(copy_bytes, data.size() - copy_bytes);
     } else {
         // Otherwise, create a new chunk and copy the data into it
@@ -3021,40 +3015,30 @@ bool QuicConnector::processRequestStream() {
                 to_process.swap(incoming->second);
             }
         }
-        for (auto &chunk : to_process) {
-            // IF the chunk is an signal_chunk_header CLOSING, then we need to set the signal_closed flag
-            if (chunk.get_signal_type() == signal_chunk_header::GLOBAL_SIGNAL_TYPE) {
-                auto signal = chunk.get_signal<signal_chunk_header>();
-                switch (signal.signal) {
-                    case signal_chunk_header::SIGNAL_CLOSE_STREAM:
-                        signal_closed = true;
-                        break;
-                
-                    // Add other cases here if needed
-                    default:
-                        // Handle unexpected signals if necessary
-                        break;
-                }
-            }
-        }
         chunks processed = fn(stream_cb.first, to_process);
-        if (signal_closed) {
-            // There is no possible downstream consumer of any processed chunks, so clear it
-            processed.clear();
-        }
         size_t chunk_count = processed.size();
         if(!processed.empty())
         {   
-            lock_guard<std::mutex> lock(outgoingChunksMutex);
-            auto outgoing = outgoingChunks.find(stream_cb.first);
-            if (outgoing == outgoingChunks.end()) {
-                auto inserted = outgoingChunks.insert(make_pair(stream_cb.first, chunks()));
-                inserted.first->second.swap(processed);
+            if (processed.size() == 1 && processed[0].get_signal_type() == signal_chunk_header::GLOBAL_SIGNAL_TYPE) {
+                // If the processed chunk is a signal chunk, we need to handle it differently
+                auto signal = processed[0].get_signal<signal_chunk_header>();
+                if (signal.signal == signal_chunk_header::SIGNAL_CLOSE_STREAM) {
+                    // If the signal is to close the stream, we need to set the signal_closed flag
+                    signal_closed = true;
+                }
             }
             else {
-                int chunk_count = 0;
-                for (auto &chunk : processed) {
-                    outgoing->second.emplace_back(chunk);
+                lock_guard<std::mutex> lock(outgoingChunksMutex);
+                auto outgoing = outgoingChunks.find(stream_cb.first);
+                if (outgoing == outgoingChunks.end()) {
+                    auto inserted = outgoingChunks.insert(make_pair(stream_cb.first, chunks()));
+                    inserted.first->second.swap(processed);
+                }
+                else {
+                    int chunk_count = 0;
+                    for (auto &chunk : processed) {
+                        outgoing->second.emplace_back(chunk);
+                    }
                 }
             }
         }

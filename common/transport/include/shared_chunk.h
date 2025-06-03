@@ -69,9 +69,6 @@ struct payload_chunk_header {
     payload_chunk_header(uint16_t request_id, uint8_t signal, uint16_t data_length)
         : request_id(request_id), signal(signal), data_length(data_length) 
         {
-            if (data_length == 0) {
-                throw invalid_argument("Don't use payload_chunk_header with data_length == 0, use signal_chunk_header instead");
-            }
         }
     payload_chunk_header(payload_chunk_header const &other)
         : request_id(other.request_id), signal(other.signal), data_length(other.data_length) {}

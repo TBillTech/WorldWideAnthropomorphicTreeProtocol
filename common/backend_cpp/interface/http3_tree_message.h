@@ -66,6 +66,10 @@ public:
     };
     ~HTTP3TreeMessage() = default;
 
+    HTTP3TreeMessage(const HTTP3TreeMessage&) = delete; // No copy constructor
+    HTTP3TreeMessage& operator=(const HTTP3TreeMessage&) = delete; // No copy assignment
+    HTTP3TreeMessage(HTTP3TreeMessage&&) = default; // Move constructor
+
     // Tree Node format input and output methods
     // Each nominal backend method needs encode and docode for the request side,
     // and encode and decode for the response side.

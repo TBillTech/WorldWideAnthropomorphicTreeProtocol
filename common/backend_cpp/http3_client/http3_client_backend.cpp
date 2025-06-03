@@ -1,5 +1,6 @@
 #include "http3_client_backend.h"
 #include "http3_tree_message.h"
+#include <thread>
 
 void Http3ClientBackend::awaitResponse()
 {
@@ -263,6 +264,38 @@ void Http3ClientBackend::notifyListeners(const std::string& label_rule, const fp
             request.encode_notifyListenersRequest(label_rule, node);
             pendingRequests_.push_back(std::move(request));
         }
+    }
+}
+
+void Http3ClientBackend::processNotification() {
+    // This blocks until a journal request and response has occurred.
+    // Since this is the ONLY use of notificationBlock_, it doesn't hurt to store true
+    // even when not in blocking mode.
+    notificationBlock_.store(true);
+    // Meanwhile, tell the backend to process notifications.
+    {
+        std::lock_guard<std::mutex> lock(backendMutex_);
+        localBackend_.processNotification();
+    }
+    // And then also tell the server to process notifications.
+    {
+        std::lock_guard<std::mutex> lock(handlerMutex_);
+        if (!serverSyncOn_)
+        {
+            return;
+        }
+        HTTP3TreeMessage request(0);
+        request.encode_processNotificationRequest();
+        pendingRequests_.push_back(std::move(request));
+    }
+    if (!blockingMode_) {
+        return;
+    }
+    awaitResponse();
+    while (notificationBlock_.load()) {
+        // Wait for the notification to be processed to make sure the journaling
+        // system change from the server has been flushed through.
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }
 
@@ -593,12 +626,13 @@ void Http3ClientBackend::processOneNotification(SequentialNotification const& no
 }
 
 void Http3ClientBackend::updateLastNotification(SequentialNotification const& notification) {
+    notificationBlock_.store(false);
     std::lock_guard<std::mutex> lock(backendMutex_);
     lastNotification_ = notification;
 }
 
-void Http3ClientBackendUpdater::addBackend(Backend& local_backend, bool blocking_mode, Request request){
-    backends_.emplace_back(local_backend, blocking_mode, request);
+Http3ClientBackend& Http3ClientBackendUpdater::addBackend(Backend& local_backend, bool blocking_mode, Request request){
+    return backends_.emplace_back(local_backend, blocking_mode, request);
 }
 
 Http3ClientBackend& Http3ClientBackendUpdater::getBackend(const std::string& url) {
@@ -617,16 +651,24 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
             StreamIdentifier stream_id = connector.getNewRequestStreamIdentifier(req);
             auto theRequest = ongoingRequests_.emplace(stream_id, backend.popNextRequest());
             theRequest.first->second.setRequestId(stream_id.logical_id);
-            stream_callback_fn messageHandler = [&backend, &theRequest](StreamIdentifier const& stream_identifier, chunks& response) {
+            HTTP3TreeMessage& theMessage = theRequest.first->second;
+            stream_callback_fn messageHandler = [&backend, &theMessage, &connector](StreamIdentifier const& stream_identifier, chunks& response) {
                 chunks request;
-                auto& theMessage = theRequest.first->second;
                 auto requestChunk = theMessage.popRequestChunk();
                 while(requestChunk.is_just()) {
                     auto chunk = requestChunk.unsafe_get_just();
                     request.push_back(chunk);
+                    requestChunk = theMessage.popRequestChunk();
                 }
                 for (auto& chunk : response) {
                     theMessage.pushResponseChunk(chunk);
+                }
+                if (response.empty() && request.empty() && !theMessage.isResponseComplete()) {
+                    cout << "Client " << stream_identifier << " is idle, and message response is still pending so send heartbeat" << endl << flush;
+                    chunks response_chunks;
+                    auto tag = payload_chunk_header(stream_identifier.logical_id, payload_chunk_header::SIGNAL_HEARTBEAT, 0);
+                    response_chunks.emplace_back(tag, span<const char>("", 0));
+                    return move(response_chunks);
                 }
                 if (theMessage.isResponseComplete()) {
                     backend.processHTTP3Response(theMessage);
@@ -635,6 +677,7 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
                     // return signal_chunk_header::SIGNAL_CLOSE_STREAM
                     signal_chunk_header signal(signal_chunk_header::SIGNAL_CLOSE_STREAM, 0);
                     request.push_back(shared_span<>(signal, true));
+                    connector.deregisterResponseHandler(stream_identifier);
                 }
                 return request;
             };
@@ -645,13 +688,14 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
             StreamIdentifier stream_id = connector.getNewRequestStreamIdentifier(req);
             auto theRequest = ongoingRequests_.emplace(stream_id, backend.solicitJournalRequest());
             theRequest.first->second.setRequestId(stream_id.logical_id);
-            stream_callback_fn messageHandler = [&backend, &theRequest](StreamIdentifier const& stream_identifier, chunks& response) {
+            HTTP3TreeMessage& theMessage = theRequest.first->second;
+            stream_callback_fn messageHandler = [&backend, &theMessage, &connector](StreamIdentifier const& stream_identifier, chunks& response) {
                 chunks request;
-                auto& theMessage = theRequest.first->second;
                 auto requestChunk = theMessage.popRequestChunk();
                 while(requestChunk.is_just()) {
                     auto chunk = requestChunk.unsafe_get_just();
                     request.push_back(chunk);
+                    requestChunk = theMessage.popRequestChunk();
                 }
                 for (auto& chunk : response) {
                     theMessage.pushResponseChunk(chunk);
@@ -663,6 +707,7 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
                     // return signal_chunk_header::SIGNAL_CLOSE_STREAM
                     signal_chunk_header signal(signal_chunk_header::SIGNAL_CLOSE_STREAM, 0);
                     request.push_back(shared_span<>(signal, true));
+                    connector.deregisterResponseHandler(stream_identifier);
                 }
                 return request;
             };

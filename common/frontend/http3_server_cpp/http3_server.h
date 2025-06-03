@@ -27,12 +27,12 @@ public:
           url_(url), mutablePageLabelRule_(mutable_page_label_rule) {
             journal_.push_back({0, {"", fplus::nothing<TreeNode>()}});
           };
-    ~Http3ServerRoute();
+    ~Http3ServerRoute() = default;
 
     Http3ServerRoute(const Http3ServerRoute&& other) :
         backend_(other.backend_), lastNotificationIndex_(other.lastNotificationIndex_),
         journal_(std::move(other.journal_)), maxJournalSize_(other.maxJournalSize_),
-        url_(other.url_), mutablePageLabelRule_(other.mutablePageLabelRule_) {
+        url_(move(other.url_)), mutablePageLabelRule_(move(other.mutablePageLabelRule_)) {
         };
 
     // A some things of note:
@@ -78,12 +78,13 @@ public:
     HTTP3Server(std::map<std::string, chunks>&& staticAssets) : staticAssets_(std::move(staticAssets)) {};
     ~HTTP3Server() = default;
 
-    void addBackendRoute(Backend& backend, size_t journal_size, std::string const& url) {
-        servers_.emplace(url, Http3ServerRoute(backend, journal_size, url, "MutableNodes"));
+    Http3ServerRoute& addBackendRoute(Backend& backend, size_t journal_size, std::string const& url) {
+        auto emplaced = servers_.emplace(url, Http3ServerRoute(backend, journal_size, url, "MutableNodes"));
+        return emplaced.first->second;
     }
 
     void addStaticAsset(std::string const& url, chunks& asset) {
-        staticAssets_.emplace(url, asset);
+        auto emplaced = staticAssets_.emplace(url, asset);
     }
 
     bool isChunkStream(std::string const& url) const;
@@ -93,8 +94,35 @@ public:
 
     prepared_stream_callback getResponseCallback(const Request & req);
 
+    // It is expected that the main thread will use this class in one of two modes:
+    // 1. In an explicit work mode, which feathers maintaining the handlers with
+    //    the processResponseStream method in some fashion, such as:
+    //    while (true) {
+    //        connector.processResponseStream();
+    //        sleep_for(std::chrono::milliseconds(100));
+    //    }
+    // 2. As a daemon thread, using the below function, which will create new thread 
+    //    and do the above work until the stop flag is set to true.
+    void run(Communication& connector, size_t sleep_milli = 100) {
+        stopFlag.store(false);
+        serverThread_ = thread([this, &connector, sleep_milli]() {
+            while (!stopFlag.load()) {
+                connector.processResponseStream();
+                std::this_thread::sleep_for(std::chrono::milliseconds(sleep_milli));
+            }
+            return EXIT_SUCCESS;
+        });
+    }
+    void stop() {
+        stopFlag.store(true);
+    }
+
+
 private:
     std::map<std::string, Http3ServerRoute> servers_;
     std::map<std::string, chunks> staticAssets_;
     std::map<StreamIdentifier, std::string> requestRoutes_;
+
+    thread serverThread_; // Thread to run the server
+    std::atomic<bool> stopFlag{false}; // Flag to stop the server thread
 };

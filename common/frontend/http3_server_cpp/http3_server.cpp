@@ -10,7 +10,23 @@ chunks Http3ServerRoute::processResponseStream(const StreamIdentifier& stream_id
         ongoingResponses_.emplace(stream_id, move(state));
         it = ongoingResponses_.find(stream_id);
     }
+    if (it->second.isProcessingFinished()) {
+        if (request.size() == 1 && request[0].get_signal_type() == signal_chunk_header::GLOBAL_SIGNAL_TYPE) {
+            auto signal = request[0].get_signal<signal_chunk_header>();
+            if (signal.signal == signal_chunk_header::SIGNAL_CLOSE_STREAM) {
+                ongoingResponses_.erase(it);
+            }
+        }
+        // return signal_chunk_header::SIGNAL_CLOSE_STREAM
+        signal_chunk_header signal(signal_chunk_header::SIGNAL_CLOSE_STREAM, 0);
+        response.push_back(shared_span<>(signal, true));
+        return response;
+    }
     for (auto& chunk : request) {
+        if (chunk.get_signal<payload_chunk_header>().signal == payload_chunk_header::SIGNAL_HEARTBEAT) {
+            cout << "Server got heartbeat in callback" << endl;
+            continue;
+        }
         it->second.pushRequestChunk(chunk);
     }
     // Check if the request is complete
@@ -22,10 +38,6 @@ chunks Http3ServerRoute::processResponseStream(const StreamIdentifier& stream_id
         while (response_chunk.is_just()) {
             response.push_back(response_chunk.unsafe_get_just());
             response_chunk = it->second.popResponseChunk();
-        }
-        if (it->second.isProcessingFinished()) {
-            // Remove the ongoing response since it's complete
-            ongoingResponses_.erase(it);
         }
     } 
 
@@ -222,8 +234,9 @@ prepared_stream_callback HTTP3Server::getResponseCallback(const Request & req) {
         // This is a chunk stream, so we need set up the response for the right backend
         auto it = servers_.find(req.path);
         if (it != servers_.end()) {
-            stream_callback_fn callback = [&it](const StreamIdentifier& stream_id, chunks& request) {
-                return it->second.processResponseStream(stream_id, request);
+            Http3ServerRoute& route = it->second;
+            stream_callback_fn callback = [&route](const StreamIdentifier& stream_id, chunks& request) {
+                return route.processResponseStream(stream_id, request);
             };
             return std::make_pair(uri_response_info{true, true, false, 0}, callback);
         }
@@ -237,11 +250,12 @@ prepared_stream_callback HTTP3Server::getResponseCallback(const Request & req) {
         // while substituting a noop for the responder callback. 
         auto it = staticAssets_.find(req.path);
         if (it != staticAssets_.end()) {
-            stream_callback_fn callback = [&it](const StreamIdentifier& stream_id, chunks& request) {
-                return it->second;
+            chunks const& asset = it->second; 
+            stream_callback_fn callback = [&asset](const StreamIdentifier& stream_id, chunks& request) {
+                return asset;
             };
             size_t sum_size = 0;
-            for (const auto& chunk : it->second) {
+            for (const auto& chunk : asset) {
                 sum_size += chunk.size() + chunk.get_signal_size();
             }
             return std::make_pair(uri_response_info{true, false, false, sum_size}, callback);

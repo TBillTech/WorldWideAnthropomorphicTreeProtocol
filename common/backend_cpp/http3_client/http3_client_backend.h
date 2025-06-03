@@ -25,9 +25,19 @@ public:
           };
     ~Http3ClientBackend() override = default;
 
-    Http3ClientBackend(const Http3ClientBackend&& other) :
-        localBackend_(other.localBackend_), lastNotification_(other.lastNotification_),
-        blockingMode_(other.blockingMode_), requestUrlInfo_(other.requestUrlInfo_) {};
+    Http3ClientBackend(Http3ClientBackend&& other) noexcept :
+        localBackend_(other.localBackend_), 
+        needMutablePageTreeSync_(other.needMutablePageTreeSync_),
+        lastNotification_(std::move(other.lastNotification_)),
+        mutablePageTreeLabelRule_(std::move(other.mutablePageTreeLabelRule_)),
+        blockingMode_(other.blockingMode_), 
+        requestUrlInfo_(std::move(other.requestUrlInfo_)),
+        journalRequestsPerMinute_(other.journalRequestsPerMinute_),
+        lastJournalRequestTime_(other.lastJournalRequestTime_),
+        staticNode_(std::move(other.staticNode_)),
+        pendingRequests_(std::move(other.pendingRequests_))
+    {
+    }
     // Delete copy constructor
     Http3ClientBackend& operator=(const Http3ClientBackend&) = delete;
 
@@ -64,7 +74,7 @@ public:
     // Notify listeners for a specific label rule.
     void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node) override;
 
-    void processNotification() override {};
+    void processNotification() override;
 
     // Processing requests and responses are outside the backend interface.  
     // This is because worker threads need to be able to
@@ -149,6 +159,7 @@ private:
     double lastJournalRequestTime_ = 0.0;
 
     fplus::maybe<TreeNode> staticNode_;
+    atomic<bool> notificationBlock_{false};  // Used to block until a journal notification has been processed
 };
 
 class Communication;
@@ -165,7 +176,7 @@ class Http3ClientBackendUpdater {
         // Add a backend to the updater. This method should only be used with Request object that are tree urls.
         // Getting static assets at Request urls is done elsewhere.
         // NOTE: Please add all backends before calling maintainRequestHandlers.
-        void addBackend(Backend& local_backend, bool blocking_mode, Request request);
+        Http3ClientBackend& addBackend(Backend& local_backend, bool blocking_mode, Request request);
         Http3ClientBackend& getBackend(const std::string& url);
 
         // There can be multiple request streams per backend, so each new request
@@ -175,10 +186,33 @@ class Http3ClientBackendUpdater {
         // This also will periodically solicit a journal request for the server (from each backend).
         void maintainRequestHandlers(Communication& connector, double time);
 
-        // The HTTP3ClientBackendUpdater does not need a processRequestStream method,
-        // because the greater thread will call the Quic Connector processRequestStream method,
-        // which will indirectly call the HTTP3ClientBackend processRequestStream method.
-        // in the established response handler.
+        // It is expected that the main thread will use this class in one of two modes:
+        // 1. In an explicit work mode, which feathers maintaining the handlers with
+        //    the processRequestStream method in some fashion, such as:
+        //    while (true) {
+        //        updater.maintainRequestHandlers(connector, time);
+        //        connector.processRequestStream();
+        //        sleep_for(std::chrono::milliseconds(100));
+        //        time += 0.1;  // track the time for journaling purposes
+        //    }
+        // 2. As a daemon thread, using the below function, which will create new thread 
+        //    and do the above work until the stop flag is set to true.
+        // NOTE: Using the block mode of the Http3ClientBackend is most easily done in mode 2.
+        void run(Communication& connector, double time, size_t sleep_milli = 100) {
+            stopFlag.store(false);
+            updaterThread_ = thread([this, &connector, &time, sleep_milli]() {
+                while (!stopFlag.load()) {
+                    maintainRequestHandlers(connector, time);
+                    connector.processRequestStream();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(sleep_milli));
+                    time += 0.1;  // track the time for journaling purposes
+                }
+                return EXIT_SUCCESS;
+            });
+        }
+        void stop() {
+            stopFlag.store(true);
+        }
 
     private:
         // Track the backends which will be updated by this class.  
@@ -189,4 +223,7 @@ class Http3ClientBackendUpdater {
         double lastTime_ = 0.0;
 
         std::list<StreamIdentifier> completeRequests_;
+
+        thread updaterThread_;  // Thread to run the updater
+        atomic<bool> stopFlag{false};  // Flag to stop the updater thread
 };

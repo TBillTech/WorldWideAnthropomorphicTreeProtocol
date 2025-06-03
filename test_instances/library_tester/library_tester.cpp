@@ -251,7 +251,7 @@ int main() {
         if (response.empty() && !send_states.client_sent_heartbeat) {
             cout << "Client is idle, and clientState.second is false, so send heartbeat" << endl;
             chunks response_chunks;
-            auto tag = signal_chunk_header(stream_id.logical_id, signal_chunk_header::SIGNAL_HEARTBEAT);
+            auto tag = payload_chunk_header(stream_id.logical_id, signal_chunk_header::SIGNAL_HEARTBEAT, 0);
             response_chunks.emplace_back(tag, span<const char>("", 0));
             send_states.client_sent_heartbeat = true;
             return move(response_chunks);
