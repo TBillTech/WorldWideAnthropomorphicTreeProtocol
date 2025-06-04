@@ -44,9 +44,9 @@ chunkList encode_long_string(uint16_t request_id, uint8_t signal, const string& 
     auto str_start = str.c_str();
     auto cur_str_position = 0;
     size_t max_chunk_payload_size = shared_span<>::chunk_size - sizeof(payload_chunk_header);
-    size_t first_chunk_payload_size = min(max_chunk_payload_size, str.size());
-    auto header = payload_chunk_header(request_id, signal, first_chunk_payload_size);
-    auto chunk = shared_span<>(header, true);
+    size_t first_chunk_payload_size = min(max_chunk_payload_size, str.size() + sizeof(size_t));
+    auto first_header = payload_chunk_header(request_id, signal, first_chunk_payload_size);
+    auto chunk = shared_span<>(first_header, true);
     auto position = chunk.copy_type(str.size());
     auto first_chunk_str_payload = first_chunk_payload_size - sizeof(size_t);
     auto upto = chunk.copy_span(span<const char>(str_start, first_chunk_str_payload), {true, position});
@@ -70,7 +70,7 @@ pair<size_t, string> decode_long_string(chunkList encoded) {
     auto chunk_count_value = chunk_count.unsafe_get_just();
     shared_span<> concatenated(encoded.begin(), std::next(encoded.begin(), chunk_count_value));
     auto just_payload = concatenated.restrict({sizeof(size_t), concatenated.size()});
-    string decoded_str(concatenated.begin<const char>(), concatenated.end<const char>());
+    string decoded_str(just_payload.begin<const char>(), just_payload.end<const char>());
     return {chunk_count_value, decoded_str};
 }
 
@@ -87,10 +87,11 @@ fplus::maybe<size_t> can_decode_long_string(size_t start_chunk, chunkList encode
     size_t long_string_length = 0;
     chunk.at<size_t>(long_string_length);
     auto expected_chunk = start_chunk+1;
-    long_string_length -= shared_span<>::chunk_size - sizeof(payload_chunk_header) - sizeof(size_t);
-    while(long_string_length > 0){
+    int32_t string_offset = long_string_length;
+    string_offset -= shared_span<>::chunk_size - sizeof(payload_chunk_header) - sizeof(size_t);
+    while(string_offset > 0){
         expected_chunk++;
-        long_string_length -= shared_span<>::chunk_size - sizeof(payload_chunk_header);
+        string_offset -= shared_span<>::chunk_size - sizeof(payload_chunk_header);
     }
     if (expected_chunk > encoded.size()) {
         return fplus::nothing<size_t>();

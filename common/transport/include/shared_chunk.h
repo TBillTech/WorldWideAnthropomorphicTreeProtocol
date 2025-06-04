@@ -46,7 +46,7 @@ PODType pod_from_chunk(typename std::remove_const<PODType>::type &result, vector
         memcpy(reinterpret_cast<uint8_t*>(&result) + pod_offset, chunk.first->data + byte_offset, to_copy);
         pod_offset += to_copy;
         if (pod_offset == sizeof(PODType)) {
-            if (byte_offset + to_copy < chunk_space) {
+            if (byte_offset + to_copy <= chunk_space + chunk.second.first) {
                 return result;
             }
             current_chunk++;
@@ -336,7 +336,7 @@ public:
     }
 
     shared_span restrict_upto(pair<size_t, size_t> end_point) const {
-        pair<size_t, size_t> range = {0, end_point.first - get_signal_size() 
+        pair<size_t, size_t> range = {0, end_point.first - get_signal_size()
             + end_point.second*sizeof(ChunkType) - get_signal_size()*end_point.second};
         return restrict(range);
     }
@@ -519,7 +519,7 @@ public:
                 }
                 current_chunk++;
                 if (current_chunk == chunks.size()) {
-                    return {0, current_chunk};
+                    return {get_signal_size(), current_chunk};
                 }
                 if (current_chunk < chunks.size()) {
                     byte_offset = chunks.at(current_chunk).second.first;

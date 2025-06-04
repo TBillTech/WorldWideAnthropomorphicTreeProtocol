@@ -120,6 +120,7 @@ add_executable(catch2_unit_tests
     test_instances/catch2_unit_tests/shared_chunk_tests.cpp
     test_instances/catch2_unit_tests/backend_cpp_tests.cpp
     test_instances/catch2_unit_tests/backend_testbed.cpp
+    test_instances/catch2_unit_tests/http3_message_helper_tests.cpp
 )
 
 # Define preprocessor macros
