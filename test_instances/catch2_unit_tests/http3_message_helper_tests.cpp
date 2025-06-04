@@ -1,5 +1,6 @@
 #include <catch2/catch_all.hpp>
 #include "http3_tree_message_helpers.h"
+#include "backend_testbed.h"
 
 void test_encode_decode_label(uint16_t request_id, uint8_t signal, const std::string& label) {
     chunkList empty_chunk_list;
@@ -62,4 +63,42 @@ TEST_CASE("encode_long_string and decode_long_string roundtrip", "[http3_tree_me
     test_encode_decode_long_string(6, payload_chunk_header::SIGNAL_WWATP_GET_NODE_REQUEST, long_string);
     std::string very_long_string(5000, 'b'); // 5000 characters of 'b'
     test_encode_decode_long_string(7, payload_chunk_header::SIGNAL_WWATP_GET_NODE_REQUEST, very_long_string);
+}
+
+void test_encode_decode_maybe_treenode(uint16_t request_id, uint8_t signal, const fplus::maybe<TreeNode>& maybe_tree_node) {
+    chunkList empty_chunk_list;
+    REQUIRE(can_decode_MaybeTreeNode(0, empty_chunk_list).is_nothing());
+
+    chunkList encoded = encode_MaybeTreeNode(request_id, signal, maybe_tree_node);
+    for (size_t i = 0; i < encoded.size(); ++i) {
+        // Get a list with all elements up to the ith element
+        chunkList sub_encoded(encoded.begin(), std::next(encoded.begin(), i));
+        REQUIRE(can_decode_MaybeTreeNode(i, sub_encoded).is_nothing());
+    }
+    REQUIRE(can_decode_MaybeTreeNode(0, encoded).is_just());
+    REQUIRE(can_decode_MaybeTreeNode(0, encoded).unsafe_get_just() == encoded.size());
+    auto decoded = decode_MaybeTreeNode(encoded);
+    REQUIRE(decoded.first == encoded.size());
+    REQUIRE(decoded.second == maybe_tree_node);
+}
+
+TEST_CASE("encode_MaybeTreeNode and decode_MaybeTreeNode roundtrip", "[http3_tree_message_helpers]") {
+    // Test several TreeNodes with different properties
+    fplus::maybe<TreeNode> empty_node = fplus::nothing<TreeNode>();
+    test_encode_decode_maybe_treenode(42, payload_chunk_header::SIGNAL_WWATP_GET_NODE_REQUEST, empty_node);
+
+    fplus::maybe<TreeNode> nada;
+    test_encode_decode_maybe_treenode(1, payload_chunk_header::SIGNAL_WWATP_GET_NODE_REQUEST, nada);
+
+    auto simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
+        {1, 1}, {}, {}, "", "");
+    fplus::maybe<TreeNode> just_simple_animal(simpleAnimal);
+    test_encode_decode_maybe_treenode(2, payload_chunk_header::SIGNAL_WWATP_DELETE_NODE_REQUEST, just_simple_animal);
+
+    auto anAnimal = createAnimalNode("Seal", "A marine mammal", {"Mammal"}, 
+        {1, 1}, {"pup 1", "pup 2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
+        "How to query seal", "Seal QA sequence");
+    fplus::maybe<TreeNode> just_animal(anAnimal);
+    test_encode_decode_maybe_treenode(3, payload_chunk_header::SIGNAL_WWATP_QUERY_NODES_REQUEST, just_animal);
+    
 }
