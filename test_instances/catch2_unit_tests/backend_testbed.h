@@ -30,10 +30,10 @@ vector<TreeNode> collectAllNotes();
 TreeNode createNotesPageTree();
 vector<TreeNode> prefixNodeLabels(string label_prefix, vector<TreeNode> nodes);
 
-class BackendTester {
+class BackendTestbed {
 public:
     Backend& backend;
-    BackendTester(Backend& backend, bool should_test_notifications = true);
+    BackendTestbed(Backend& backend, bool should_test_notifications = true);
     void addAnimalsToBackend();
     void addNotesPageTree();
     void testBackendLogically(string label_prefix = "");

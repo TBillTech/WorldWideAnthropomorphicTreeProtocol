@@ -11,9 +11,10 @@
 #include "shared_chunk.h"
 #include "http3_server.h"
 #include "http3_client_backend.h"
-#include "backend_tester.h"
+#include "backend_testbed.h"
 #include "simple_backend.h"
 #include "memory_tree.h"
+
 using namespace std;
 
 unique_ptr<Communication> createServerCommunication(const string& protocol, boost::asio::io_context& io_context) {
@@ -117,7 +118,7 @@ int main() {
     MemoryTree init_memory_tree;
     SimpleBackend initialized_backend(init_memory_tree);
     {
-        BackendTester initialized(initialized_backend);
+        BackendTestbed initialized(initialized_backend);
         initialized.addAnimalsToBackend();
         initialized.addNotesPageTree();
     }
@@ -180,21 +181,21 @@ int main() {
 
     response_cycle();
     {
-        BackendTester reader_tester(reader_client, false);
+        BackendTestbed reader_tester(reader_client, false);
         reader_tester.testBackendLogically();
     }
     {
-        BackendTester writer_tester(writer_client, false);
+        BackendTestbed writer_tester(writer_client, false);
         writer_tester.addAnimalsToBackend();
         writer_tester.addNotesPageTree();
     }
     response_cycle();
     {
-        BackendTester reader_tester(reader_client, false);
+        BackendTestbed reader_tester(reader_client, false);
         reader_tester.testBackendLogically();
     }
     {
-        BackendTester writer_tester(writer_client, false);
+        BackendTestbed writer_tester(writer_client, false);
         writer_tester.testBackendLogically();
     }
 
@@ -203,7 +204,7 @@ int main() {
 
     {
         blocking_client.requestFullTreeSync();
-        BackendTester blocking_tester(blocking_client);
+        BackendTestbed blocking_tester(blocking_client);
         blocking_tester.addAnimalsToBackend();
         blocking_tester.addNotesPageTree();
         blocking_tester.testBackendLogically();

@@ -1,4 +1,5 @@
-#include "backend_tester.h"
+#include "backend_testbed.h"
+#include <catch2/catch_test_macros.hpp>
 
 TreeNode createNoContentTreeNode(string label_rule, string description, vector<string> literal_types, 
     TreeNodeVersion version, vector<string> child_names, 
@@ -20,15 +21,9 @@ TreeNode createAnimalNode(string animal, string description, vector<string> lite
     }
     auto only_animal_data = animal_data.restrict_upto(next.second);
     auto m_query_how_to = maybe<string>(query_how_to);
-    if (m_query_how_to.get_with_default("") != query_how_to) {
-        std::cerr << "Animal node has incorrect query_how_to" << std::endl;
-        throw std::runtime_error("Animal node has incorrect query_how_to");
-    }
+    REQUIRE(m_query_how_to.get_with_default("") == query_how_to);
     auto m_qa_sequence = maybe<string>(qa_sequence);
-    if (m_qa_sequence.get_with_default("") != qa_sequence) {
-        std::cerr << "Animal node has incorrect qa_sequence" << std::endl;
-        throw std::runtime_error("Animal node has incorrect qa_sequence");
-    }
+    REQUIRE(m_qa_sequence.get_with_default("") == qa_sequence);
     return TreeNode(animal, description, literal_types, version, child_names, std::move(only_animal_data), m_query_how_to, m_qa_sequence);
 }
 
@@ -108,19 +103,10 @@ void checkGetNode(Backend const &backend, const string& label_rule, TreeNode con
     maybe<TreeNode> node = backend.getNode(label_rule);
     if (node.is_just()) {
         auto found_node = node.get_with_default(TreeNode());
-        if (found_node.getLabelRule() == expected_node.getLabelRule()) {
-            std::cout << "Correct Node found: " << found_node.getLabelRule() << " matched expected: " << expected_node.getLabelRule() << std::endl;
-        } else {
-            std::cerr << "Node mismatch: " << found_node.getLabelRule() << " != " << expected_node.getLabelRule() << std::endl;
-            throw std::runtime_error("Node mismatch looking for: " + label_rule);
-        }
-        if (found_node != expected_node) {
-            std::cerr << "Node mismatch for: " << label_rule << std::endl;
-            throw std::runtime_error("Node content mismatch looking for: " + label_rule);
-        }
+        REQUIRE(found_node.getLabelRule() == expected_node.getLabelRule());
+        REQUIRE(found_node == expected_node);
     } else {
-        std::cerr << "Node not found: " << label_rule << std::endl;
-        throw std::runtime_error("Node not found looking for: " + label_rule);
+        FAIL("Node not found: " + label_rule);
     }
 }
 
@@ -132,12 +118,7 @@ void checkMultipleGetNode(Backend const &backend, const vector<TreeNode>& expect
 
 void checkDeletedNode(Backend const &backend, const string& label_rule) {
     auto node = backend.getNode(label_rule);
-    if (node.is_just()) {
-        std::cerr << "Node not deleted: " << label_rule << std::endl;
-        throw std::runtime_error("Node not deleted looking for: " + label_rule);
-    } else {
-        std::cout << "Node deleted: " << label_rule << std::endl;
-    }
+    REQUIRE(node.is_nothing());
 }
 
 void checkMultipleDeletedNode(Backend const &backend, const vector<TreeNode>& expected_nodes) {
@@ -193,33 +174,26 @@ vector<TreeNode> prefixNodeLabels(string label_prefix, vector<TreeNode> nodes) {
     return nodes;
 }
 
-BackendTester::BackendTester(Backend& backend, bool should_test_notifications) 
+BackendTestbed::BackendTestbed(Backend& backend, bool should_test_notifications) 
     : backend(backend), should_test_notifications_(should_test_notifications) {}
 
-void BackendTester::addAnimalsToBackend() {
+void BackendTestbed::addAnimalsToBackend() {
     backend.upsertNode(createLionNodes());
     backend.upsertNode(createElephantNodes());
     backend.upsertNode(createParrotNodes());
 }
 
-void BackendTester::addNotesPageTree() {
+void BackendTestbed::addNotesPageTree() {
     backend.upsertNode({createNotesPageTree()});
 }
 
-void BackendTester::testBackendLogically(string label_prefix) {
-    std::cout << "Backend upsertNode utilized." << std::endl;
+void BackendTestbed::testBackendLogically(string label_prefix) {
     checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createLionNodes()));
     checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createElephantNodes()));
     checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createParrotNodes()));
-    std::cout << "Backend getNode test passed." << std::endl;
 
     auto notes_pages = backend.getPageTree(label_prefix + "notes");
-    if (notes_pages != prefixNodeLabels(label_prefix, collectAllNotes())) {
-        std::cerr << "Page tree mismatch" << std::endl;
-        throw std::runtime_error("Page tree mismatch");
-    } else {
-        std::cout << "Page tree test passed." << std::endl;
-    }
+    REQUIRE(notes_pages == prefixNodeLabels(label_prefix, collectAllNotes()));
 
     {
         MemoryTree temp_tree;
@@ -229,23 +203,15 @@ void BackendTester::testBackendLogically(string label_prefix) {
         checkMultipleGetNode(temp_backend, prefixNodeLabels(label_prefix, createLionNodes()));
         checkMultipleGetNode(temp_backend, prefixNodeLabels(label_prefix, createParrotNodes()));
         auto notes_pages = temp_backend.getPageTree(label_prefix + "notes");
-        if (notes_pages != prefixNodeLabels(label_prefix, collectAllNotes())) {
-            std::cerr << "Page tree mismatch" << std::endl;
-            throw std::runtime_error("Page tree mismatch");
-        } else {
-            std::cout << "Page tree test passed." << std::endl;
-        }
-        std::cout << "getFullTree test passed." << std::endl;
+        REQUIRE(notes_pages == prefixNodeLabels(label_prefix, collectAllNotes()));
     }
     
     backend.deleteNode(label_prefix + "elephant");
     checkMultipleDeletedNode(backend, prefixNodeLabels(label_prefix, createElephantNodes()));
     checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createLionNodes()));
     checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createParrotNodes()));
-    std::cout << "Backend deleteNode test passed." << std::endl;
 
     if (!should_test_notifications_) {
-        std::cout << "Skipping notification tests as per configuration." << std::endl;
         return;
     }
 
@@ -253,14 +219,10 @@ void BackendTester::testBackendLogically(string label_prefix) {
     bool lion_node_deleted = false;
     string lion_label = label_prefix + "lion";
     backend.registerNodeListener("lion_listener", lion_label, false, [lion_label, &lion_node_created, &lion_node_deleted](Backend& backend, const string listener_name, const fplus::maybe<TreeNode> node) {
-        std::cout << "Listener " << listener_name << " notified for node: " << node.get_with_default(TreeNode()).getLabelRule() << std::endl;
         if (node.is_just()) {
             auto found_node = node.get_with_default(TreeNode());
             if (found_node.getLabelRule() == lion_label) {
                 lion_node_created = true;
-                std::cout << "Lion node created: " << found_node.getLabelRule() << std::endl;
-            } else {
-                std::cerr << "Unexpected node: " << found_node.getLabelRule() << std::endl;
             }
         } else {
             lion_node_deleted = true;
@@ -268,38 +230,17 @@ void BackendTester::testBackendLogically(string label_prefix) {
     });
     backend.upsertNode(prefixNodeLabels(label_prefix, createLionNodes()));
     backend.processNotification();
-    if (!lion_node_created) {
-        std::cerr << "Lion node listener not notified on upsert" << std::endl;
-        throw std::runtime_error("Lion node listener not notified on upsert");
-    } else {
-        std::cout << "Lion node listener notified on upsert" << std::endl;
-    }
+    REQUIRE(lion_node_created);
     backend.deleteNode(lion_label);
     backend.processNotification();
-    if (!lion_node_deleted) {
-        std::cerr << "Lion node listener not notified on delete" << std::endl;
-        throw std::runtime_error("Lion node listener not notified on delete");
-    } else {
-        std::cout << "Lion node listener notified on delete" << std::endl;
-    }
+    REQUIRE(lion_node_deleted);
     backend.deregisterNodeListener("lion_listener", lion_label);
     lion_node_created = false;
     lion_node_deleted = false;
     backend.upsertNode(prefixNodeLabels(label_prefix, createLionNodes()));
     backend.processNotification();
-    if (lion_node_created) {
-        std::cerr << "Lion node listener notified on upsert after deregistering" << std::endl;
-        throw std::runtime_error("Lion node listener notified on upsert after deregistering");
-    } else {
-        std::cout << "Lion node listener not notified on upsert after deregistering" << std::endl;
-    }
+    REQUIRE(!lion_node_created);
     backend.deleteNode(lion_label);
     backend.processNotification();
-    if (lion_node_deleted) {
-        std::cerr << "Lion node listener notified on delete after deregistering" << std::endl;
-        throw std::runtime_error("Lion node listener notified on delete after deregistering");
-    } else {
-        std::cout << "Lion node listener not notified on delete after deregistering" << std::endl;
-    }
-    std::cout << "Logical tests passed." << std::endl;
+    REQUIRE(!lion_node_deleted);
 }
