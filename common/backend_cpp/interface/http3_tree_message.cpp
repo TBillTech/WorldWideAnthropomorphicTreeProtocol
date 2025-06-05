@@ -593,7 +593,9 @@ void HTTP3TreeMessage::setup_staticNodeDataRequest(void) {
 void HTTP3TreeMessage::setRequestId(uint16_t request_id) {
     request_id_ = request_id;
     for (auto& chunk : requestChunks) {
-        chunk.set_request_id(request_id);
+        if (chunk.size() > 0) {
+            chunk.set_request_id(request_id);
+        }
     }
     requestComplete = true;
 }

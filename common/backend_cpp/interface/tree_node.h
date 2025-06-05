@@ -36,11 +36,13 @@ namespace fplus {
 void write_length_string(std::ostream& os, const std::string& label, const std::string& str);
 pair<string,string> read_length_string(std::istream& is);
 
+std::ostream& hide_contents(std::ostream& os);
+std::ostream& show_contents(std::ostream& os);
 
 struct TreeNodeVersion {
     uint16_t version_number;
     uint16_t max_version_sequence;
-    std::string policy;
+    std::string policy = "default";
     fplus::maybe<std::string> authorial_proof;
     fplus::maybe<std::string> authors;
     fplus::maybe<std::string> readers;
@@ -56,10 +58,13 @@ struct TreeNodeVersion {
                collision_depth == other.collision_depth;
     }
     friend std::ostream& operator<<(std::ostream& os, const TreeNodeVersion& version) {
+        if (version.policy.empty()) {
+            throw std::runtime_error("TreeNodeVersion policy cannot be empty.  'default' should be used at minimum.");
+        }
         os << "Version: " << version.version_number << " Max_Version: " << version.max_version_sequence
            << " Policy: " << version.policy << " Authorial_Proof: " << version.authorial_proof
            << " Authors: " << version.authors << " Readers: " << version.readers
-           << " Collision_Depth: " << version.collision_depth;
+           << " Collision_Depth: " << version.collision_depth << " ";
         return os;
     }
     friend std::istream& operator>>(std::istream& is, TreeNodeVersion& version) {
@@ -71,6 +76,7 @@ struct TreeNodeVersion {
         is >> label >> version.authors;
         is >> label >> version.readers;
         is >> label >> version.collision_depth;
+        is.get(); // consume the space
         return is;
     }
 };

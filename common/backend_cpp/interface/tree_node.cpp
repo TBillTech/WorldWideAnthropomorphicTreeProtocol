@@ -17,7 +17,24 @@ TreeNode::TreeNode(const std::string& label_rule, const std::string& description
     : label_rule(label_rule), description(description), literal_types(literal_types),
       version(version), child_names(child_names), contents(move(contents)), 
       query_how_to(query_how_to), qa_sequence(qa_sequence)
-    {}
+    {
+        // label_rule cannot have whitespace
+        if (label_rule.find_first_of(" \t\n\r") != string::npos) {
+            throw invalid_argument("Label rule cannot contain whitespace: " + label_rule);
+        }
+        for (auto child_name: child_names) {
+            // Child names cannot have whitespace
+            if (child_name.find_first_of(" \t\n\r") != string::npos) {
+                throw invalid_argument("Child names cannot contain whitespace: " + child_name);
+            }
+        }
+        if (query_how_to == fplus::maybe<string>("")) {
+            this->query_how_to = fplus::maybe<string>();
+        }
+        if (qa_sequence == fplus::maybe<string>("")) {
+            this->qa_sequence = fplus::maybe<string>();
+        }
+    }
 
 // The assignment operators are for the most part typical, except for the handling of the contents.
 // When doing move semantics, the contents need to use move semantics.
@@ -159,14 +176,13 @@ bool TreeNode::operator==(const TreeNode& other) const {
     bool properties_equal = true;
     properties_equal = label_rule == other.label_rule && properties_equal;
     properties_equal = description == other.description && properties_equal;
-    properties_equal =  literal_types == other.literal_types && properties_equal;
-    properties_equal =  version == other.version && properties_equal;
-    properties_equal =  child_names == other.child_names && properties_equal;
+    properties_equal = literal_types == other.literal_types && properties_equal;
+    properties_equal = version == other.version && properties_equal;
+    properties_equal = child_names == other.child_names && properties_equal;
     auto query_how_to_value = query_how_to.get_with_default("");
     auto other_query_how_to_value = other.query_how_to.get_with_default("");
     properties_equal = query_how_to_value == other_query_how_to_value && properties_equal;
-    properties_equal =  qa_sequence == other.qa_sequence && properties_equal;
-    properties_equal = label_rule == other.label_rule && properties_equal;
+    properties_equal = qa_sequence == other.qa_sequence && properties_equal;
     bool contents_equal = contents.size() == other.contents.size();
     if (contents_equal) {
         auto this_it = contents.begin<uint8_t>();
@@ -206,6 +222,24 @@ pair<string,string> read_length_string(std::istream& is) {
     return {label, out_str};
 }
 
+// Custom flag management
+long& hide_contents_flag(std::ios_base& ios) {
+    static int index = std::ios_base::xalloc();
+    return ios.iword(index);
+}
+
+// Manipulator to set the hide_contents flag
+std::ostream& hide_contents(std::ostream& os) {
+    hide_contents_flag(os) = 1;
+    return os;
+}
+
+// Manipulator to clear the hide_contents flag
+std::ostream& show_contents(std::ostream& os) {
+    hide_contents_flag(os) = 0;
+    return os;
+}
+
 std::ostream& operator<<(std::ostream& os, const TreeNode& node)
 {
     os << "TreeNode(\n";
@@ -227,7 +261,12 @@ std::ostream& operator<<(std::ostream& os, const TreeNode& node)
     write_length_string(os, "query_how_to", node.getQueryHowTo().get_with_default(""));
     write_length_string(os, "qa_sequence", node.getQaSequence().get_with_default(""));
 
-    os << node.getContents();
+    if (hide_contents_flag(os) == 0) {
+        os << node.getContents();
+    } else {
+        shared_span<> empty(global_no_chunk_header, false);
+        os << empty;
+    }
 
     os << ")\n";
     return os;

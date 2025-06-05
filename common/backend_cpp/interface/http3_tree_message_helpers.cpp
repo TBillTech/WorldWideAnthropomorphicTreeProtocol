@@ -105,37 +105,18 @@ chunkList encode_MaybeTreeNode(uint16_t request_id, uint8_t signal, const fplus:
     }
     TreeNode node = mnode.unsafe_get_just();
     stringstream oss;
-    oss << "Just TreeNode(\n";
-    oss << "label_rule: " << node.getLabelRule() << "\n";
-    write_length_string(oss, "description", node.getDescription());
-    oss << "literal_types: [ ";
-    for (const auto& type : node.getLiteralTypes()) {
-        oss << type << ", ";
-    }
-    oss << "], ";
-    oss << "version: " << node.getVersion() << ", ";
+    oss << "Just ";
+    oss << hide_contents << node;
+    oss << "\n";
 
-    oss << "child_names: [ ";
-    for (const auto& child_name : node.getChildNames()) {
-        oss << child_name << ", ";
-    }
-    oss << "], ";
-
-    write_length_string(oss, "query_how_to", node.getQueryHowTo().get_with_default(""));
-    write_length_string(oss, "qa_sequence", node.getQaSequence().get_with_default(""));
-
-    shared_span<> empty_span(global_no_chunk_header, false);
-    oss << empty_span;
-
-    oss << ")\n";
+    payload_chunk_header header(request_id, signal, 0);
+    auto contents_vec = node.getContents().flatten_with_signal(header);
     // Output node.getContents().size() as hex, padded to fixed width
     // However, worrying about a 32 bit system, use sizeof(size_t) == 8
-    oss << std::setw(8 * 2) << std::setfill('0') << std::hex << node.getContents().size();
+    oss << std::setw(8 * 2) << std::setfill('0') << std::hex << contents_vec.size();
     oss << std::dec; // Reset to decimal for any further output
 
     chunkList encoded = encode_long_string(request_id, signal, oss.str());
-    payload_chunk_header header(request_id, signal, 0);
-    auto contents_vec = node.getContents().flatten_with_signal(header);
     chunkList contents(std::make_move_iterator(contents_vec.begin()), std::make_move_iterator(contents_vec.end()));
     encoded.insert(encoded.end(), std::make_move_iterator(contents.begin()), std::make_move_iterator(contents.end()));
     return encoded;
@@ -147,9 +128,9 @@ pair<size_t, fplus::maybe<TreeNode>> decode_MaybeTreeNode(chunkList encoded) {
         throw invalid_argument("Cannot decode MaybeTreeNode");
     }
     auto chunk_count_value = chunk_count.unsafe_get_just();
-    shared_span<> concatenated(encoded.begin(), std::next(encoded.begin(), chunk_count_value));
-    auto just_payload = concatenated.restrict({sizeof(size_t), concatenated.size()});
-    string decoded_str(concatenated.begin<const char>(), concatenated.end<const char>());
+    auto decoded = decode_long_string(encoded);
+    auto contents_start = decoded.first;
+    auto decoded_str = decoded.second;
     if (decoded_str == "Nothing") {
         return {chunk_count_value, fplus::nothing<TreeNode>()};
     }
@@ -177,7 +158,7 @@ fplus::maybe<size_t> can_decode_MaybeTreeNode(size_t start_chunk, chunkList enco
     if (can_decode_structure.is_nothing()) {
         return fplus::nothing<size_t>();
     }
-    if (can_decode_structure.unsafe_get_just() >= encoded.size()) {
+    if (can_decode_structure.unsafe_get_just() > encoded.size()) {
         return fplus::nothing<size_t>();
     }
     auto chunk_count = can_decode_structure.unsafe_get_just();
@@ -185,6 +166,10 @@ fplus::maybe<size_t> can_decode_MaybeTreeNode(size_t start_chunk, chunkList enco
     auto& last_chunk = *std::next(encoded.begin(), chunk_count + start_chunk - 1);
     auto last_chunk_size = last_chunk.size();
     if (last_chunk_size < 8 * 2) {
+        auto decoded = decode_long_string({last_chunk});
+        if (decoded.second == "Nothing") {
+            return can_decode_structure;
+        }
         return fplus::nothing<size_t>();
     }
     auto chunk_count_start = sizeof(payload_chunk_header) + last_chunk_size - 8 * 2;

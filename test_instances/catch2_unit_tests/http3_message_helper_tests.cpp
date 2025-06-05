@@ -84,11 +84,8 @@ void test_encode_decode_maybe_treenode(uint16_t request_id, uint8_t signal, cons
 
 TEST_CASE("encode_MaybeTreeNode and decode_MaybeTreeNode roundtrip", "[http3_tree_message_helpers]") {
     // Test several TreeNodes with different properties
-    fplus::maybe<TreeNode> empty_node = fplus::nothing<TreeNode>();
-    test_encode_decode_maybe_treenode(42, payload_chunk_header::SIGNAL_WWATP_GET_NODE_REQUEST, empty_node);
-
     fplus::maybe<TreeNode> nada;
-    test_encode_decode_maybe_treenode(1, payload_chunk_header::SIGNAL_WWATP_GET_NODE_REQUEST, nada);
+    test_encode_decode_maybe_treenode(42, payload_chunk_header::SIGNAL_WWATP_GET_NODE_REQUEST, nada);
 
     auto simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");
@@ -96,7 +93,7 @@ TEST_CASE("encode_MaybeTreeNode and decode_MaybeTreeNode roundtrip", "[http3_tre
     test_encode_decode_maybe_treenode(2, payload_chunk_header::SIGNAL_WWATP_DELETE_NODE_REQUEST, just_simple_animal);
 
     auto anAnimal = createAnimalNode("Seal", "A marine mammal", {"Mammal"}, 
-        {1, 1}, {"pup 1", "pup 2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
+        {1, 1}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query seal", "Seal QA sequence");
     fplus::maybe<TreeNode> just_animal(anAnimal);
     test_encode_decode_maybe_treenode(3, payload_chunk_header::SIGNAL_WWATP_QUERY_NODES_REQUEST, just_animal);
