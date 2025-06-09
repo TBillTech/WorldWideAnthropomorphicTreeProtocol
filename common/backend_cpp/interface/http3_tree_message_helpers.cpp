@@ -163,7 +163,7 @@ fplus::maybe<size_t> can_decode_MaybeTreeNode(size_t start_chunk, chunkList enco
     }
     auto chunk_count = can_decode_structure.unsafe_get_just();
     // now grab the _last_ 8 * 2 characters of the _last_ chunk that can be decoded:
-    auto& last_chunk = *std::next(encoded.begin(), chunk_count + start_chunk - 1);
+    auto& last_chunk = *std::next(encoded.begin(), chunk_count - 1);
     auto last_chunk_size = last_chunk.size();
     if (last_chunk_size < 8 * 2) {
         auto decoded = decode_long_string({last_chunk});
@@ -186,10 +186,10 @@ fplus::maybe<size_t> can_decode_MaybeTreeNode(size_t start_chunk, chunkList enco
     size_t contents_size;
     iss >> std::hex >> contents_size;
     // Finally, check if chunk_count + contents_size + start_chunk is within the bounds of the encoded chunkList
-    if (chunk_count + contents_size + start_chunk > encoded.size()) {
+    if (chunk_count + contents_size > encoded.size()) {
         return fplus::nothing<size_t>();
     }
-    return fplus::maybe<size_t>(chunk_count + contents_size + start_chunk);
+    return fplus::maybe<size_t>(chunk_count + contents_size);
 }
 
 chunkList encode_SequentialNotification(uint16_t request_id, uint8_t signal, const SequentialNotification& notifications) {
@@ -203,7 +203,7 @@ chunkList encode_SequentialNotification(uint16_t request_id, uint8_t signal, con
     // and then encoding the label as a string.
     stringstream oss;
     oss << notifications.first << " " << notifications.second.first;
-    chunkList encoded = encode_label(request_id, signal, oss.str());
+    chunkList encoded = encode_long_string(request_id, signal, oss.str());
     chunkList maybe_tree = encode_MaybeTreeNode(request_id, signal, notifications.second.second);
     encoded.insert(encoded.end(), std::make_move_iterator(maybe_tree.begin()), std::make_move_iterator(maybe_tree.end()));
     return encoded;
@@ -219,13 +219,13 @@ pair<size_t, SequentialNotification> decode_SequentialNotification(chunkList enc
     if (chunk_count_value != 1) {
         throw invalid_argument("Chunk count is not 1");
     }
-    auto decoded = decode_label(encoded);
+    auto decoded = decode_long_string(encoded);
     // unpack the uint64_t and the string
     stringstream iss(decoded.second);
     uint64_t sequence_number;
     iss >> sequence_number;
     // use the current offset of the iss to get the start of the notification label
-    auto notification_label_start = iss.tellg();
+    auto notification_label_start = static_cast<std::streamoff>(iss.tellg()) + 1; // +1 to skip the space after the sequence number
     string notification_label = decoded.second.substr(notification_label_start);
     // Then, decode the maybe TreeNode beginning at encoded[1]
     auto maybe_tree = decode_MaybeTreeNode(chunkList(std::next(encoded.begin(), decoded.first), encoded.end()));
