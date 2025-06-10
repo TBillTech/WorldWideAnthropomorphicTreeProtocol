@@ -10,6 +10,9 @@ using namespace std;
 using namespace fplus;
 
 TEST_CASE("SimpleBackend logical test", "[SimpleBackend]") {
+    // set to pool size for the type UDPChunk to 4 GB
+    memory_pool.setPoolSize<UDPChunk>(static_cast<uint64_t>(4) * 1024 * 1024 * 1024 / UDPChunk::chunk_size);
+
     MemoryTree memory_tree;
     SimpleBackend simple_backend(memory_tree);
     BackendTestbed tester(simple_backend);

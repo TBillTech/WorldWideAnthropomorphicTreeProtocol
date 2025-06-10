@@ -216,7 +216,7 @@ class Http3ClientBackendUpdater {
 
     private:
         // Track the backends which will be updated by this class.  
-        std::vector<Http3ClientBackend> backends_;
+        std::list<Http3ClientBackend> backends_;
 
         std::map<StreamIdentifier, HTTP3TreeMessage> ongoingRequests_;
         std::map<StreamIdentifier, Http3ClientBackend&> journalingRequests_;

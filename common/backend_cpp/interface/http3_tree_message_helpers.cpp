@@ -267,15 +267,6 @@ chunkList encode_VectorSequentialNotification(uint16_t request_id, uint8_t signa
 }
 
 pair<size_t, vector<SequentialNotification>> decode_VectorSequentialNotification(chunkList encoded) {
-    auto chunk_count = can_decode_label(0, encoded);
-    if (chunk_count.is_nothing()) {
-        throw invalid_argument("Cannot decode VectorSequentialNotification");
-    }
-    auto chunk_count_value = chunk_count.unsafe_get_just();
-    // if chunk_count_values is not 1, then something went wrong
-    if (chunk_count_value != 1) {
-        throw invalid_argument("Chunk count is not 1");
-    }
     auto decoded = decode_label(encoded);
     stringstream iss(decoded.second);
     size_t vector_size;
@@ -286,7 +277,7 @@ pair<size_t, vector<SequentialNotification>> decode_VectorSequentialNotification
         notifications.push_back(notification.second);
         decoded.first += notification.first;
     }
-    return {chunk_count_value + decoded.first, notifications};
+    return {decoded.first, notifications};
 }
 
 fplus::maybe<size_t> can_decode_VectorSequentialNotification(size_t start_chunk, chunkList encoded) {
@@ -294,14 +285,12 @@ fplus::maybe<size_t> can_decode_VectorSequentialNotification(size_t start_chunk,
         return fplus::nothing<size_t>();
     }
     auto& chunk = *std::next(encoded.begin(), start_chunk);
-    if (chunk.size() < sizeof(payload_chunk_header)) {
-        throw invalid_argument("Chunk size is less than header size");
-    }
-    auto can_decode_structure = can_decode_label(start_chunk, encoded);
-    if (can_decode_structure.is_nothing()) {
+    auto can_decode_count = can_decode_label(start_chunk, encoded);
+    if (can_decode_count.is_nothing()) {
         return fplus::nothing<size_t>();
     }
-    auto vector_size_decode = decode_label(chunkList(std::next(encoded.begin(), can_decode_structure.unsafe_get_just()), encoded.end()));
+    size_t can_decode_count_value = can_decode_count.unsafe_get_just();
+    auto vector_size_decode = decode_label(chunkList(std::next(encoded.begin(), can_decode_count_value-1), encoded.end()));
     string vector_size_str = vector_size_decode.second;
     stringstream iss(vector_size_str);
     size_t vector_size;
@@ -312,7 +301,7 @@ fplus::maybe<size_t> can_decode_VectorSequentialNotification(size_t start_chunk,
         if (notification.is_nothing()) {
             return fplus::nothing<size_t>();
         }
-        current_offset += notification.unsafe_get_just();
+        current_offset = notification.unsafe_get_just();
     }
     return fplus::maybe<size_t>(current_offset);
 }
@@ -330,7 +319,7 @@ chunkList encode_NewNodeVersion(uint16_t request_id, uint8_t signal, const NewNo
         oss << "Just " << new_node_version.first.unsafe_get_just();
     }
     oss << " " << new_node_version.second.first;
-    chunkList encoded = encode_label(request_id, signal, oss.str());
+    chunkList encoded = encode_long_string(request_id, signal, oss.str());
     chunkList maybe_tree = encode_MaybeTreeNode(request_id, signal, new_node_version.second.second);
     encoded.insert(encoded.end(), std::make_move_iterator(maybe_tree.begin()), std::make_move_iterator(maybe_tree.end()));
     return encoded;    
@@ -346,7 +335,7 @@ pair<size_t, NewNodeVersion> decode_NewNodeVersion(chunkList encoded) {
     if (chunk_count_value != 1) {
         throw invalid_argument("Chunk count is not 1");
     }
-    auto decoded = decode_label(encoded);
+    auto decoded = decode_long_string(encoded);
     // unpack the uint16_t and the string
     stringstream iss(decoded.second);
     fplus::maybe<uint16_t> version;
@@ -360,7 +349,7 @@ pair<size_t, NewNodeVersion> decode_NewNodeVersion(chunkList encoded) {
         version = fplus::maybe<uint16_t>(version_value);
     }
     // use the current offset of the iss to get the start of the notification label
-    auto notification_label_start = iss.tellg();
+    auto notification_label_start = static_cast<std::streamoff>(iss.tellg()) + 1; // +1 to skip the space after the version number
     string notification_label = decoded.second.substr(notification_label_start);
     // Then, decode the maybe TreeNode beginning at encoded[1]
     auto maybe_tree = decode_MaybeTreeNode(chunkList(std::next(encoded.begin(), decoded.first), encoded.end()));
@@ -424,7 +413,7 @@ pair<size_t, SubTransaction> decode_SubTransaction(chunkList encoded) {
         throw invalid_argument("Cannot decode NewNodeVersion");
     }
     auto base_newnode_value = base_newnode.second;
-    size_t newnode_version_offset = base_newnode.first;
+    size_t newnode_version_offset = base_newnode.first+1;
     vector<NewNodeVersion> new_node_versions;
     for (size_t i = 0; i < vector_size; ++i) {
         auto new_node_version = decode_NewNodeVersion(chunkList(std::next(encoded.begin(), newnode_version_offset), encoded.end()));
@@ -432,7 +421,7 @@ pair<size_t, SubTransaction> decode_SubTransaction(chunkList encoded) {
             throw invalid_argument("Cannot decode NewNodeVersion");
         }
         new_node_versions.push_back(new_node_version.second);
-        newnode_version_offset = new_node_version.first;
+        newnode_version_offset += new_node_version.first;
     }
     SubTransaction sub_transaction(base_newnode_value, move(new_node_versions));
     return {newnode_version_offset, sub_transaction};
@@ -448,8 +437,8 @@ fplus::maybe<size_t> can_decode_SubTransaction(size_t start_chunk, chunkList enc
     }
     auto chunk_count_value = chunk_count.unsafe_get_just();
     // if chunk_count_values is not 1, then something went wrong
-    if (chunk_count_value != 1) {
-        throw invalid_argument("Chunk count is not 1");
+    if (chunk_count_value - start_chunk != 1) {
+        throw invalid_argument("Chunk count for vector length is not 1");
     }
     chunkList just_count_chunk;
     just_count_chunk.push_back(*std::next(encoded.begin(), start_chunk));
@@ -512,7 +501,7 @@ pair<size_t, Transaction> decode_Transaction(chunkList encoded) {
             throw invalid_argument("Cannot decode SubTransaction");
         }
         transaction.push_back(sub_transaction.second);
-        sub_transaction_offset = sub_transaction.first;
+        sub_transaction_offset += sub_transaction.first;
     }
     return {sub_transaction_offset, transaction};
 }
@@ -527,7 +516,7 @@ fplus::maybe<size_t> can_decode_Transaction(size_t start_chunk, chunkList encode
     }
     auto chunk_count_value = chunk_count.unsafe_get_just();
     // if chunk_count_values is not 1, then something went wrong
-    if (chunk_count_value != 1) {
+    if (chunk_count_value - start_chunk != 1) {
         throw invalid_argument("Chunk count is not 1");
     }
     chunkList just_count_chunk;
@@ -587,7 +576,7 @@ pair<size_t, std::vector<TreeNode>> decode_VectorTreeNode(chunkList encoded) {
             throw invalid_argument("TreeNode is nothing");
         }
         nodes.push_back(node.second.unsafe_get_just());
-        tree_node_offset = node.first;
+        tree_node_offset += node.first;
     }
     return {tree_node_offset, nodes};
 }
@@ -602,7 +591,7 @@ fplus::maybe<size_t> can_decode_VectorTreeNode(size_t start_chunk, chunkList enc
     }
     auto chunk_count_value = chunk_count.unsafe_get_just();
     // if chunk_count_values is not 1, then something went wrong
-    if (chunk_count_value != 1) {
+    if (chunk_count_value - start_chunk != 1) {
         throw invalid_argument("Chunk count is not 1");
     }
     chunkList just_count_chunk;

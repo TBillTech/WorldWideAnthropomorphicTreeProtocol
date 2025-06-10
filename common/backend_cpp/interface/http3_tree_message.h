@@ -64,7 +64,7 @@ public:
     bool decode_openTransactionLayerResponse();
     
     void encode_closeTransactionLayersRequest();
-    void decode_closeTransactionLayersRequest() {};
+    void decode_closeTransactionLayersRequest();
     void encode_closeTransactionLayersResponse(bool success);
     bool decode_closeTransactionLayersResponse();
     
@@ -74,7 +74,7 @@ public:
     bool decode_applyTransactionResponse();
     
     void encode_getFullTreeRequest();
-    void decode_getFullTreeRequest(){};
+    void decode_getFullTreeRequest();
     void encode_getFullTreeResponse(const std::vector<TreeNode>& nodes);
     std::vector<TreeNode> decode_getFullTreeResponse();
     
@@ -94,9 +94,9 @@ public:
     bool decode_notifyListenersResponse();
 
     void encode_processNotificationRequest();
-    void decode_processNotificationRequest() {};
+    void decode_processNotificationRequest();
     void encode_processNotificationResponse();
-    void decode_processNotificationResponse() {};
+    void decode_processNotificationResponse();
     
     void encode_getJournalRequest(SequentialNotification const& last_notification);
     SequentialNotification decode_getJournalRequest();
@@ -132,6 +132,9 @@ public:
 
     uint8_t getSignal() const {
         return signal_;
+    }
+    uint8_t getRequestId() const {
+        return request_id_;
     }
  
     // assignment operator

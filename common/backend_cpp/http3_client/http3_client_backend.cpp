@@ -495,7 +495,7 @@ void Http3ClientBackend::processHTTP3Response(HTTP3TreeMessage& response) {
             break;
         default:
             // Handle unknown signal
-            std::cerr << "Unknown signal: " << static_cast<int>(response.getSignal()) << std::endl;
+            std::cerr << "Unknown signal: 0x" << hex << static_cast<int>(response.getSignal()) << std::endl;
             break;
         }
 }

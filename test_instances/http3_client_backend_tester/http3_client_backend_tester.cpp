@@ -42,6 +42,7 @@ unique_ptr<Communication> createClientCommunication(const string& protocol, boos
 }
 
 int main() {
+    disableCatch2();
     // set to pool size for the type UDPChunk to 4 GB
     memory_pool.setPoolSize<UDPChunk>(static_cast<uint64_t>(4) * 1024 * 1024 * 1024 / UDPChunk::chunk_size);
 

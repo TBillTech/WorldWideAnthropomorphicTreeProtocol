@@ -1,6 +1,13 @@
 #include "backend_testbed.h"
 #include <catch2/catch_test_macros.hpp>
 
+// Global flag useCatch2 switches Catch2 on or off.
+bool useCatch2 = true;
+
+void disableCatch2() {
+    useCatch2 = false;
+}
+
 TreeNode createNoContentTreeNode(string label_rule, string description, vector<string> literal_types, 
     TreeNodeVersion version, vector<string> child_names, 
     maybe<string> query_how_to, maybe<string> qa_sequence) {
@@ -25,9 +32,19 @@ TreeNode createAnimalNode(string animal, string description, vector<string> lite
         only_animal_data = shared_span<>(global_no_chunk_header, false);
     }
     auto m_query_how_to = maybe<string>(query_how_to);
-    REQUIRE(m_query_how_to.get_with_default("") == query_how_to);
+    if (useCatch2) {
+        REQUIRE(m_query_how_to.get_with_default("") == query_how_to);
+    }
+    else {
+        assert(m_query_how_to.get_with_default("") == query_how_to);
+    }
     auto m_qa_sequence = maybe<string>(qa_sequence);
-    REQUIRE(m_qa_sequence.get_with_default("") == qa_sequence);
+    if (useCatch2) {
+        REQUIRE(m_qa_sequence.get_with_default("") == qa_sequence);
+    }
+    else {
+        assert(m_qa_sequence.get_with_default("") == qa_sequence);
+    }
     return TreeNode(animal, description, literal_types, version, child_names, std::move(only_animal_data), m_query_how_to, m_qa_sequence);
 }
 
@@ -107,10 +124,23 @@ void checkGetNode(Backend const &backend, const string& label_rule, TreeNode con
     maybe<TreeNode> node = backend.getNode(label_rule);
     if (node.is_just()) {
         auto found_node = node.get_with_default(TreeNode());
-        REQUIRE(found_node.getLabelRule() == expected_node.getLabelRule());
-        REQUIRE(found_node == expected_node);
+        if (useCatch2) {
+            REQUIRE(found_node.getLabelRule() == expected_node.getLabelRule());
+            REQUIRE(found_node == expected_node);
+        }
+        else {
+            assert(found_node.getLabelRule() == expected_node.getLabelRule());
+            assert(found_node == expected_node);
+        }
     } else {
-        FAIL("Node not found: " + label_rule);
+        if (useCatch2)
+        {
+            FAIL("Node not found: " + label_rule);
+        }
+        else
+        {
+            throw std::runtime_error("Node not found: " + label_rule);
+        }
     }
 }
 
@@ -122,7 +152,12 @@ void checkMultipleGetNode(Backend const &backend, const vector<TreeNode>& expect
 
 void checkDeletedNode(Backend const &backend, const string& label_rule) {
     auto node = backend.getNode(label_rule);
-    REQUIRE(node.is_nothing());
+    if (useCatch2) {
+        REQUIRE(node.is_nothing());
+    }
+    else {
+        assert(node.is_nothing());
+    }
 }
 
 void checkMultipleDeletedNode(Backend const &backend, const vector<TreeNode>& expected_nodes) {
@@ -179,41 +214,51 @@ vector<TreeNode> prefixNodeLabels(string label_prefix, vector<TreeNode> nodes) {
 }
 
 BackendTestbed::BackendTestbed(Backend& backend, bool should_test_notifications) 
-    : backend(backend), should_test_notifications_(should_test_notifications) {}
+    : backend_(backend), should_test_notifications_(should_test_notifications) {}
 
 void BackendTestbed::addAnimalsToBackend() {
-    backend.upsertNode(createLionNodes());
-    backend.upsertNode(createElephantNodes());
-    backend.upsertNode(createParrotNodes());
+    backend_.upsertNode(createLionNodes());
+    backend_.upsertNode(createElephantNodes());
+    backend_.upsertNode(createParrotNodes());
 }
 
 void BackendTestbed::addNotesPageTree() {
-    backend.upsertNode({createNotesPageTree()});
+    backend_.upsertNode({createNotesPageTree()});
 }
 
 void BackendTestbed::testBackendLogically(string label_prefix) {
-    checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createLionNodes()));
-    checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createElephantNodes()));
-    checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createParrotNodes()));
+    checkMultipleGetNode(backend_, prefixNodeLabels(label_prefix, createLionNodes()));
+    checkMultipleGetNode(backend_, prefixNodeLabels(label_prefix, createElephantNodes()));
+    checkMultipleGetNode(backend_, prefixNodeLabels(label_prefix, createParrotNodes()));
 
-    auto notes_pages = backend.getPageTree(label_prefix + "notes");
-    REQUIRE(notes_pages == prefixNodeLabels(label_prefix, collectAllNotes()));
+    auto notes_pages = backend_.getPageTree(label_prefix + "notes");
+    if (useCatch2) {
+        REQUIRE(notes_pages == prefixNodeLabels(label_prefix, collectAllNotes()));
+    }
+    else {
+        assert(notes_pages == prefixNodeLabels(label_prefix, collectAllNotes()));
+    }
 
     {
         MemoryTree temp_tree;
         SimpleBackend temp_backend(temp_tree);
-        temp_backend.upsertNode(backend.getFullTree());
+        temp_backend.upsertNode(backend_.getFullTree());
         checkMultipleGetNode(temp_backend, prefixNodeLabels(label_prefix, createElephantNodes()));
         checkMultipleGetNode(temp_backend, prefixNodeLabels(label_prefix, createLionNodes()));
         checkMultipleGetNode(temp_backend, prefixNodeLabels(label_prefix, createParrotNodes()));
         auto notes_pages = temp_backend.getPageTree(label_prefix + "notes");
-        REQUIRE(notes_pages == prefixNodeLabels(label_prefix, collectAllNotes()));
+        if (useCatch2) {
+            REQUIRE(notes_pages == prefixNodeLabels(label_prefix, collectAllNotes()));
+        }
+        else {
+            assert(notes_pages == prefixNodeLabels(label_prefix, collectAllNotes()));
+        }
     }
     
-    backend.deleteNode(label_prefix + "elephant");
-    checkMultipleDeletedNode(backend, prefixNodeLabels(label_prefix, createElephantNodes()));
-    checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createLionNodes()));
-    checkMultipleGetNode(backend, prefixNodeLabels(label_prefix, createParrotNodes()));
+    backend_.deleteNode(label_prefix + "elephant");
+    checkMultipleDeletedNode(backend_, prefixNodeLabels(label_prefix, createElephantNodes()));
+    checkMultipleGetNode(backend_, prefixNodeLabels(label_prefix, createLionNodes()));
+    checkMultipleGetNode(backend_, prefixNodeLabels(label_prefix, createParrotNodes()));
 
     if (!should_test_notifications_) {
         return;
@@ -222,7 +267,7 @@ void BackendTestbed::testBackendLogically(string label_prefix) {
     bool lion_node_created = false;
     bool lion_node_deleted = false;
     string lion_label = label_prefix + "lion";
-    backend.registerNodeListener("lion_listener", lion_label, false, [lion_label, &lion_node_created, &lion_node_deleted](Backend& backend, const string listener_name, const fplus::maybe<TreeNode> node) {
+    backend_.registerNodeListener("lion_listener", lion_label, false, [lion_label, &lion_node_created, &lion_node_deleted](Backend& backend, const string listener_name, const fplus::maybe<TreeNode> node) {
         if (node.is_just()) {
             auto found_node = node.get_with_default(TreeNode());
             if (found_node.getLabelRule() == lion_label) {
@@ -232,19 +277,39 @@ void BackendTestbed::testBackendLogically(string label_prefix) {
             lion_node_deleted = true;
         }
     });
-    backend.upsertNode(prefixNodeLabels(label_prefix, createLionNodes()));
-    backend.processNotification();
-    REQUIRE(lion_node_created);
-    backend.deleteNode(lion_label);
-    backend.processNotification();
-    REQUIRE(lion_node_deleted);
-    backend.deregisterNodeListener("lion_listener", lion_label);
+    backend_.upsertNode(prefixNodeLabels(label_prefix, createLionNodes()));
+    backend_.processNotification();
+    if (useCatch2) {
+        REQUIRE(lion_node_created);
+    }
+    else {
+        assert(lion_node_created);
+    }
+    backend_.deleteNode(lion_label);
+    backend_.processNotification();
+    if (useCatch2) {
+        REQUIRE(lion_node_deleted);
+    }
+    else {
+        assert(lion_node_deleted);
+    }
+    backend_.deregisterNodeListener("lion_listener", lion_label);
     lion_node_created = false;
     lion_node_deleted = false;
-    backend.upsertNode(prefixNodeLabels(label_prefix, createLionNodes()));
-    backend.processNotification();
-    REQUIRE(!lion_node_created);
-    backend.deleteNode(lion_label);
-    backend.processNotification();
-    REQUIRE(!lion_node_deleted);
+    backend_.upsertNode(prefixNodeLabels(label_prefix, createLionNodes()));
+    backend_.processNotification();
+    if (useCatch2) {
+        REQUIRE(!lion_node_created);
+    }
+    else {
+        assert(!lion_node_created);
+    }
+    backend_.deleteNode(lion_label);
+    backend_.processNotification();
+    if (useCatch2) {
+        REQUIRE(!lion_node_deleted);
+    }
+    else {
+        assert(!lion_node_deleted);
+    }
 }

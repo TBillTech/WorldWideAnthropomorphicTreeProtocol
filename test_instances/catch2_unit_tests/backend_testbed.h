@@ -30,9 +30,11 @@ vector<TreeNode> collectAllNotes();
 TreeNode createNotesPageTree();
 vector<TreeNode> prefixNodeLabels(string label_prefix, vector<TreeNode> nodes);
 
+void disableCatch2();
+
 class BackendTestbed {
 public:
-    Backend& backend;
+    Backend& backend_;
     BackendTestbed(Backend& backend, bool should_test_notifications = true);
     void addAnimalsToBackend();
     void addNotesPageTree();
@@ -40,4 +42,5 @@ public:
 
 private:
     bool should_test_notifications_;
+    bool useCatch2_ = true;
 };
