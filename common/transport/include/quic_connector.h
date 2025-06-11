@@ -56,13 +56,6 @@ public:
     void close() override;
     void connect(const string &peer_name, const string& peer_ip_addr, int peer_port) override;
 
-    void finishRequest(StreamIdentifier const& sid, uint64_t app_error_code) {
-        auto it = std::find_if(requestorQueue.begin(), requestorQueue.end(), 
-                       [&sid](const auto& pair) { return pair.first == sid; });
-        if (it != requestorQueue.end()) {
-            requestorQueue.erase(it);
-        }
-    }
     void receiveSignal(StreamIdentifier const& sid, shared_span<> && signal) {
         lock_guard<std::mutex> lock(incomingChunksMutex);
         auto outgoing = incomingChunks.find(sid);

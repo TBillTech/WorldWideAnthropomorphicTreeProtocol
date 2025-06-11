@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Enable verbose output
 set(CMAKE_VERBOSE_MAKEFILE ON)
+set(CMAKE_BUILD_TYPE Debug)
 
 # Find Boost library
 if(POLICY CMP0167)
@@ -231,6 +232,8 @@ target_link_libraries(memory_pool_tester ngtcp2_lib nghttp3_lib boringssl_lib bo
 target_link_libraries(http3_client_backend_tester PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus Catch2::Catch2)
 target_link_libraries(catch2_unit_tests PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus Catch2::Catch2WithMain)
 
+target_compile_options(http3_client_backend_tester PRIVATE -g -O0 -fsanitize=address,undefined -Wall -Wextra -Wpedantic)
+target_link_options(http3_client_backend_tester PRIVATE -fsanitize=address,undefined)
 # Enable verbose linker output
 # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--verbose")
 

@@ -213,52 +213,64 @@ public:
         uint8_t signal_type = data[0];
         switch (signal_type) {
             case no_chunk_header::GLOBAL_SIGNAL_TYPE: {
+                // By definition create_from_data will be called with at least one byte, and therefore the
+                // no_chunk_header is always complete.
                 auto remaining_data = data.subspan(sizeof(no_chunk_header));
                 shared_span span(*reinterpret_cast<const no_chunk_header*>(data.data()), remaining_data);
                 return move(span);
             }
             case signal_chunk_header::GLOBAL_SIGNAL_TYPE: {
-                auto remaining_data = data.subspan(sizeof(signal_chunk_header));
                 size_t header_data_length = min(sizeof(signal_chunk_header), data.size());
                 signal_chunk_header header;
+                memset(&header, 0, sizeof(signal_chunk_header));
                 memcpy(&header, data.data(), header_data_length);
-                shared_span span(header, remaining_data);
-                // Doctor the the span start in case the header was incomplete:
-                if (header_data_length < sizeof(signal_chunk_header)) {
-                    span.chunks.back().second.first = header_data_length;
+                if (header_data_length == sizeof(signal_chunk_header))
+                {
+                    auto remaining_data = data.subspan(sizeof(signal_chunk_header));
+                    shared_span span(header, remaining_data);
+                    return move(span);
                 }
-                return move(span);
+                shared_span partial_span(header, std::span<uint8_t>{});
+                // Doctor the the span start so that expand_use will accept the remaining header data later:
+                partial_span.chunks.back().second.first = header_data_length;
+                return move(partial_span);
             }
             case payload_chunk_header::GLOBAL_SIGNAL_TYPE: {
-                auto remaining_data = data.subspan(sizeof(payload_chunk_header));
                 size_t header_data_length = min(sizeof(payload_chunk_header), data.size());
                 payload_chunk_header header;
+                memset(&header, 0, sizeof(payload_chunk_header));
                 memcpy(&header, data.data(), header_data_length);
-                shared_span span(header, remaining_data);
-                // Doctor the the span start in case the header was incomplete:
-                if (header_data_length < sizeof(payload_chunk_header)) {
-                    span.chunks.back().second.first = header_data_length;
+                if (header_data_length == sizeof(payload_chunk_header))
+                {
+                    auto remaining_data = data.subspan(sizeof(payload_chunk_header));
+                    shared_span span(header, remaining_data);
+                    return move(span);
                 }
+                shared_span partial_span(header, std::span<uint8_t>{});
+                // Doctor the the span start so that expand_use will accept the remaining header data later:
+                partial_span.chunks.back().second.first = header_data_length;
+                return move(partial_span);
                 // Now there are a couple cases where things appear dangerous with the wire size, which is data_length.
                 // * The condition where data_length is really 0, but less than the whole header has arrived would
                 //       be alarming, but this cannot happen, because payload_chunk_header is invalid with 0 payload chunks. 
                 //       (should use signal_chunk_header in that case).
-                // * The condition where wire length is not really 0, but the header is incomplete such that data_length is 0, then:
+                // * The condition where data_length is non-zero, non-mod 256, but the header is incomplete such that data_length is 0, then:
                 //       size = 0
                 //       signal_size = 6
-                //       wire_size = 6
-                //       this could be fixed if wire_size were limited to chunk.second.first, because then wire_size < 6.
+                //       wire_size = data_recieved < 6
+                //       stored_size = data_recieved
+                //       but then wire_size < signal_size, and the quic_listener knows to wait for more data.
                 // * The condition where data_length % 256 is really 0, but the header is lacking the last byte.  
                 //       size = 0
                 //       signal_size = 6
                 //       wire_size = 256*n + 6, and by definition, n > 0
+                //       stored_size = data_recieved
                 // * The condition where data_length // 256 == 0, but the header is lacking the last byte.
                 //       size = 0
                 //       signal_size = 6
                 //       wire_size = 6
                 //       This could _also_ be fixed if wire_size were limited to chunk.second.first, because then wire_size < 6.
-                // In other words, it is absolutely crucial that wire_size _never_ returns 6
-                return move(span);
+                // In other words, it is absolutely crucial that wire_size _never_ returns 6, and thus never equals the header size.
             }
             default:
                 throw invalid_argument("Unknown signal type");
@@ -388,10 +400,13 @@ public:
             case no_chunk_header::GLOBAL_SIGNAL_TYPE:
                 throw invalid_argument("No chunk header should not exist on the wire.");
             case signal_chunk_header::GLOBAL_SIGNAL_TYPE:
-                return min(read_size, reinterpret_cast<signal_chunk_header*>(chunks.front().first->data)->get_wire_size());
+                if (read_size < sizeof(signal_chunk_header)) {
+                    return read_size;
+                }
+                return reinterpret_cast<signal_chunk_header*>(chunks.front().first->data)->get_wire_size();
             case payload_chunk_header::GLOBAL_SIGNAL_TYPE:
                 if(read_size < sizeof(payload_chunk_header)) {
-                    return read_size;
+                    return read_size;;
                 }
                 return reinterpret_cast<payload_chunk_header*>(chunks.front().first->data)->get_wire_size();
             default:
@@ -552,7 +567,18 @@ public:
         if (chunk_space < size) {
             throw invalid_argument("Not enough space in the last chunk to expand use");
         }
+        if (last_chunk.second.first < get_signal_size()) {
+            pair<size_t, size_t> next_start = {last_chunk.second.first, chunks.size()-1};
+            // The last chunk is not fully used, so we can expand use in the last chunk
+            size_t more_header = min(get_signal_size() - last_chunk.second.first, size);
+            last_chunk.second.first += more_header;
+            size -= more_header;
+            last_chunk.second.second += size;
+            return next_start;
+        }
         pair<size_t, size_t> next_start = {last_chunk.second.second + last_chunk.second.first, chunks.size()-1};
+        // The end of the used data, second, is updated AFTER the computation of next_start, because expand use has not actually
+        // written data yet, but is preparing for it and returning the location where the data will be written.
         last_chunk.second.second += size;
         return next_start;
     }
@@ -893,6 +919,14 @@ public:
         size_t total = 0;
         for (auto& chunk : chunks) {
             total += chunk.second.second;
+        }
+        return total;
+    }
+
+    size_t stored_size() const {
+        size_t total = 0;
+        for (auto& chunk : chunks) {
+            total += chunk.second.second + chunk.second.first;
         }
         return total;
     }

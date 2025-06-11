@@ -35,12 +35,14 @@ void disableCatch2();
 class BackendTestbed {
 public:
     Backend& backend_;
-    BackendTestbed(Backend& backend, bool should_test_notifications = true);
+    BackendTestbed(Backend& backend, bool should_test_notifications = true, bool should_test_changes = true);
     void addAnimalsToBackend();
     void addNotesPageTree();
+    void stressTestConstructions(size_t count);
+    void testAnimalNodesNoElephant(string label_prefix = "");
     void testBackendLogically(string label_prefix = "");
 
 private:
     bool should_test_notifications_;
-    bool useCatch2_ = true;
+    bool should_test_changes_; // This is used to control whether change operations are tested.
 };

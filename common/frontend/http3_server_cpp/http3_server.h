@@ -53,8 +53,7 @@ public:
     //   tried to make, but the server rejected.  The unsolicited notifications will be undoing the attempted changes.
     chunks processResponseStream(const StreamIdentifier& stream_id, chunks& request);
 
-    void buildResponseChunks(const StreamIdentifier& stream_id, 
-        HTTP3TreeMessage& requested);
+    void buildResponseChunks(HTTP3TreeMessage& requested);
 
     HTTP3TreeMessage intializeResponseMessage(const StreamIdentifier& stream_id, chunks& request) const;
 
@@ -84,7 +83,7 @@ public:
     }
 
     void addStaticAsset(std::string const& url, chunks& asset) {
-        auto emplaced = staticAssets_.emplace(url, asset);
+        staticAssets_.emplace(url, asset);
     }
 
     bool isChunkStream(std::string const& url) const;

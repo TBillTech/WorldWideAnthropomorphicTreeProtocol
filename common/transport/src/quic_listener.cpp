@@ -299,17 +299,24 @@ void Stream::append_data(std::span<const uint8_t> data) {
     if (data.empty()) {
         return;
     }
-    auto remaining_span = data.subspan(0, data.size());
-    // Note: if empty partial_chunk, size() and get_wire_size() are both 0, so it will test as not in progress.
+    std::span<const uint8_t> remaining_span = data;
+    // Note: if empty partial_chunk, stored_size() and get_wire_size() are both 0, 
+    //       while get_signal_size() and get_wire_size() are also both 0, so it will test as not in progress.
     // Check if a prior chunk is already in progress, by examining the in memory size so far with the size read from the wire
-    if (partial_chunk.size() + partial_chunk.get_signal_size() != partial_chunk.get_wire_size())
+    // The partial header condition is detected by checking if the wire size is less than the signal size, which is by definition in progress.
+    // (But the stored_size and wire_size will be the same for incomplete headers)
+    // For complete headers, wire size >= signal size, and stored_size == wire_size.
+    if (partial_chunk.stored_size() != partial_chunk.get_wire_size() || partial_chunk.get_wire_size() < partial_chunk.get_signal_size())
     {
         // If so, append the as much data as necessary to the partial chunk
-        size_t copy_bytes = min(partial_chunk.get_wire_size() - partial_chunk.get_signal_size() - partial_chunk.size(), data.size());
+        size_t copy_bytes = min(partial_chunk.get_wire_size() - partial_chunk.stored_size(), data.size());
+        if (partial_chunk.get_wire_size() < partial_chunk.get_signal_size()) {
+            copy_bytes = partial_chunk.get_signal_size() - partial_chunk.stored_size();
+        }
         auto next_start = partial_chunk.expand_use(copy_bytes);
         auto data_span = data.subspan(0, copy_bytes);
         partial_chunk.copy_span(data_span, {true, next_start});
-        remaining_span = data.subspan(copy_bytes, data.size() - copy_bytes);
+        remaining_span = data.subspan(copy_bytes);
     } else {
         // Otherwise, create a new chunk and copy the data into it
         uint8_t signal_type = data[0];
@@ -317,19 +324,25 @@ void Stream::append_data(std::span<const uint8_t> data) {
         {
             auto signal_span = data.subspan(0, min(sizeof(signal_chunk_header), data.size())); 
             partial_chunk = shared_span<>(signal_span);
-            remaining_span = data.subspan(signal_span.size(), data.size() - signal_span.size());
+            remaining_span = data.subspan(signal_span.size());
         } else if (signal_type == payload_chunk_header::GLOBAL_SIGNAL_TYPE)
         {
-            auto header = reinterpret_cast<payload_chunk_header const*>(data.subspan(0, sizeof(payload_chunk_header)).data());
-            auto data_span = data.subspan(0, min(header->get_wire_size(), data.size()));
-            partial_chunk = shared_span<>(data_span);
-            remaining_span = data.subspan(data_span.size(), data.size() - data_span.size());
+            if (data.size() < sizeof(payload_chunk_header)) {
+                partial_chunk = shared_span<>(data);
+                remaining_span = data.subspan(data.size());
+            }
+            else {
+                auto header = reinterpret_cast<payload_chunk_header const*>(data.subspan(0, sizeof(payload_chunk_header)).data());
+                auto data_span = data.subspan(0, min(header->get_wire_size(), data.size()));
+                partial_chunk = shared_span<>(data_span);
+                remaining_span = data.subspan(data_span.size());
+            }
         } else {
-            throw std::invalid_argument("Unknown signal type");
+            throw std::invalid_argument("Unhandled signal type " + std::to_string(signal_type) + " in Stream::append_data");
         }
     }
     // Check if the chunk is complete
-    if (partial_chunk.size() + partial_chunk.get_signal_size() == partial_chunk.get_wire_size()) {
+    if (partial_chunk.stored_size() == partial_chunk.get_wire_size() && partial_chunk.get_wire_size() >= partial_chunk.get_signal_size()) {
         // If so, push it onto the incoming queue
         handler->push_incoming_chunk(req, move(partial_chunk));
         partial_chunk = shared_span<>(global_no_chunk_header, false);

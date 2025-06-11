@@ -86,3 +86,10 @@ TEST_CASE("CompositeBackend mountBackend test", "[CompositeBackend][mountBackend
     tester.testBackendLogically("zoo/");
     tester.testBackendLogically("museum/");
 }
+
+TEST_CASE("SimpleBackend stress test", "[SimpleBackend][stress]") {
+    MemoryTree memory_tree;
+    SimpleBackend simple_backend(memory_tree);
+    BackendTestbed tester(simple_backend);
+    tester.stressTestConstructions(1000); // Stress test with 1000 constructions
+}

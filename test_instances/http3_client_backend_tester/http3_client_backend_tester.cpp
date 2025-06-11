@@ -150,17 +150,22 @@ int main() {
     auto theWriterRequest = Request{.scheme = "https", .authority = "localhost", .path = "/uninit/wwatp/"};
     MemoryTree local_writer_tree;
     SimpleBackend local_writer_backend(local_writer_tree);
+    MemoryTree reader_of_writer_tree;
+    SimpleBackend reader_of_writer_backend(reader_of_writer_tree);
 
     auto theBlockingRequest = Request{.scheme = "https", .authority = "localhost", .path = "/blocking/wwatp/"};
     MemoryTree local_blocking_tree;
     SimpleBackend local_blocking_backend(local_blocking_tree);
+    ThreadsafeBackend local_blocking_backend_threadsafe(local_blocking_backend);
 
     Http3ClientBackendUpdater client_backend_updater;
     Http3ClientBackend& reader_client = client_backend_updater.addBackend(local_reader_backend, false, theReaderRequest);
     reader_client.requestFullTreeSync();
+    
     Http3ClientBackend& writer_client = client_backend_updater.addBackend(local_writer_backend, false, theWriterRequest);
-    //writer_client.requestFullTreeSync();
-    Http3ClientBackend& blocking_client = client_backend_updater.addBackend(local_blocking_backend, true, theBlockingRequest);
+    Http3ClientBackend& reader_of_writer_client = client_backend_updater.addBackend(reader_of_writer_backend, false, theWriterRequest);
+    
+    Http3ClientBackend& blocking_client = client_backend_updater.addBackend(local_blocking_backend_threadsafe, true, theBlockingRequest);
 
     int wait_loops = 100;
     if (const char* env_p = std::getenv("DEBUG")) {
@@ -182,22 +187,25 @@ int main() {
 
     response_cycle();
     {
-        BackendTestbed reader_tester(reader_client, false);
+        BackendTestbed reader_tester(reader_client, false, false);
         reader_tester.testBackendLogically();
     }
     {
-        BackendTestbed writer_tester(writer_client, false);
+        BackendTestbed writer_tester(writer_client, false, true);
         writer_tester.addAnimalsToBackend();
         writer_tester.addNotesPageTree();
     }
     response_cycle();
     {
-        BackendTestbed reader_tester(reader_client, false);
-        reader_tester.testBackendLogically();
-    }
-    {
         BackendTestbed writer_tester(writer_client, false);
         writer_tester.testBackendLogically();
+    }
+    response_cycle();
+    reader_of_writer_client.requestFullTreeSync();
+    response_cycle();
+    {
+        BackendTestbed reader_tester(reader_of_writer_client, false, false);
+        reader_tester.testAnimalNodesNoElephant();
     }
 
     client_backend_updater.run(*client_communication, timesecs, 100);

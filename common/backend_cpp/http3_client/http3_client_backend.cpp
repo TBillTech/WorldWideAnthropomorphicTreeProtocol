@@ -220,7 +220,7 @@ void Http3ClientBackend::registerNodeListener(const std::string listener_name, c
     // In cases where the local backend sees a change, then the server will eventually duplicate the notification.
     // Therefore, we need to track local notifications and deduplicate them versus server notifications.
     std::lock_guard<std::mutex> lock(backendMutex_);
-    NodeListenerCallback local_callback = [this, callback](Backend& backend, const std::string label_rule, const fplus::maybe<TreeNode> node) {
+    NodeListenerCallback local_callback = [this, callback](Backend&, const std::string label_rule, const fplus::maybe<TreeNode> node) {
         // Notify the local backend
         callback(*this, label_rule, node);
     };
@@ -606,7 +606,7 @@ void Http3ClientBackend::getMutablePageTreeInMode(bool blocking_mode) {
 }
 
 void Http3ClientBackend::processOneNotification(SequentialNotification const& notification) {
-    uint64_t sequence_num = notification.first;
+    //uint64_t sequence_num = notification.first;
     Notification const& notification_data = notification.second;
     std::string label_rule = notification_data.first;
     if (label_rule == "") { // For tracking purposes, 
@@ -664,11 +664,10 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
                     theMessage.pushResponseChunk(chunk);
                 }
                 if (response.empty() && request.empty() && !theMessage.isResponseComplete()) {
-                    cout << "Client " << stream_identifier << " is idle, and message response is still pending so send heartbeat" << endl << flush;
                     chunks response_chunks;
                     auto tag = payload_chunk_header(stream_identifier.logical_id, payload_chunk_header::SIGNAL_HEARTBEAT, 0);
                     response_chunks.emplace_back(tag, span<const char>("", 0));
-                    return move(response_chunks);
+                    return response_chunks;
                 }
                 if (theMessage.isResponseComplete()) {
                     backend.processHTTP3Response(theMessage);

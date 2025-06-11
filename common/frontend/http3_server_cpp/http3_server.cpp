@@ -6,6 +6,10 @@ chunks Http3ServerRoute::processResponseStream(const StreamIdentifier& stream_id
     // Process the request and return the response
     auto it = ongoingResponses_.find(stream_id);
     if (it == ongoingResponses_.end()) {
+        if( request.size() == 0) {
+            // If there is heretofore no request information, we don't know how to respond yet.
+            return response;
+        }
         HTTP3TreeMessage state = intializeResponseMessage(stream_id, request);
         ongoingResponses_.emplace(stream_id, move(state));
         it = ongoingResponses_.find(stream_id);
@@ -24,7 +28,6 @@ chunks Http3ServerRoute::processResponseStream(const StreamIdentifier& stream_id
     }
     for (auto& chunk : request) {
         if (chunk.get_signal<payload_chunk_header>().signal == payload_chunk_header::SIGNAL_HEARTBEAT) {
-            cout << "Server got heartbeat in callback" << endl;
             continue;
         }
         it->second.pushRequestChunk(chunk);
@@ -32,7 +35,7 @@ chunks Http3ServerRoute::processResponseStream(const StreamIdentifier& stream_id
     // Check if the request is complete
     if (it->second.isRequestComplete()) {
         if (!it->second.isResponseComplete()) {
-            buildResponseChunks(stream_id, it->second);
+            buildResponseChunks(it->second);
         }
         fplus::maybe<shared_span<>> response_chunk = it->second.popResponseChunk();
         while (response_chunk.is_just()) {
@@ -44,7 +47,7 @@ chunks Http3ServerRoute::processResponseStream(const StreamIdentifier& stream_id
     return response;
 }
 
-void Http3ServerRoute::buildResponseChunks(const StreamIdentifier& stream_id, HTTP3TreeMessage& requested) {
+void Http3ServerRoute::buildResponseChunks(HTTP3TreeMessage& requested) {
     switch (requested.getSignal()) {
         case payload_chunk_header::SIGNAL_WWATP_GET_NODE_REQUEST:
             {

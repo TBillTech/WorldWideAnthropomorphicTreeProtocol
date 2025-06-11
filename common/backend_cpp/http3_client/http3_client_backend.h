@@ -26,16 +26,26 @@ public:
     ~Http3ClientBackend() override = default;
 
     Http3ClientBackend(Http3ClientBackend&& other) noexcept :
-        localBackend_(other.localBackend_), 
+        localBackend_(other.localBackend_),
         needMutablePageTreeSync_(other.needMutablePageTreeSync_),
+        handlerMutex_(),
         lastNotification_(std::move(other.lastNotification_)),
         mutablePageTreeLabelRule_(std::move(other.mutablePageTreeLabelRule_)),
-        blockingMode_(other.blockingMode_), 
+        serverSyncOn_(other.serverSyncOn_),
+        blockingMode_(other.blockingMode_),
+        blockingMutex_(),
+        responseCondition(),
+        responseReady(other.responseReady),
+        boolResponse(other.boolResponse),
+        maybeTreeResponse_(std::move(other.maybeTreeResponse_)),
+        vectorTreeResponse_(std::move(other.vectorTreeResponse_)),
+        chunksResponse(std::move(other.chunksResponse)),
         requestUrlInfo_(std::move(other.requestUrlInfo_)),
+        pendingRequests_(std::move(other.pendingRequests_)),
         journalRequestsPerMinute_(other.journalRequestsPerMinute_),
         lastJournalRequestTime_(other.lastJournalRequestTime_),
         staticNode_(std::move(other.staticNode_)),
-        pendingRequests_(std::move(other.pendingRequests_))
+        notificationBlock_(other.notificationBlock_.load())
     {
     }
     // Delete copy constructor
