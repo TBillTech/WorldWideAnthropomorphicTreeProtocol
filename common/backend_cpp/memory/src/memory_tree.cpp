@@ -161,11 +161,11 @@ bool MemoryTree::performSubTransaction(const SubTransaction& sub_transaction)
 
     // Update or delete child nodes
     for (const auto& child : sub_transaction.second) {
-        const auto& child_node = child.second;
-        if (child.second.second.is_just()) {
-            tree_[child.second.first] = child.second.second.unsafe_get_just(); // Update existing child node
+        const auto& child_change = child.second;
+        if (child_change.second.is_just()) {
+            tree_[child_change.first] = child_change.second.unsafe_get_just(); // Update existing child node
         } else {
-            tree_.erase(child.second.first); // Delete child node
+            tree_.erase(child_change.first); // Delete child node
         }
     }
 

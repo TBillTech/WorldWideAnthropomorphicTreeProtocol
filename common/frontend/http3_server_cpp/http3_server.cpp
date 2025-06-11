@@ -22,7 +22,7 @@ chunks Http3ServerRoute::processResponseStream(const StreamIdentifier& stream_id
             }
         }
         // return signal_chunk_header::SIGNAL_CLOSE_STREAM
-        signal_chunk_header signal(signal_chunk_header::SIGNAL_CLOSE_STREAM, 0);
+        signal_chunk_header signal(stream_id.logical_id, signal_chunk_header::SIGNAL_CLOSE_STREAM);
         response.push_back(shared_span<>(signal, true));
         return response;
     }
@@ -254,7 +254,7 @@ prepared_stream_callback HTTP3Server::getResponseCallback(const Request & req) {
         auto it = staticAssets_.find(req.path);
         if (it != staticAssets_.end()) {
             chunks const& asset = it->second; 
-            stream_callback_fn callback = [&asset](const StreamIdentifier& stream_id, chunks& request) {
+            stream_callback_fn callback = [&asset](const StreamIdentifier&, chunks&) {
                 return asset;
             };
             size_t sum_size = 0;

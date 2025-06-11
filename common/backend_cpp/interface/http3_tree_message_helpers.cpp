@@ -42,7 +42,7 @@ fplus::maybe<size_t> can_decode_label(size_t start_chunk, chunkList encoded) {
 chunkList encode_long_string(uint16_t request_id, uint8_t signal, const string& str) {
     chunkList encoded;
     auto str_start = str.c_str();
-    auto cur_str_position = 0;
+    size_t cur_str_position = 0;
     size_t max_chunk_payload_size = shared_span<>::chunk_size - sizeof(payload_chunk_header);
     size_t first_chunk_payload_size = min(max_chunk_payload_size, str.size() + sizeof(size_t));
     auto first_header = payload_chunk_header(request_id, signal, first_chunk_payload_size);
@@ -82,8 +82,6 @@ fplus::maybe<size_t> can_decode_long_string(size_t start_chunk, chunkList encode
     if (chunk.size() < sizeof(payload_chunk_header)) {
         throw invalid_argument("Chunk size is less than header size");
     }
-    auto header = chunk.get_signal<payload_chunk_header>();
-    size_t data_size = header.data_length;
     size_t long_string_length = 0;
     chunk.at<size_t>(long_string_length);
     auto expected_chunk = start_chunk+1;
@@ -123,16 +121,15 @@ chunkList encode_MaybeTreeNode(uint16_t request_id, uint8_t signal, const fplus:
 }
 
 pair<size_t, fplus::maybe<TreeNode>> decode_MaybeTreeNode(chunkList encoded) {
-    auto chunk_count = can_decode_long_string(0, encoded);
-    if (chunk_count.is_nothing()) {
+    auto treenode_chunks = can_decode_long_string(0, encoded);
+    if (treenode_chunks.is_nothing()) {
         throw invalid_argument("Cannot decode MaybeTreeNode");
     }
-    auto chunk_count_value = chunk_count.unsafe_get_just();
+    auto chunk_start = treenode_chunks.unsafe_get_just();
     auto decoded = decode_long_string(encoded);
-    auto contents_start = decoded.first;
     auto decoded_str = decoded.second;
     if (decoded_str == "Nothing") {
-        return {chunk_count_value, fplus::nothing<TreeNode>()};
+        return {chunk_start, fplus::nothing<TreeNode>()};
     }
     TreeNode node;
     stringstream iss(decoded_str);
@@ -141,9 +138,9 @@ pair<size_t, fplus::maybe<TreeNode>> decode_MaybeTreeNode(chunkList encoded) {
     iss >> node;
     size_t contents_count;
     iss >> std::hex >> contents_count;
-    shared_span<> contents(std::next(encoded.begin(), chunk_count_value), std::next(encoded.begin(), chunk_count_value + contents_count));
+    shared_span<> contents(std::next(encoded.begin(), chunk_start), std::next(encoded.begin(), chunk_start + contents_count));
     node.setContents(move(contents));
-    return {chunk_count_value+contents_count, fplus::maybe<TreeNode>(node)};
+    return {chunk_start+contents_count, fplus::maybe<TreeNode>(node)};
 }
 
 fplus::maybe<size_t> can_decode_MaybeTreeNode(size_t start_chunk, chunkList encoded) {
@@ -284,7 +281,6 @@ fplus::maybe<size_t> can_decode_VectorSequentialNotification(size_t start_chunk,
     if (start_chunk >= encoded.size()) {
         return fplus::nothing<size_t>();
     }
-    auto& chunk = *std::next(encoded.begin(), start_chunk);
     auto can_decode_count = can_decode_label(start_chunk, encoded);
     if (can_decode_count.is_nothing()) {
         return fplus::nothing<size_t>();

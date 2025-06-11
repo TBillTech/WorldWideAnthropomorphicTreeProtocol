@@ -93,7 +93,7 @@ public:
                 }
             }
         }
-        return move(to_return);
+        return to_return;
     }
 
     bool noMoreChunks(vector<StreamIdentifier> const &sids) {
@@ -144,6 +144,9 @@ public:
         StreamIdentifier stream_id(sid, (uint16_t)0);
         if (req.path.find("wwatp/") != std::string::npos) {
             stream_id.logical_id = chunk.get_request_id();
+            if (stream_id.logical_id == 0) {
+                throw std::invalid_argument("Chunk does not have a valid request ID");
+            }
         } else {
             auto findit = staticRequests.find(req);
             stream_id = findit->second;

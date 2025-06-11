@@ -60,7 +60,7 @@ void ThreadsafeBackend::registerNodeListener(const std::string listener_name, co
     std::lock_guard<std::mutex> lock(tree_mutex_);
 
     // Create a wrapper callback that captures the original callback and this pointer
-    NodeListenerCallback wrapped_callback = [this, callback](Backend& backend, const std::string listener, const fplus::maybe<TreeNode> node) {
+    NodeListenerCallback wrapped_callback = [this, callback](Backend&, const std::string listener, const fplus::maybe<TreeNode> node) {
         std::lock_guard<std::mutex> notification_lock(notification_mutex_);
         NodeListenerCallbackArgs args = std::make_tuple(listener, node);
         notification_stack_.emplace_back(std::make_pair(std::move(args), callback));

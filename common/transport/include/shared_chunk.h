@@ -65,18 +65,21 @@ PODType pod_from_chunk(typename std::remove_const<PODType>::type &result, vector
 
 struct payload_chunk_header {
     payload_chunk_header() :
-        request_id(0), signal(0), data_length(0) {}
+        signal(0), request_id(0), data_length(0) {}
     payload_chunk_header(uint16_t request_id, uint8_t signal, uint16_t data_length)
-        : request_id(request_id), signal(signal), data_length(data_length) 
+        : signal(signal), request_id(request_id), data_length(data_length) 
         {
         }
     payload_chunk_header(payload_chunk_header const &other)
-        : request_id(other.request_id), signal(other.signal), data_length(other.data_length) {}
+        : signal(other.signal), request_id(other.request_id), data_length(other.data_length) {}
     payload_chunk_header const &operator=(payload_chunk_header const &other) {
-        request_id = other.request_id;
         signal = other.signal;
+        request_id = other.request_id;
         data_length = other.data_length;
         return *this;
+    }
+    void copy_partial_data(const uint8_t* data, size_t length) {
+        memcpy(this, data, min(length, sizeof(payload_chunk_header)));
     }
     size_t get_wire_size() const {
         return sizeof(payload_chunk_header) + data_length;
@@ -127,14 +130,18 @@ struct payload_chunk_header {
 };
 
 struct signal_chunk_header {
-    signal_chunk_header() : signal_type(GLOBAL_SIGNAL_TYPE), signal(0) {}
-    signal_chunk_header(uint64_t signal_value, uint64_t data_length) 
-        : signal_type(GLOBAL_SIGNAL_TYPE), signal(signal_value) {}
+    signal_chunk_header() : signal(0), request_id(0) {}
+    signal_chunk_header(uint16_t request_id, uint8_t signal) 
+        : signal(signal), request_id(request_id)  {}
     signal_chunk_header(signal_chunk_header const &other) 
-        : signal_type(GLOBAL_SIGNAL_TYPE), signal(other.signal) {}
+        : signal(other.signal), request_id(other.request_id)   {}
     signal_chunk_header const &operator=(signal_chunk_header const &other) {
         signal = other.signal;
+        request_id = other.request_id;
         return *this;
+    }
+    void copy_partial_data(const uint8_t* data, size_t length) {
+        memcpy(this, data, min(length, sizeof(signal_chunk_header)));
     }
     constexpr size_t get_wire_size() const {
         return sizeof(signal_chunk_header);
@@ -222,8 +229,7 @@ public:
             case signal_chunk_header::GLOBAL_SIGNAL_TYPE: {
                 size_t header_data_length = min(sizeof(signal_chunk_header), data.size());
                 signal_chunk_header header;
-                memset(&header, 0, sizeof(signal_chunk_header));
-                memcpy(&header, data.data(), header_data_length);
+                header.copy_partial_data(data.data(), header_data_length);
                 if (header_data_length == sizeof(signal_chunk_header))
                 {
                     auto remaining_data = data.subspan(sizeof(signal_chunk_header));
@@ -238,8 +244,7 @@ public:
             case payload_chunk_header::GLOBAL_SIGNAL_TYPE: {
                 size_t header_data_length = min(sizeof(payload_chunk_header), data.size());
                 payload_chunk_header header;
-                memset(&header, 0, sizeof(payload_chunk_header));
-                memcpy(&header, data.data(), header_data_length);
+                header.copy_partial_data(data.data(), header_data_length);
                 if (header_data_length == sizeof(payload_chunk_header))
                 {
                     auto remaining_data = data.subspan(sizeof(payload_chunk_header));

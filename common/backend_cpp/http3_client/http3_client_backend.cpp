@@ -674,7 +674,7 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
                 }
                 if (theMessage.isProcessingFinished()) {
                     // return signal_chunk_header::SIGNAL_CLOSE_STREAM
-                    signal_chunk_header signal(signal_chunk_header::SIGNAL_CLOSE_STREAM, 0);
+                    signal_chunk_header signal(stream_identifier.logical_id, signal_chunk_header::SIGNAL_CLOSE_STREAM);
                     request.push_back(shared_span<>(signal, true));
                     connector.deregisterResponseHandler(stream_identifier);
                 }
@@ -704,7 +704,7 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
                 }
                 if (theMessage.isProcessingFinished()) {
                     // return signal_chunk_header::SIGNAL_CLOSE_STREAM
-                    signal_chunk_header signal(signal_chunk_header::SIGNAL_CLOSE_STREAM, 0);
+                    signal_chunk_header signal(stream_identifier.logical_id, signal_chunk_header::SIGNAL_CLOSE_STREAM);
                     request.push_back(shared_span<>(signal, true));
                     connector.deregisterResponseHandler(stream_identifier);
                 }

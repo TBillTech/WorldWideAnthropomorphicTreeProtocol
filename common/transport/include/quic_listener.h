@@ -77,7 +77,7 @@ public:
                 }
             }
         }
-        return move(to_return);
+        return to_return;
     }
 
     bool noMoreChunks(vector<StreamIdentifier> const &sids) {

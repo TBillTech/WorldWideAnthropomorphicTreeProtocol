@@ -108,6 +108,9 @@ namespace
         }
         urlparse_url u;
         Request req{
+            .scheme = "",
+            .authority = "",
+            .path = "",
             .pri =
                 {
                     .urgency = -1,
@@ -354,7 +357,7 @@ void Stream::append_data(std::span<const uint8_t> data) {
 namespace
 {
     nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
-                            size_t veccnt, uint32_t *pflags, void *user_data,
+                            size_t veccnt, uint32_t *pflags, void *,
                             void *stream_user_data)
     {
         // First zero out the vec, for various cases where not all the data space is
@@ -370,7 +373,7 @@ namespace
         {
             return NGHTTP3_ERR_WOULDBLOCK;
         }
-        if (pending.first = 0) {
+        if (pending.first == 0) {
             is_closing = true;
         } else {
             is_closing = stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
@@ -412,7 +415,7 @@ bool Handler::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3
     std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
 
     // Ask the quic_listener_ for veccnt chunks
-    chunks to_send = std::move(server()->listener().popNOutgoingChunks(sids, veccnt));
+    chunks to_send = server()->listener().popNOutgoingChunks(sids, veccnt);
     bool signal_closed = server()->listener().noMoreChunks(sids);
     size_t vec_index = 0;
 
@@ -431,7 +434,7 @@ bool Handler::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3
     return signal_closed;
 }
 
-pair<size_t, vector<StreamIdentifier>> Handler::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
+pair<size_t, vector<StreamIdentifier>> Handler::get_pending_chunks_size(int64_t, size_t veccnt)
 {
     // This logic relies on the server receiving one or more chunks from the client.
     // However, it does not really matter how many or what request_ids the client sent for this purpose:  
@@ -478,7 +481,7 @@ namespace
 {
     nghttp3_ssize dyn_read_data(nghttp3_conn *conn, int64_t stream_id,
                                 nghttp3_vec *vec, size_t veccnt, uint32_t *pflags,
-                                void *user_data, void *stream_user_data)
+                                void *, void *stream_user_data)
     {
         // First zero out the vec, for various cases where not all the data space is
         std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
@@ -799,7 +802,7 @@ void Handler::writecb_start()
 
 namespace
 {
-    void writecb(struct ev_loop *loop, ev_io *w, int revents)
+    void writecb(struct ev_loop * /* loop */, ev_io *w, int /* revents */)
     {
         auto h = static_cast<Handler *>(w->data);
         auto s = h->server();
@@ -817,7 +820,7 @@ namespace
 
 namespace
 {
-    void close_waitcb(struct ev_loop *loop, ev_timer *w, int revents)
+    void close_waitcb(struct ev_loop * /* loop */, ev_timer *w, int /* revents */)
     {
         auto h = static_cast<Handler *>(w->data);
         auto s = h->server();
@@ -850,7 +853,7 @@ namespace
 
 namespace
 {
-    void timeoutcb(struct ev_loop *loop, ev_timer *w, int revents)
+    void timeoutcb(struct ev_loop *loop, ev_timer *w, int /* revents */)
     {
         int rv;
 
@@ -889,6 +892,8 @@ namespace
     }
 } // namespace
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 Handler::Handler(struct ev_loop *loop, Server *server)
     : loop_(loop),
       server_(server),
@@ -912,6 +917,7 @@ Handler::Handler(struct ev_loop *loop, Server *server)
     ev_timer_init(&timer_, timeoutcb, 0., 0.);
     timer_.data = this;
 }
+#pragma GCC diagnostic pop
 
 Handler::~Handler()
 {
@@ -1044,9 +1050,9 @@ namespace
 
 namespace
 {
-    int recv_stream_data(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
-                         uint64_t offset, const uint8_t *data, size_t datalen,
-                         void *user_data, void *stream_user_data)
+    int recv_stream_data(ngtcp2_conn *, uint32_t flags, int64_t stream_id,
+                         uint64_t /* offset */, const uint8_t *data, size_t datalen,
+                         void *user_data, void * /* stream_user_data */)
     {
         auto h = static_cast<Handler *>(user_data);
 
@@ -1061,9 +1067,9 @@ namespace
 
 namespace
 {
-    int acked_stream_data_offset(ngtcp2_conn *conn, int64_t stream_id,
-                                 uint64_t offset, uint64_t datalen, void *user_data,
-                                 void *stream_user_data)
+    int acked_stream_data_offset(ngtcp2_conn *, int64_t stream_id,
+                                 uint64_t /* offset */, uint64_t datalen, void *user_data,
+                                 void * /* stream_user_data */)
     {
         auto h = static_cast<Handler *>(user_data);
         if (h->acked_stream_data_offset(stream_id, datalen) != 0)
@@ -1094,7 +1100,7 @@ int Handler::acked_stream_data_offset(int64_t stream_id, uint64_t datalen)
 
 namespace
 {
-    int stream_open(ngtcp2_conn *conn, int64_t stream_id, void *user_data)
+    int stream_open(ngtcp2_conn *, int64_t stream_id, void *user_data)
     {
         auto h = static_cast<Handler *>(user_data);
         h->on_stream_open(stream_id);
@@ -1116,9 +1122,9 @@ void Handler::on_stream_open(int64_t stream_id)
 
 namespace
 {
-    int stream_close(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
+    int stream_close(ngtcp2_conn *, uint32_t flags, int64_t stream_id,
                      uint64_t app_error_code, void *user_data,
-                     void *stream_user_data)
+                     void */* stream_user_data */)
     {
         auto h = static_cast<Handler *>(user_data);
 
@@ -1137,9 +1143,9 @@ namespace
 
 namespace
 {
-    int stream_reset(ngtcp2_conn *conn, int64_t stream_id, uint64_t final_size,
-                     uint64_t app_error_code, void *user_data,
-                     void *stream_user_data)
+    int stream_reset(ngtcp2_conn *, int64_t stream_id, uint64_t /* final_size */,
+                     uint64_t /* app_error_code */, void * user_data,
+                     void */* stream_user_data */)
     {
         auto h = static_cast<Handler *>(user_data);
         if (h->on_stream_reset(stream_id) != 0)
@@ -1167,9 +1173,9 @@ int Handler::on_stream_reset(int64_t stream_id)
 
 namespace
 {
-    int stream_stop_sending(ngtcp2_conn *conn, int64_t stream_id,
-                            uint64_t app_error_code, void *user_data,
-                            void *stream_user_data)
+    int stream_stop_sending(ngtcp2_conn *, int64_t stream_id,
+                            uint64_t /* app_error_code */, void *user_data,
+                            void */* stream_user_data */)
     {
         auto h = static_cast<Handler *>(user_data);
         if (h->on_stream_stop_sending(stream_id) != 0)
@@ -1200,7 +1206,7 @@ int Handler::on_stream_stop_sending(int64_t stream_id)
 
 namespace
 {
-    void rand(uint8_t *dest, size_t destlen, const ngtcp2_rand_ctx *rand_ctx)
+    void rand(uint8_t *dest, size_t destlen, const ngtcp2_rand_ctx */* rand_ctx */)
     {
         auto dis = std::uniform_int_distribution<uint8_t>();
         std::generate(dest, dest + destlen, [&dis]()
@@ -1210,7 +1216,7 @@ namespace
 
 namespace
 {
-    int get_new_connection_id(ngtcp2_conn *conn, ngtcp2_cid *cid, uint8_t *token,
+    int get_new_connection_id(ngtcp2_conn *, ngtcp2_cid *cid, uint8_t *token,
                               size_t cidlen, void *user_data)
     {
         if (util::generate_secure_random({cid->data, cidlen}) != 0)
@@ -1235,7 +1241,7 @@ namespace
 
 namespace
 {
-    int remove_connection_id(ngtcp2_conn *conn, const ngtcp2_cid *cid,
+    int remove_connection_id(ngtcp2_conn *, const ngtcp2_cid *cid,
                              void *user_data)
     {
         auto h = static_cast<Handler *>(user_data);
@@ -1246,7 +1252,7 @@ namespace
 
 namespace
 {
-    int update_key(ngtcp2_conn *conn, uint8_t *rx_secret, uint8_t *tx_secret,
+    int update_key(ngtcp2_conn *, uint8_t *rx_secret, uint8_t *tx_secret,
                    ngtcp2_crypto_aead_ctx *rx_aead_ctx, uint8_t *rx_iv,
                    ngtcp2_crypto_aead_ctx *tx_aead_ctx, uint8_t *tx_iv,
                    const uint8_t *current_rx_secret,
@@ -1267,8 +1273,8 @@ namespace
 namespace
 {
     int path_validation(ngtcp2_conn *conn, uint32_t flags, const ngtcp2_path *path,
-                        const ngtcp2_path *old_path,
-                        ngtcp2_path_validation_result res, void *user_data)
+                        const ngtcp2_path */*old_path*/,
+                        ngtcp2_path_validation_result res, void */*user_data*/)
     {
         if (!config.quiet)
         {
@@ -1317,7 +1323,7 @@ namespace
 
 namespace
 {
-    int extend_max_remote_streams_bidi(ngtcp2_conn *conn, uint64_t max_streams,
+    int extend_max_remote_streams_bidi(ngtcp2_conn *, uint64_t max_streams,
                                        void *user_data)
     {
         auto h = static_cast<Handler *>(user_data);
@@ -1338,7 +1344,7 @@ void Handler::extend_max_remote_streams_bidi(uint64_t max_streams)
 
 namespace
 {
-    int http_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data,
+    int http_recv_data(nghttp3_conn *, int64_t stream_id, const uint8_t *data,
                        size_t datalen, void *user_data, void *stream_user_data)
     {
         // TODONE: Add this to the incoming chunks queue, instead of just printing it out
@@ -1360,9 +1366,9 @@ namespace
 
 namespace
 {
-    int http_deferred_consume(nghttp3_conn *conn, int64_t stream_id,
+    int http_deferred_consume(nghttp3_conn *, int64_t stream_id,
                               size_t nconsumed, void *user_data,
-                              void *stream_user_data)
+                              void */* stream_user_data */)
     {
         auto h = static_cast<Handler *>(user_data);
         h->http_consume(stream_id, nconsumed);
@@ -1378,8 +1384,8 @@ void Handler::http_consume(int64_t stream_id, size_t nconsumed)
 
 namespace
 {
-    int http_begin_request_headers(nghttp3_conn *conn, int64_t stream_id,
-                                   void *user_data, void *stream_user_data)
+    int http_begin_request_headers(nghttp3_conn *, int64_t stream_id,
+                                   void *user_data, void */* stream_user_data */)
     {
         if (!config.quiet)
         {
@@ -1403,7 +1409,7 @@ void Handler::http_begin_request_headers(int64_t stream_id)
 
 namespace
 {
-    int http_recv_request_header(nghttp3_conn *conn, int64_t stream_id,
+    int http_recv_request_header(nghttp3_conn *, int64_t stream_id,
                                  int32_t token, nghttp3_rcbuf *name,
                                  nghttp3_rcbuf *value, uint8_t flags,
                                  void *user_data, void *stream_user_data)
@@ -1421,7 +1427,7 @@ namespace
 } // namespace
 
 void Handler::http_recv_request_header(Stream *stream, int32_t token,
-                                       nghttp3_rcbuf *name,
+                                       nghttp3_rcbuf */* name */,
                                        nghttp3_rcbuf *value)
 {
     auto v = nghttp3_rcbuf_get_buf(value);
@@ -1443,7 +1449,7 @@ void Handler::http_recv_request_header(Stream *stream, int32_t token,
 
 namespace
 {
-    int http_end_request_headers(nghttp3_conn *conn, int64_t stream_id, int fin,
+    int http_end_request_headers(nghttp3_conn *, int64_t stream_id, int /* fin */,
                                  void *user_data, void *stream_user_data)
     {
         if (!config.quiet)
@@ -1477,7 +1483,7 @@ int Handler::http_end_request_headers(Stream *stream)
 
 namespace
 {
-    int http_end_stream(nghttp3_conn *conn, int64_t stream_id, void *user_data,
+    int http_end_stream(nghttp3_conn *, int64_t /* stream_id */, void *user_data,
                         void *stream_user_data)
     {
         auto h = static_cast<Handler *>(user_data);
@@ -1506,7 +1512,7 @@ int Handler::start_response(Stream *stream)
 
 namespace
 {
-    int http_acked_stream_data(nghttp3_conn *conn, int64_t stream_id,
+    int http_acked_stream_data(nghttp3_conn *, int64_t /* stream_id */,
                                uint64_t datalen, void *user_data,
                                void *stream_user_data)
     {
@@ -1539,9 +1545,9 @@ void Handler::http_acked_stream_data(Stream *stream, uint64_t datalen)
 
 namespace
 {
-    int http_stream_close(nghttp3_conn *conn, int64_t stream_id,
+    int http_stream_close(nghttp3_conn *, int64_t stream_id,
                           uint64_t app_error_code, void *conn_user_data,
-                          void *stream_user_data)
+                          void */* stream_user_data */)
     {
         auto h = static_cast<Handler *>(conn_user_data);
         h->http_stream_close(stream_id, app_error_code);
@@ -1574,9 +1580,9 @@ void Handler::http_stream_close(int64_t stream_id, uint64_t app_error_code)
 
 namespace
 {
-    int http_stop_sending(nghttp3_conn *conn, int64_t stream_id,
+    int http_stop_sending(nghttp3_conn *, int64_t stream_id,
                           uint64_t app_error_code, void *user_data,
-                          void *stream_user_data)
+                          void */* stream_user_data */)
     {
         auto h = static_cast<Handler *>(user_data);
         if (h->http_stop_sending(stream_id, app_error_code) != 0)
@@ -1602,9 +1608,9 @@ int Handler::http_stop_sending(int64_t stream_id, uint64_t app_error_code)
 
 namespace
 {
-    int http_reset_stream(nghttp3_conn *conn, int64_t stream_id,
+    int http_reset_stream(nghttp3_conn *, int64_t stream_id,
                           uint64_t app_error_code, void *user_data,
-                          void *stream_user_data)
+                          void */* stream_user_data */)
     {
         auto h = static_cast<Handler *>(user_data);
         if (h->http_reset_stream(stream_id, app_error_code) != 0)
@@ -1630,8 +1636,8 @@ int Handler::http_reset_stream(int64_t stream_id, uint64_t app_error_code)
 
 namespace
 {
-    int http_recv_settings(nghttp3_conn *conn, const nghttp3_settings *settings,
-                           void *conn_user_data)
+    int http_recv_settings(nghttp3_conn *, const nghttp3_settings *settings,
+                           void */* conn_user_data */)
     {
         if (!config.quiet)
         {
@@ -1656,6 +1662,8 @@ int Handler::setup_httpconn()
         return -1;
     }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
     nghttp3_callbacks callbacks{
         .acked_stream_data = ::http_acked_stream_data,
         .stream_close = ::http_stream_close,
@@ -1669,6 +1677,7 @@ int Handler::setup_httpconn()
         .reset_stream = ::http_reset_stream,
         .recv_settings = ::http_recv_settings,
     };
+#pragma GCC diagnostic pop
     nghttp3_settings settings;
     nghttp3_settings_default(&settings);
     settings.qpack_max_dtable_capacity = 4096;
@@ -1754,9 +1763,9 @@ int Handler::setup_httpconn()
 
 namespace
 {
-    int extend_max_stream_data(ngtcp2_conn *conn, int64_t stream_id,
+    int extend_max_stream_data(ngtcp2_conn *, int64_t stream_id,
                                uint64_t max_data, void *user_data,
-                               void *stream_user_data)
+                               void */* stream_user_data */)
     {
         auto h = static_cast<Handler *>(user_data);
         if (h->extend_max_stream_data(stream_id, max_data) != 0)
@@ -1767,7 +1776,7 @@ namespace
     }
 } // namespace
 
-int Handler::extend_max_stream_data(int64_t stream_id, uint64_t max_data)
+int Handler::extend_max_stream_data(int64_t stream_id, uint64_t /* max_data */)
 {
     if (auto rv = nghttp3_conn_unblock_stream(httpconn_, stream_id); rv != 0)
     {
@@ -1780,7 +1789,7 @@ int Handler::extend_max_stream_data(int64_t stream_id, uint64_t max_data)
 
 namespace
 {
-    int recv_tx_key(ngtcp2_conn *conn, ngtcp2_encryption_level level,
+    int recv_tx_key(ngtcp2_conn *, ngtcp2_encryption_level level,
                     void *user_data)
     {
         if (level != NGTCP2_ENCRYPTION_LEVEL_1RTT)
@@ -1800,7 +1809,7 @@ namespace
 
 namespace
 {
-    void write_qlog(void *user_data, uint32_t flags, const void *data,
+    void write_qlog(void *user_data, uint32_t /* flags */, const void *data,
                     size_t datalen)
     {
         auto h = static_cast<Handler *>(user_data);
@@ -1820,6 +1829,8 @@ int Handler::init(const Endpoint &ep, const Address &local_addr,
                   std::span<const uint8_t> token, ngtcp2_token_type token_type,
                   uint32_t version, TLSServerContext &tls_ctx)
 {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
     auto callbacks = ngtcp2_callbacks{
         .recv_client_initial = ngtcp2_crypto_recv_client_initial_cb,
         .recv_crypto_data = ::recv_crypto_data,
@@ -1846,6 +1857,7 @@ int Handler::init(const Endpoint &ep, const Address &local_addr,
         .version_negotiation = ngtcp2_crypto_version_negotiation_cb,
         .recv_tx_key = ::recv_tx_key,
     };
+#pragma GCC diagnostic pop
 
     scid_.datalen = NGTCP2_SV_SCIDLEN;
     if (util::generate_secure_random({scid_.data, scid_.datalen}) != 0)
@@ -2586,7 +2598,7 @@ int Handler::recv_stream_data(uint32_t flags, int64_t stream_id,
     {
         auto it = streams_.find(stream_id);
         assert(it != std::end(streams_));
-        auto &stream = (*it).second;
+        //auto &stream = (*it).second;
     }
     auto nconsumed =
         nghttp3_conn_read_stream(httpconn_, stream_id, data.data(), data.size(),
@@ -2689,7 +2701,7 @@ void Handler::shutdown_read(int64_t stream_id, int app_error_code)
 
 namespace
 {
-    void sreadcb(struct ev_loop *loop, ev_io *w, int revents)
+    void sreadcb(struct ev_loop */* loop */, ev_io *w, int /* revents */)
     {
         auto ep = static_cast<Endpoint *>(w->data);
 
@@ -2697,15 +2709,7 @@ namespace
     }
 } // namespace
 
-namespace
-{
-    void siginthandler(struct ev_loop *loop, ev_signal *watcher, int revents)
-    {
-        ev_break(loop, EVBREAK_ALL);
-    }
-} // namespace
-
-void sigterminatehandler(struct ev_loop *loop, ev_async *watcher, int revents)
+void sigterminatehandler(struct ev_loop *loop, ev_async */* watcher */, int /* revents */)
 {
     ev_break(loop, EVBREAK_ALL);
 }
@@ -2716,11 +2720,9 @@ Server::Server(struct ev_loop *loop, TLSServerContext &tls_ctx, QuicListener &li
       stateless_reset_bucket_(NGTCP2_STATELESS_RESET_BURST),
       listener_(listener)
 {
-    //ev_signal_init(&sigintev_, siginthandler, SIGINT);
-
     ev_timer_init(
         &stateless_reset_regen_timer_,
-        [](struct ev_loop *loop, ev_timer *w, int revents)
+        [](struct ev_loop */* loop */, ev_timer *w, int /* revents */)
         {
             auto server = static_cast<Server *>(w->data);
 
@@ -2774,11 +2776,14 @@ namespace
     int create_sock(Address &local_addr, const char *addr, const char *port,
                     int family)
     {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
         addrinfo hints{
             .ai_flags = AI_PASSIVE,
             .ai_family = family,
             .ai_socktype = SOCK_DGRAM,
         };
+#pragma GCC diagnostic pop
         addrinfo *res, *rp;
         int val = 1;
 
@@ -3022,12 +3027,15 @@ int Server::on_read(Endpoint &ep)
     uint8_t msg_ctrl[CMSG_SPACE(sizeof(int)) + CMSG_SPACE(sizeof(in6_pktinfo)) +
                      CMSG_SPACE(sizeof(int))];
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
     msghdr msg{
         .msg_name = &su,
         .msg_iov = &msg_iov,
         .msg_iovlen = 1,
         .msg_control = msg_ctrl,
     };
+#pragma GCC diagnostic pop
 
     for (; pktcnt < 10;)
     {
@@ -3815,6 +3823,8 @@ Server::send_packet(Endpoint &ep, bool &no_gso, const ngtcp2_addr &local_addr,
     uint8_t msg_ctrl[CMSG_SPACE(sizeof(int)) + CMSG_SPACE(sizeof(uint16_t)) +
                      CMSG_SPACE(sizeof(in6_pktinfo))]{};
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
     msghdr msg{
         .msg_name = const_cast<sockaddr *>(remote_addr.addr),
         .msg_namelen = remote_addr.addrlen,
@@ -3823,6 +3833,7 @@ Server::send_packet(Endpoint &ep, bool &no_gso, const ngtcp2_addr &local_addr,
         .msg_control = msg_ctrl,
         .msg_controllen = sizeof(msg_ctrl),
     };
+#pragma GCC diagnostic pop
 
     size_t controllen = 0;
 
@@ -3837,9 +3848,12 @@ Server::send_packet(Endpoint &ep, bool &no_gso, const ngtcp2_addr &local_addr,
         cm->cmsg_type = IP_PKTINFO;
         cm->cmsg_len = CMSG_LEN(sizeof(in_pktinfo));
         auto addrin = reinterpret_cast<sockaddr_in *>(local_addr.addr);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
         in_pktinfo pktinfo{
             .ipi_spec_dst = addrin->sin_addr,
         };
+#pragma GCC diagnostic pop
         memcpy(CMSG_DATA(cm), &pktinfo, sizeof(pktinfo));
 
         break;
@@ -3851,9 +3865,12 @@ Server::send_packet(Endpoint &ep, bool &no_gso, const ngtcp2_addr &local_addr,
         cm->cmsg_type = IPV6_PKTINFO;
         cm->cmsg_len = CMSG_LEN(sizeof(in6_pktinfo));
         auto addrin = reinterpret_cast<sockaddr_in6 *>(local_addr.addr);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
         in6_pktinfo pktinfo{
             .ipi6_addr = addrin->sin6_addr,
         };
+#pragma GCC diagnostic pop
         memcpy(CMSG_DATA(cm), &pktinfo, sizeof(pktinfo));
 
         break;
@@ -3997,125 +4014,7 @@ void Server::writecb_start(StreamIdentifier sid)
     h->writecb_start();
 }
 
-namespace
-{
-    int parse_host_port(Address &dest, int af, const char *first,
-                        const char *last)
-    {
-        if (std::distance(first, last) == 0)
-        {
-            return -1;
-        }
-
-        const char *host_begin, *host_end, *it;
-        if (*first == '[')
-        {
-            host_begin = first + 1;
-            it = std::find(host_begin, last, ']');
-            if (it == last)
-            {
-                return -1;
-            }
-            host_end = it;
-            ++it;
-            if (it == last || *it != ':')
-            {
-                return -1;
-            }
-        }
-        else
-        {
-            host_begin = first;
-            it = std::find(host_begin, last, ':');
-            if (it == last)
-            {
-                return -1;
-            }
-            host_end = it;
-        }
-
-        if (++it == last)
-        {
-            return -1;
-        }
-        auto svc_begin = it;
-
-        std::array<char, NI_MAXHOST> host;
-        *std::copy(host_begin, host_end, std::begin(host)) = '\0';
-
-        addrinfo hints{
-            .ai_family = af,
-            .ai_socktype = SOCK_DGRAM,
-        };
-        addrinfo *res;
-
-        if (auto rv = getaddrinfo(host.data(), svc_begin, &hints, &res); rv != 0)
-        {
-            std::cerr << "Server getaddrinfo: [" << host.data() << "]:" << svc_begin << ": "
-                      << gai_strerror(rv) << std::endl;
-            return -1;
-        }
-
-        dest.len = res->ai_addrlen;
-        memcpy(&dest.su, res->ai_addr, res->ai_addrlen);
-
-        freeaddrinfo(res);
-
-        return 0;
-    }
-} // namespace
-
-namespace
-{
-    const char *prog = "server";
-} // namespace
-
-namespace
-{
-    void print_usage()
-    {
-        std::cerr << "Server Usage: " << prog
-                  << " [OPTIONS] <ADDR> <PORT> <PRIVATE_KEY_FILE> "
-                     "<CERTIFICATE_FILE>"
-                  << std::endl;
-    }
-} // namespace
-
-namespace
-{
-    void config_set_default(Config &config)
-    {
-        auto path = realpath(".", nullptr);
-        assert(path);
-        auto htdocs = std::string(path);
-        free(path);
-
-        config = Config{
-            .tx_loss_prob = 0.,
-            .rx_loss_prob = 0.,
-            .ciphers = util::crypto_default_ciphers(),
-            .groups = util::crypto_default_groups(),
-            .htdocs = std::move(htdocs),
-            .mime_types_file = "/etc/mime.types",
-            .timeout = 30 * NGTCP2_SECONDS,
-            .max_data = 1_m,
-            .max_stream_data_bidi_remote = 256_k,
-            .max_stream_data_uni = 256_k,
-            .max_streams_bidi = 100,
-            .max_streams_uni = 3,
-            .max_window = 6_m,
-            .max_stream_window = 6_m,
-            .max_dyn_length = 20_m,
-            .cc_algo = NGTCP2_CC_ALGO_CUBIC,
-            .initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT,
-            .handshake_timeout = UINT64_MAX,
-            .ack_thresh = 2,
-            .initial_pkt_num = UINT32_MAX,
-        };
-    }
-} // namespace
-
-StreamIdentifier QuicListener::getNewRequestStreamIdentifier(Request const &req) {
+StreamIdentifier QuicListener::getNewRequestStreamIdentifier(Request const &) {
     throw std::runtime_error("Not implemented");
 }
 
@@ -4163,7 +4062,6 @@ bool QuicListener::processRequestStream() {
                 inserted.first->second.swap(processed);
             }
             else {
-                int chunk_count = 0;
                 for (auto &chunk : processed) {
                     outgoing->second.emplace_back(chunk);
                 }
@@ -4410,7 +4308,7 @@ void QuicListener::close()
     socket.close();
 }
 
-void QuicListener::connect(const string &peer_name, const string &peer_ip_addr, int peer_port)
+void QuicListener::connect(const string &, const string &, int)
 {
     // throw an exception, this is not supported
     throw std::runtime_error("QuicListener::connect is not supported");

@@ -41,7 +41,14 @@ class StreamIdentifier {
     StreamIdentifier(ngtcp2_cid cid, uint16_t logical_id) : cid(cid), logical_id(logical_id) {};
     StreamIdentifier(ngtcp2_cid cid, int64_t stream_id) = delete;
     StreamIdentifier(StreamIdentifier const &other) : cid(other.cid), logical_id(other.logical_id) {};
-        
+
+    StreamIdentifier& operator=(const StreamIdentifier& other) {
+        if (this != &other) {
+            cid = other.cid;
+            logical_id = other.logical_id;
+        }
+        return *this;
+    }        
     // cid is not needed for client side, since the client will know the scid already, 
     // but is important for server side to identify the handler object associated with the connection.
     ngtcp2_cid cid; 

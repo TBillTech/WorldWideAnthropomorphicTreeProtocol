@@ -2,10 +2,11 @@
 
 using namespace std;
 
-TreeNode::TreeNode() 
-    : label_rule(""), description(""),
-      literal_types(), child_names(), contents(global_no_chunk_header, false), 
-      version({0, 0, ""}) {}
+TreeNode::TreeNode()
+    : label_rule(""), description(""), literal_types({}), 
+      version(), child_names({}), contents(global_no_chunk_header, false),
+      query_how_to(fplus::maybe<string>()), qa_sequence(fplus::maybe<string>())
+    {}
 
 TreeNode::TreeNode(const std::string& label_rule, const std::string& description, 
         const std::vector<std::string>& literal_types,
@@ -44,10 +45,10 @@ TreeNode& TreeNode::operator=(const TreeNode& other) {
         label_rule = other.label_rule;
         description = other.description;
         literal_types = other.literal_types;
+        version = other.version;
         child_names = other.child_names;
         auto content_total_range = make_pair(0, other.contents.size());
         contents = move(other.contents.restrict(content_total_range));
-        version = other.version;
         query_how_to = other.query_how_to;
         qa_sequence = other.qa_sequence;
     }
@@ -59,6 +60,7 @@ TreeNode& TreeNode::operator=(TreeNode&& other) noexcept {
         label_rule = std::move(other.label_rule);
         description = std::move(other.description);
         literal_types = std::move(other.literal_types);
+        version = std::move(other.version);
         child_names = std::move(other.child_names);
         contents = std::move(other.contents);
         version = std::move(other.version);
@@ -70,17 +72,15 @@ TreeNode& TreeNode::operator=(TreeNode&& other) noexcept {
 
 TreeNode::TreeNode(TreeNode&& other) noexcept
     : label_rule(std::move(other.label_rule)), description(std::move(other.description)),
-      literal_types(std::move(other.literal_types)),
+      literal_types(std::move(other.literal_types)), version(std::move(other.version)),
       child_names(std::move(other.child_names)), contents(std::move(other.contents)),
-      version(std::move(other.version)),
       query_how_to(std::move(other.query_how_to)), qa_sequence(std::move(other.qa_sequence))
       {}
 
 TreeNode::TreeNode(const TreeNode& other)
     : label_rule(other.label_rule), description(other.description),
-      literal_types(other.literal_types),
+      literal_types(other.literal_types), version(other.version), 
       child_names(other.child_names), contents(other.contents),
-      version(other.version), 
       query_how_to(other.query_how_to), qa_sequence(other.qa_sequence)
       {}
 
@@ -149,7 +149,7 @@ std::vector<std::string> TreeNode::getAbsoluteChildNames() const {
     for (const auto& child_name : child_names) {
         absolute_child_names.push_back(label_rule + "/" + child_name);
     }
-    return move(absolute_child_names);
+    return absolute_child_names;
 }
 
 void TreeNode::setChildNames(const std::vector<std::string>& child_names) {

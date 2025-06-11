@@ -140,14 +140,14 @@ pair<size_t, vector<StreamIdentifier>> ClientStream::get_pending_chunks_size(int
 }
 
 void ClientStream::sendCloseSignal() {
-    auto signal = signal_chunk_header(stream_id, signal_chunk_header::SIGNAL_CLOSE_STREAM);
+    auto signal = signal_chunk_header(0, signal_chunk_header::SIGNAL_CLOSE_STREAM);
     shared_span<> chunk(signal, true);
     handler->push_incoming_chunk(move(chunk), req);
 }
 
 
 namespace {
-void writecb(struct ev_loop *loop, ev_io *w, int revents) {
+void writecb(struct ev_loop * /* loop */, ev_io *w, int /* revents */) {
   auto c = static_cast<Client *>(w->data);
 
   c->on_write();
@@ -155,7 +155,7 @@ void writecb(struct ev_loop *loop, ev_io *w, int revents) {
 } // namespace
 
 namespace {
-void readcb(struct ev_loop *loop, ev_io *w, int revents) {
+void readcb(struct ev_loop * /* loop */, ev_io *w, int /* revents*/) {
   auto ep = static_cast<Endpoint *>(w->data);
   auto c = ep->client;
 
@@ -168,7 +168,7 @@ void readcb(struct ev_loop *loop, ev_io *w, int revents) {
 } // namespace
 
 namespace {
-void timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
+void timeoutcb(struct ev_loop * /* loop */, ev_timer *w, int /* revents */) {
   int rv;
   auto c = static_cast<Client *>(w->data);
 
@@ -182,7 +182,7 @@ void timeoutcb(struct ev_loop *loop, ev_timer *w, int revents) {
 } // namespace
 
 namespace {
-void change_local_addrcb(struct ev_loop *loop, ev_timer *w, int revents) {
+void change_local_addrcb(struct ev_loop * /* loop */, ev_timer *w, int /*revents */) {
   auto c = static_cast<Client *>(w->data);
 
   c->change_local_addr();
@@ -190,7 +190,7 @@ void change_local_addrcb(struct ev_loop *loop, ev_timer *w, int revents) {
 } // namespace
 
 namespace {
-void key_updatecb(struct ev_loop *loop, ev_timer *w, int revents) {
+void key_updatecb(struct ev_loop * /* loop */, ev_timer *w, int /*revents */) {
   auto c = static_cast<Client *>(w->data);
 
   if (c->initiate_key_update() != 0) {
@@ -200,7 +200,7 @@ void key_updatecb(struct ev_loop *loop, ev_timer *w, int revents) {
 } // namespace
 
 namespace {
-void delay_streamcb(struct ev_loop *loop, ev_timer *w, int revents) {
+void delay_streamcb(struct ev_loop * loop, ev_timer *w, int /*revents */) {
   auto c = static_cast<Client *>(w->data);
 
   ev_timer_stop(loop, w);
@@ -210,7 +210,7 @@ void delay_streamcb(struct ev_loop *loop, ev_timer *w, int revents) {
 } // namespace
 
 namespace {
-void check_streamcb(struct ev_loop *loop, ev_timer *w, int revents) {
+void check_streamcb(struct ev_loop * /* loop */, ev_timer *w, int /*revents */) {
     auto c = static_cast<Client *>(w->data);
 
     c->check_and_create_streams();
@@ -218,7 +218,7 @@ void check_streamcb(struct ev_loop *loop, ev_timer *w, int revents) {
 } // namespace  
 
 namespace {
-void siginthandler(struct ev_loop *loop, ev_signal *w, int revents) {
+void siginthandler(struct ev_loop *loop, ev_signal */* w */, int /* revents */) {
   ev_break(loop, EVBREAK_ALL);
 }
 } // namespace
@@ -313,9 +313,9 @@ int recv_crypto_data(ngtcp2_conn *conn,
 } // namespace
 
 namespace {
-int recv_stream_data(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
-                     uint64_t offset, const uint8_t *data, size_t datalen,
-                     void *user_data, void *stream_user_data) {
+int recv_stream_data(ngtcp2_conn *, uint32_t flags, int64_t stream_id,
+                     uint64_t /* offset */, const uint8_t *data, size_t datalen,
+                     void *user_data, void */*stream_user_data*/) {
   if (!config.quiet && !config.no_quic_dump) {
     debug::print_stream_data(stream_id, {data, datalen});
   }
@@ -331,9 +331,9 @@ int recv_stream_data(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
 } // namespace
 
 namespace {
-int acked_stream_data_offset(ngtcp2_conn *conn, int64_t stream_id,
-                             uint64_t offset, uint64_t datalen, void *user_data,
-                             void *stream_user_data) {
+int acked_stream_data_offset(ngtcp2_conn *, int64_t stream_id,
+                             uint64_t /* offset */, uint64_t datalen, void *user_data,
+                             void * /*stream_user_data */) {
   auto c = static_cast<Client *>(user_data);
   if (c->acked_stream_data_offset(stream_id, datalen) != 0) {
     return NGTCP2_ERR_CALLBACK_FAILURE;
@@ -451,7 +451,7 @@ int Client::handshake_confirmed() {
 }
 
 namespace {
-int recv_version_negotiation(ngtcp2_conn *conn, const ngtcp2_pkt_hd *hd,
+int recv_version_negotiation(ngtcp2_conn *, const ngtcp2_pkt_hd * /* hd */,
                              const uint32_t *sv, size_t nsv, void *user_data) {
   auto c = static_cast<Client *>(user_data);
 
@@ -467,9 +467,9 @@ void Client::recv_version_negotiation(const uint32_t *sv, size_t nsv) {
 }
 
 namespace {
-int stream_close(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
+int stream_close(ngtcp2_conn *, uint32_t flags, int64_t stream_id,
                  uint64_t app_error_code, void *user_data,
-                 void *stream_user_data) {
+                 void * /* stream_user_data */) {
   auto c = static_cast<Client *>(user_data);
 
   if (!(flags & NGTCP2_STREAM_CLOSE_FLAG_APP_ERROR_CODE_SET)) {
@@ -485,9 +485,9 @@ int stream_close(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
 } // namespace
 
 namespace {
-int stream_reset(ngtcp2_conn *conn, int64_t stream_id, uint64_t final_size,
-                 uint64_t app_error_code, void *user_data,
-                 void *stream_user_data) {
+int stream_reset(ngtcp2_conn *, int64_t stream_id, uint64_t /* final_size */,
+                 uint64_t /* app_error_code */, void *user_data,
+                 void */* stream_user_data */) {
   auto c = static_cast<Client *>(user_data);
 
   if (c->on_stream_reset(stream_id) != 0) {
@@ -499,9 +499,9 @@ int stream_reset(ngtcp2_conn *conn, int64_t stream_id, uint64_t final_size,
 } // namespace
 
 namespace {
-int stream_stop_sending(ngtcp2_conn *conn, int64_t stream_id,
-                        uint64_t app_error_code, void *user_data,
-                        void *stream_user_data) {
+int stream_stop_sending(ngtcp2_conn *, int64_t stream_id,
+                        uint64_t /* app_error_code */, void *user_data,
+                        void */*stream_user_data*/) {
   auto c = static_cast<Client *>(user_data);
 
   if (c->on_stream_stop_sending(stream_id) != 0) {
@@ -513,7 +513,7 @@ int stream_stop_sending(ngtcp2_conn *conn, int64_t stream_id,
 } // namespace
 
 namespace {
-int extend_max_local_streams_bidi(ngtcp2_conn *conn, uint64_t max_streams,
+int extend_max_local_streams_bidi(ngtcp2_conn *, uint64_t /* max_streams */,
                                   void *user_data) {
   auto c = static_cast<Client *>(user_data);
 
@@ -526,15 +526,15 @@ int extend_max_local_streams_bidi(ngtcp2_conn *conn, uint64_t max_streams,
 } // namespace
 
 namespace {
-void rand(uint8_t *dest, size_t destlen, const ngtcp2_rand_ctx *rand_ctx) {
+void rand(uint8_t *dest, size_t destlen, const ngtcp2_rand_ctx */* rand_ctx */) {
   auto dis = std::uniform_int_distribution<uint8_t>();
   std::generate(dest, dest + destlen, [&dis]() { return dis(randgen); });
 }
 } // namespace
 
 namespace {
-int get_new_connection_id(ngtcp2_conn *conn, ngtcp2_cid *cid, uint8_t *token,
-                          size_t cidlen, void *user_data) {
+int get_new_connection_id(ngtcp2_conn *, ngtcp2_cid *cid, uint8_t *token,
+                          size_t cidlen, void * /* user_data */) {
   if (util::generate_secure_random({cid->data, cidlen}) != 0) {
     return NGTCP2_ERR_CALLBACK_FAILURE;
   }
@@ -567,7 +567,7 @@ int do_hp_mask(uint8_t *dest, const ngtcp2_crypto_cipher *hp,
 } // namespace
 
 namespace {
-int update_key(ngtcp2_conn *conn, uint8_t *rx_secret, uint8_t *tx_secret,
+int update_key(ngtcp2_conn *, uint8_t *rx_secret, uint8_t *tx_secret,
                ngtcp2_crypto_aead_ctx *rx_aead_ctx, uint8_t *rx_iv,
                ngtcp2_crypto_aead_ctx *tx_aead_ctx, uint8_t *tx_iv,
                const uint8_t *current_rx_secret,
@@ -586,8 +586,8 @@ int update_key(ngtcp2_conn *conn, uint8_t *rx_secret, uint8_t *tx_secret,
 } // namespace
 
 namespace {
-int path_validation(ngtcp2_conn *conn, uint32_t flags, const ngtcp2_path *path,
-                    const ngtcp2_path *old_path,
+int path_validation(ngtcp2_conn *, uint32_t flags, const ngtcp2_path *path,
+                    const ngtcp2_path */*old_path*/,
                     ngtcp2_path_validation_result res, void *user_data) {
   if (!config.quiet) {
     debug::path_validation(path, res);
@@ -609,7 +609,7 @@ void Client::set_remote_addr(const ngtcp2_addr &remote_addr) {
 }
 
 namespace {
-int select_preferred_address(ngtcp2_conn *conn, ngtcp2_path *dest,
+int select_preferred_address(ngtcp2_conn *, ngtcp2_path *dest,
                              const ngtcp2_preferred_addr *paddr,
                              void *user_data) {
   auto c = static_cast<Client *>(user_data);
@@ -637,9 +637,9 @@ int select_preferred_address(ngtcp2_conn *conn, ngtcp2_path *dest,
 } // namespace
 
 namespace {
-int extend_max_stream_data(ngtcp2_conn *conn, int64_t stream_id,
+int extend_max_stream_data(ngtcp2_conn *, int64_t stream_id,
                            uint64_t max_data, void *user_data,
-                           void *stream_user_data) {
+                           void * /*stream_user_data*/) {
   auto c = static_cast<Client *>(user_data);
   if (c->extend_max_stream_data(stream_id, max_data) != 0) {
     return NGTCP2_ERR_CALLBACK_FAILURE;
@@ -648,7 +648,7 @@ int extend_max_stream_data(ngtcp2_conn *conn, int64_t stream_id,
 }
 } // namespace
 
-int Client::extend_max_stream_data(int64_t stream_id, uint64_t max_data) {
+int Client::extend_max_stream_data(int64_t stream_id, uint64_t /* max_data */) {
   if (auto rv = nghttp3_conn_unblock_stream(httpconn_, stream_id); rv != 0) {
     std::cerr << "Client nghttp3_conn_unblock_stream: " << nghttp3_strerror(rv)
               << std::endl;
@@ -658,8 +658,8 @@ int Client::extend_max_stream_data(int64_t stream_id, uint64_t max_data) {
 }
 
 namespace {
-int recv_new_token(ngtcp2_conn *conn, const uint8_t *token, size_t tokenlen,
-                   void *user_data) {
+int recv_new_token(ngtcp2_conn *, const uint8_t *token, size_t tokenlen,
+                   void */* user_data */) {
   if (config.token_file.empty()) {
     return 0;
   }
@@ -671,7 +671,7 @@ int recv_new_token(ngtcp2_conn *conn, const uint8_t *token, size_t tokenlen,
 } // namespace
 
 namespace {
-int recv_rx_key(ngtcp2_conn *conn, ngtcp2_encryption_level level,
+int recv_rx_key(ngtcp2_conn *, ngtcp2_encryption_level level,
                 void *user_data) {
   if (level != NGTCP2_ENCRYPTION_LEVEL_1RTT) {
     return 0;
@@ -687,7 +687,7 @@ int recv_rx_key(ngtcp2_conn *conn, ngtcp2_encryption_level level,
 } // namespace
 
 namespace {
-int early_data_rejected(ngtcp2_conn *conn, void *user_data) {
+int early_data_rejected(ngtcp2_conn *, void *user_data) {
   auto c = static_cast<Client *>(user_data);
 
   c->early_data_rejected();
@@ -721,7 +721,10 @@ int Client::init(int fd, const Address &local_addr, const Address &remote_addr,
   addr_ = addr;
   port_ = port;
 
-  auto callbacks = ngtcp2_callbacks{
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
+auto callbacks = ngtcp2_callbacks{
     .client_initial = ngtcp2_crypto_client_initial_cb,
     .recv_crypto_data = ::recv_crypto_data,
     .handshake_completed = ::handshake_completed,
@@ -750,7 +753,9 @@ int Client::init(int fd, const Address &local_addr, const Address &remote_addr,
     .version_negotiation = ngtcp2_crypto_version_negotiation_cb,
     .recv_rx_key = ::recv_rx_key,
     .tls_early_data_rejected = ::early_data_rejected,
-  };
+};
+
+#pragma GCC diagnostic pop
 
   ngtcp2_cid scid, dcid;
   if (config.scid_present) {
@@ -962,12 +967,16 @@ int Client::on_read(const Endpoint &ep) {
 
   uint8_t msg_ctrl[CMSG_SPACE(sizeof(int)) + CMSG_SPACE(sizeof(int))];
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
   msghdr msg{
     .msg_name = &su,
     .msg_iov = &msg_iov,
     .msg_iovlen = 1,
     .msg_control = msg_ctrl,
   };
+#pragma GCC diagnostic pop
 
   for (;;) {
     msg.msg_namelen = sizeof(su);
@@ -1405,10 +1414,14 @@ int udp_sock(int family) {
 
 namespace {
 int create_sock(Address &remote_addr, const char *addr, const char *port) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
   addrinfo hints{
     .ai_family = AF_UNSPEC,
     .ai_socktype = SOCK_DGRAM,
   };
+#pragma GCC diagnostic pop
   addrinfo *res, *rp;
 
   if (auto rv = getaddrinfo(addr, port, &hints, &res); rv != 0) {
@@ -1672,6 +1685,9 @@ Client::send_packet(const Endpoint &ep, const ngtcp2_addr &remote_addr,
 
   uint8_t msg_ctrl[CMSG_SPACE(sizeof(int)) + CMSG_SPACE(sizeof(uint16_t))]{};
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
   msghdr msg{
 #ifdef HAVE_LINUX_RTNETLINK_H
     .msg_name = const_cast<sockaddr *>(remote_addr.addr),
@@ -1682,6 +1698,8 @@ Client::send_packet(const Endpoint &ep, const ngtcp2_addr &remote_addr,
     .msg_control = msg_ctrl,
     .msg_controllen = sizeof(msg_ctrl),
   };
+
+#pragma GCC diagnostic pop
 
   size_t controllen = 0;
 
@@ -1970,7 +1988,7 @@ bool Client::lock_outgoing_chunks(chunks &locked_chunks, vector<StreamIdentifier
     std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
 
     // Ask the quic_connector_ for veccnt chunks
-    chunks to_send = std::move(quic_connector_.popNOutgoingChunks(sids, veccnt));
+    chunks to_send = quic_connector_.popNOutgoingChunks(sids, veccnt);
     bool signal_closed = quic_connector_.noMoreChunks(sids);
     size_t vec_index = 0;
 
@@ -1987,7 +2005,7 @@ bool Client::lock_outgoing_chunks(chunks &locked_chunks, vector<StreamIdentifier
     return signal_closed;
 }
 
-pair<size_t, vector<StreamIdentifier>> Client::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
+pair<size_t, vector<StreamIdentifier>> Client::get_pending_chunks_size(int64_t /* stream_id */, size_t veccnt)
 {
     // Simply ask the quic_connector_ for the size of the pending chunks
     return quic_connector_.planForNOutgoingChunks(get_dcid(), veccnt);
@@ -2027,7 +2045,7 @@ void Client::push_incoming_chunk(shared_span<> &&chunk, Request const &req)
 
 namespace {
 nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
-                        size_t veccnt, uint32_t *pflags, void *user_data,
+                        size_t veccnt, uint32_t *pflags, void * /* user_data */,
                         void *stream_user_data) {
     // First zero out the vec, for various cases where not all the data space is used.
     std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
@@ -2080,7 +2098,7 @@ namespace
 {
     nghttp3_ssize dyn_read_data(nghttp3_conn *conn, int64_t stream_id,
                                 nghttp3_vec *vec, size_t veccnt, uint32_t *pflags,
-                                void *user_data, void *stream_user_data)
+                                void */* user_data */, void *stream_user_data)
     {
         // First zero out the vec, for various cases where not all the data space is used.
         std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
@@ -2178,7 +2196,7 @@ int Client::recv_stream_data(uint32_t flags, int64_t stream_id,
     {
         auto it = streams_.find(stream_id);
         assert(it != std::end(streams_));
-        auto &client_stream = (*it).second;
+        //auto &client_stream = (*it).second;
     }
     auto nconsumed =
         nghttp3_conn_read_stream(httpconn_, stream_id, data.data(), data.size(),
@@ -2250,7 +2268,7 @@ int Client::select_preferred_address(Address &selected_addr,
 }
 
 namespace {
-int http_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data,
+int http_recv_data(nghttp3_conn *, int64_t stream_id, const uint8_t *data,
                    size_t datalen, void *user_data, void *stream_user_data) {
     // TODONE: Put the data into the incomingChunks
     auto stream = static_cast<ClientStream *>(stream_user_data);
@@ -2272,9 +2290,9 @@ int http_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data,
 } // namespace
 
 namespace {
-int http_deferred_consume(nghttp3_conn *conn, int64_t stream_id,
+int http_deferred_consume(nghttp3_conn *, int64_t stream_id,
                           size_t nconsumed, void *user_data,
-                          void *stream_user_data) {
+                          void */* stream_user_data */) {
   auto c = static_cast<Client *>(user_data);
   c->http_consume(stream_id, nconsumed);
   return 0;
@@ -2305,8 +2323,8 @@ void Client::http_write_data(int64_t stream_id, std::span<const uint8_t> data) {
 }
 
 namespace {
-int http_begin_headers(nghttp3_conn *conn, int64_t stream_id, void *user_data,
-                       void *stream_user_data) {
+int http_begin_headers(nghttp3_conn *, int64_t stream_id, void */*user_data*/,
+                       void */*stream_user_data*/) {
   if (!config.quiet) {
     debug::print_http_begin_response_headers(stream_id);
   }
@@ -2315,9 +2333,9 @@ int http_begin_headers(nghttp3_conn *conn, int64_t stream_id, void *user_data,
 } // namespace
 
 namespace {
-int http_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
+int http_recv_header(nghttp3_conn *, int64_t stream_id, int32_t /* token */,
                      nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags,
-                     void *user_data, void *stream_user_data) {
+                     void */*user_data*/, void */*stream_user_data*/) {
   if (!config.quiet) {
     debug::print_http_header(stream_id, name, value, flags);
   }
@@ -2326,8 +2344,8 @@ int http_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
 } // namespace
 
 namespace {
-int http_end_headers(nghttp3_conn *conn, int64_t stream_id, int fin,
-                     void *user_data, void *stream_user_data) {
+int http_end_headers(nghttp3_conn *, int64_t stream_id, int /* fin */,
+                     void */* user_data */, void */* stream_user_data */) {
   if (!config.quiet) {
     debug::print_http_end_headers(stream_id);
   }
@@ -2336,8 +2354,8 @@ int http_end_headers(nghttp3_conn *conn, int64_t stream_id, int fin,
 } // namespace
 
 namespace {
-int http_begin_trailers(nghttp3_conn *conn, int64_t stream_id, void *user_data,
-                        void *stream_user_data) {
+int http_begin_trailers(nghttp3_conn *, int64_t stream_id, void */* user_data */,
+                        void */* stream_user_data */) {
   if (!config.quiet) {
     debug::print_http_begin_trailers(stream_id);
   }
@@ -2346,9 +2364,9 @@ int http_begin_trailers(nghttp3_conn *conn, int64_t stream_id, void *user_data,
 } // namespace
 
 namespace {
-int http_recv_trailer(nghttp3_conn *conn, int64_t stream_id, int32_t token,
+int http_recv_trailer(nghttp3_conn *, int64_t stream_id, int32_t /* token */,
                       nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags,
-                      void *user_data, void *stream_user_data) {
+                      void */* user_data */, void */* stream_user_data */) {
   if (!config.quiet) {
     debug::print_http_header(stream_id, name, value, flags);
   }
@@ -2357,8 +2375,8 @@ int http_recv_trailer(nghttp3_conn *conn, int64_t stream_id, int32_t token,
 } // namespace
 
 namespace {
-int http_end_trailers(nghttp3_conn *conn, int64_t stream_id, int fin,
-                      void *user_data, void *stream_user_data) {
+int http_end_trailers(nghttp3_conn *, int64_t stream_id, int /* fin */,
+                      void */* user_data */, void */*stream_user_data*/) {
   if (!config.quiet) {
     debug::print_http_end_trailers(stream_id);
   }
@@ -2367,9 +2385,9 @@ int http_end_trailers(nghttp3_conn *conn, int64_t stream_id, int fin,
 } // namespace
 
 namespace {
-int http_stop_sending(nghttp3_conn *conn, int64_t stream_id,
+int http_stop_sending(nghttp3_conn *, int64_t stream_id,
                       uint64_t app_error_code, void *user_data,
-                      void *stream_user_data) {
+                      void */* stream_user_data */) {
   auto c = static_cast<Client *>(user_data);
   if (c->stop_sending(stream_id, app_error_code) != 0) {
     return NGHTTP3_ERR_CALLBACK_FAILURE;
@@ -2390,9 +2408,9 @@ int Client::stop_sending(int64_t stream_id, uint64_t app_error_code) {
 }
 
 namespace {
-int http_reset_stream(nghttp3_conn *conn, int64_t stream_id,
+int http_reset_stream(nghttp3_conn *, int64_t stream_id,
                       uint64_t app_error_code, void *user_data,
-                      void *stream_user_data) {
+                      void */* stream_user_data */) {
   auto c = static_cast<Client *>(user_data);
   if (c->reset_stream(stream_id, app_error_code) != 0) {
     return NGHTTP3_ERR_CALLBACK_FAILURE;
@@ -2413,9 +2431,9 @@ int Client::reset_stream(int64_t stream_id, uint64_t app_error_code) {
 }
 
 namespace {
-int http_stream_close(nghttp3_conn *conn, int64_t stream_id,
+int http_stream_close(nghttp3_conn *, int64_t stream_id,
                       uint64_t app_error_code, void *conn_user_data,
-                      void *stream_user_data) {
+                      void */* stream_user_data */) {
   auto c = static_cast<Client *>(conn_user_data);
   if (c->http_stream_close(stream_id, app_error_code) != 0) {
     return NGHTTP3_ERR_CALLBACK_FAILURE;
@@ -2452,8 +2470,8 @@ int Client::http_stream_close(int64_t stream_id, uint64_t app_error_code) {
 }
 
 namespace {
-int http_recv_settings(nghttp3_conn *conn, const nghttp3_settings *settings,
-                       void *conn_user_data) {
+int http_recv_settings(nghttp3_conn *, const nghttp3_settings *settings,
+                       void */*conn_user_data*/) {
   if (!config.quiet) {
     debug::print_http_settings(settings);
   }
@@ -2473,6 +2491,8 @@ int Client::setup_httpconn() {
     return -1;
   }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
   nghttp3_callbacks callbacks{
     .stream_close = ::http_stream_close,
     .recv_data = ::http_recv_data,
@@ -2487,6 +2507,8 @@ int Client::setup_httpconn() {
     .reset_stream = ::http_reset_stream,
     .recv_settings = ::http_recv_settings,
   };
+#pragma GCC diagnostic pop
+
   nghttp3_settings settings;
   nghttp3_settings_default(&settings);
   settings.qpack_max_dtable_capacity = 4_k;
@@ -2623,338 +2645,6 @@ int run(Client &c, struct ev_loop *loop, const char *addr, const char *port,
 }
 } // namespace
 
-namespace {
-std::string_view get_string(const char *uri, const urlparse_url &u,
-                            urlparse_url_fields f) {
-  auto p = &u.field_data[f];
-  return {uri + p->off, p->len};
-}
-} // namespace
-
-namespace {
-int parse_uri(Request &req, const char *uri) {
-  urlparse_url u;
-
-  if (urlparse_parse_url(uri, strlen(uri), /* is_connect = */ 0, &u) != 0) {
-    return -1;
-  }
-
-  if (!(u.field_set & (1 << URLPARSE_SCHEMA)) ||
-      !(u.field_set & (1 << URLPARSE_HOST))) {
-    return -1;
-  }
-
-  req.scheme = get_string(uri, u, URLPARSE_SCHEMA);
-
-  auto host = std::string(get_string(uri, u, URLPARSE_HOST));
-  if (util::numeric_host(host.c_str(), AF_INET6)) {
-    req.authority = '[';
-    req.authority += host;
-    req.authority += ']';
-  } else {
-    req.authority = std::move(host);
-  }
-
-  if (u.field_set & (1 << URLPARSE_PORT)) {
-    req.authority += ':';
-    req.authority += get_string(uri, u, URLPARSE_PORT);
-  }
-
-  if (u.field_set & (1 << URLPARSE_PATH)) {
-    req.path = get_string(uri, u, URLPARSE_PATH);
-  } else {
-    req.path = "/";
-  }
-
-  if (u.field_set & (1 << URLPARSE_QUERY)) {
-    req.path += '?';
-    req.path += get_string(uri, u, URLPARSE_QUERY);
-  }
-
-  return 0;
-}
-} // namespace
-
-namespace {
-int parse_requests(char **argv, size_t argvlen) {
-  for (size_t i = 0; i < argvlen; ++i) {
-    auto uri = argv[i];
-    Request req;
-    if (parse_uri(req, uri) != 0) {
-      std::cerr << "Client Could not parse URI: " << uri << std::endl;
-      return -1;
-    }
-    config.requests.emplace_back(std::move(req));
-  }
-  return 0;
-}
-} // namespace
-
-namespace {
-const char *prog = "client";
-} // namespace
-
-namespace {
-void print_usage() {
-  std::cerr << "Client Usage: " << prog << " [OPTIONS] <HOST> <PORT> [<URI>...]"
-            << std::endl;
-}
-} // namespace
-
-namespace {
-void config_set_default(Config &config) {
-  config = Config{
-    .tx_loss_prob = 0.,
-    .rx_loss_prob = 0.,
-    .fd = -1,
-    .ciphers = util::crypto_default_ciphers(),
-    .groups = util::crypto_default_groups(),
-    .version = NGTCP2_PROTO_VER_V1,
-    .timeout = 30 * NGTCP2_SECONDS,
-    .http_method = "GET"sv,
-    .max_data = 24_m,
-    .max_stream_data_bidi_local = 16_m,
-    .max_stream_data_uni = 16_m,
-    .max_streams_uni = 100,
-    .cc_algo = NGTCP2_CC_ALGO_CUBIC,
-    .initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT,
-    .handshake_timeout = UINT64_MAX,
-    .ack_thresh = 2,
-    .initial_pkt_num = UINT32_MAX,
-  };
-}
-} // namespace
-
-namespace {
-void print_help() {
-  print_usage();
-
-  config_set_default(config);
-
-  std::cout << R"(
-  <HOST>      Remote server host (DNS name or IP address).  In case of
-              DNS name, it will be sent in TLS SNI extension.
-  <PORT>      Remote server port
-  <URI>       Remote URI
-Options:
-  -t, --tx-loss=<P>
-              The probability of losing outgoing packets.  <P> must be
-              [0.0, 1.0],  inclusive.  0.0 means no  packet loss.  1.0
-              means 100% packet loss.
-  -r, --rx-loss=<P>
-              The probability of losing incoming packets.  <P> must be
-              [0.0, 1.0],  inclusive.  0.0 means no  packet loss.  1.0
-              means 100% packet loss.
-  -d, --data=<PATH>
-              Read data from <PATH>, and send them as STREAM data.
-  -n, --nstreams=<N>
-              The number of requests.  <URI>s are used in the order of
-              appearance in the command-line.   If the number of <URI>
-              list  is  less than  <N>,  <URI>  list is  wrapped.   It
-              defaults to 0 which means the number of <URI> specified.
-  -v, --version=<HEX>
-              Specify QUIC version to use in hex string.  If the given
-              version is  not supported by libngtcp2,  client will use
-              QUIC v1  long packet  types.  Instead of  specifying hex
-              string,  there  are   special  aliases  available:  "v1"
-              indicates QUIC v1, and "v2" indicates QUIC v2.
-              Default: )"
-            << std::hex << "0x" << config.version << std::dec << R"(
-  --preferred-versions=<HEX>[[,<HEX>]...]
-              Specify  QUIC versions  in hex  string in  the order  of
-              preference.   Client chooses  one of  those versions  if
-              client received Version  Negotiation packet from server.
-              These versions must be  supported by libngtcp2.  Instead
-              of  specifying hex  string,  there  are special  aliases
-              available: "v1"  indicates QUIC  v1, and  "v2" indicates
-              QUIC v2.
-  --available-versions=<HEX>[[,<HEX>]...]
-              Specify QUIC  versions in  hex string  that are  sent in
-              available_versions    field    of    version_information
-              transport parameter.   This list  can include  a version
-              which  is  not  supported   by  libngtcp2.   Instead  of
-              specifying  hex   string,  there  are   special  aliases
-              available: "v1"  indicates QUIC  v1, and  "v2" indicates
-              QUIC v2.
-  -q, --quiet Suppress debug output.
-  -s, --show-secret
-              Print out secrets unless --quiet is used.
-  --timeout=<DURATION>
-              Specify idle timeout.
-              Default: )"
-            << util::format_duration(config.timeout) << R"(
-  --ciphers=<CIPHERS>
-              Specify the cipher suite list to enable.
-              Default: )"
-            << config.ciphers << R"(
-  --groups=<GROUPS>
-              Specify the supported groups.
-              Default: )"
-            << config.groups << R"(
-  --session-file=<PATH>
-              Read/write  TLS session  from/to  <PATH>.   To resume  a
-              session, the previous session must be supplied with this
-              option.
-  --tp-file=<PATH>
-              Read/write QUIC transport parameters from/to <PATH>.  To
-              send 0-RTT data, the  transport parameters received from
-              the previous session must be supplied with this option.
-  --dcid=<DCID>
-              Specify  initial  DCID.   <DCID> is  hex  string.   When
-              decoded as binary, it should be  at least 8 bytes and at
-              most 18 bytes long.
-  --scid=<SCID>
-              Specify source connection ID.  <SCID> is hex string.  If
-              an empty string  is given, zero length  connection ID is
-              assumed.
-  --change-local-addr=<DURATION>
-              Client  changes  local  address when  <DURATION>  elapse
-              after handshake completes.
-  --nat-rebinding
-              When   used  with   --change-local-addr,  simulate   NAT
-              rebinding.   In   other  words,  client   changes  local
-              address, but it does not start path validation.
-  --key-update=<DURATION>
-              Client initiates key update when <DURATION> elapse after
-              handshake completes.
-  -m, --http-method=<METHOD>
-              Specify HTTP method.  Default: )"
-            << config.http_method << R"(
-  --delay-stream=<DURATION>
-              Delay sending STREAM data  in 1-RTT for <DURATION> after
-              handshake completes.
-  --no-preferred-addr
-              Do not try to use preferred address offered by server.
-  --key=<PATH>
-              The path to client private key PEM file.
-  --cert=<PATH>
-              The path to client certificate PEM file.
-  --download=<PATH>
-              The path to the directory  to save a downloaded content.
-              It is  undefined if 2  concurrent requests write  to the
-              same file.   If a request  path does not contain  a path
-              component  usable  as  a   file  name,  it  defaults  to
-              "index.html".
-  --no-quic-dump
-              Disables printing QUIC STREAM and CRYPTO frame data out.
-  --no-http-dump
-              Disables printing HTTP response body out.
-  --qlog-file=<PATH>
-              The path to write qlog.   This option and --qlog-dir are
-              mutually exclusive.
-  --qlog-dir=<PATH>
-              Path to  the directory where  qlog file is  stored.  The
-              file name  of each qlog  is the Source Connection  ID of
-              client.   This  option   and  --qlog-file  are  mutually
-              exclusive.
-  --max-data=<SIZE>
-              The initial connection-level flow control window.
-              Default: )"
-            << util::format_uint_iec(config.max_data) << R"(
-  --max-stream-data-bidi-local=<SIZE>
-              The  initial  stream-level  flow control  window  for  a
-              bidirectional stream that the local endpoint initiates.
-              Default: )"
-            << util::format_uint_iec(config.max_stream_data_bidi_local) << R"(
-  --max-stream-data-bidi-remote=<SIZE>
-              The  initial  stream-level  flow control  window  for  a
-              bidirectional stream that the remote endpoint initiates.
-              Default: )"
-            << util::format_uint_iec(config.max_stream_data_bidi_remote) << R"(
-  --max-stream-data-uni=<SIZE>
-              The  initial  stream-level  flow control  window  for  a
-              unidirectional stream.
-              Default: )"
-            << util::format_uint_iec(config.max_stream_data_uni) << R"(
-  --max-streams-bidi=<N>
-              The number of the  concurrent bidirectional streams that
-              the remote endpoint initiates.
-              Default: )"
-            << config.max_streams_bidi << R"(
-  --max-streams-uni=<N>
-              The number of the concurrent unidirectional streams that
-              the remote endpoint initiates.
-              Default: )"
-            << config.max_streams_uni << R"(
-  --exit-on-first-stream-close
-              Exit  when  a  first  client initiated  HTTP  stream  is
-              closed.
-  --exit-on-all-streams-close
-              Exit when all client initiated HTTP streams are closed.
-  --wait-for-ticket
-              Wait  for a  ticket  to be  received  before exiting  on
-              --exit-on-first-stream-close                          or
-              --exit-on-all-streams-close.   --session-file   must  be
-              specified.
-  --disable-early-data
-              Disable early data.
-  --cc=(cubic|reno|bbr)
-              The name of congestion controller algorithm.
-              Default: )"
-            << util::strccalgo(config.cc_algo) << R"(
-  --token-file=<PATH>
-              Read/write token from/to <PATH>.  Token is obtained from
-              NEW_TOKEN frame from server.
-  --sni=<DNSNAME>
-              Send  <DNSNAME>  in TLS  SNI,  overriding  the DNS  name
-              specified in <HOST>.
-  --initial-rtt=<DURATION>
-              Set an initial RTT.
-              Default: )"
-            << util::format_duration(config.initial_rtt) << R"(
-  --max-window=<SIZE>
-              Maximum connection-level flow  control window size.  The
-              window auto-tuning is enabled if nonzero value is given,
-              and window size is scaled up to this value.
-              Default: )"
-            << util::format_uint_iec(config.max_window) << R"(
-  --max-stream-window=<SIZE>
-              Maximum stream-level flow control window size.  The
-              window auto-tuning is enabled if nonzero value is given,
-              and window size is scaled up to this value.
-              Default: )"
-            << util::format_uint_iec(config.max_stream_window) << R"(
-  --max-udp-payload-size=<SIZE>
-              Override maximum UDP payload size that client transmits.
-              With this  option, client  assumes that a  path supports
-              <SIZE> byte of UDP  datagram payload, without performing
-              Path MTU Discovery.
-  --handshake-timeout=<DURATION>
-              Set  the  QUIC handshake  timeout.   It  defaults to  no
-              timeout.
-  --no-pmtud  Disables Path MTU Discovery.
-  --ack-thresh=<N>
-              The minimum number of the received ACK eliciting packets
-              that triggers immediate acknowledgement.
-              Default: )"
-            << config.ack_thresh << R"(
-  --initial-pkt-num=<N>
-              The initial packet  number that is used  for each packet
-              number space.  It  must be in range [0, (1  << 31) - 1],
-              inclusive.   By default,  the initial  packet number  is
-              chosen randomly.
-  --pmtud-probes=<SIZE>[[,<SIZE>]...]
-              Specify UDP datagram payload sizes  to probe in Path MTU
-              Discovery.  <SIZE> must be strictly larger than 1200.
-  -h, --help  Display this help and exit.
-
----
-
-  The <SIZE> argument is an integer and an optional unit (e.g., 10K is
-  10 * 1024).  Units are K, M and G (powers of 1024).
-
-  The <DURATION> argument is an integer and an optional unit (e.g., 1s
-  is 1 second and 500ms is 500  milliseconds).  Units are h, m, s, ms,
-  us, or ns (hours,  minutes, seconds, milliseconds, microseconds, and
-  nanoseconds respectively).  If  a unit is omitted, a  second is used
-  as unit.
-
-  The  <HEX> argument  is an  hex string  which must  start with  "0x"
-  (e.g., 0x00000001).)"
-            << std::endl;
-}
-} // namespace
-
 
 StreamIdentifier QuicConnector::getNewRequestStreamIdentifier(Request const &req) {
     if (!req.isWWATP()) {
@@ -3035,7 +2725,6 @@ bool QuicConnector::processRequestStream() {
                     inserted.first->second.swap(processed);
                 }
                 else {
-                    int chunk_count = 0;
                     for (auto &chunk : processed) {
                         outgoing->second.emplace_back(chunk);
                     }
@@ -3140,7 +2829,7 @@ void QuicConnector::check_deadline() {
     timer.async_wait([this](const boost::system::error_code&) { check_deadline(); });
 }
 
-void QuicConnector::listen(const string &local_name, const string& local_ip_addr, int local_port) {
+void QuicConnector::listen(const string &, const string&, int) {
     // throw an exception, not supported
     throw std::runtime_error("QuicConnector::listen is not supported");
 }

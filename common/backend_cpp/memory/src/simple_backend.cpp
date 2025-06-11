@@ -119,7 +119,7 @@ std::vector<TreeNode> SimpleBackend::relativeQueryNodes(const TreeNode& node, co
     return queryNodes(full_label_rule);
 }
 
-bool SimpleBackend::openTransactionLayer(const TreeNode& node) {
+bool SimpleBackend::openTransactionLayer(const TreeNode&) {
     // throw an exception: SimpleBackend does not support opening Transaction layers
     throw std::runtime_error("SimpleBackend does not support opening transaction layers");
     return false;
