@@ -220,6 +220,9 @@ class Http3ClientBackendUpdater {
         }
         void stop() {
             stopFlag.store(true);
+            if (updaterThread_.joinable()) {
+                updaterThread_.join();
+            }
         }
 
     private:

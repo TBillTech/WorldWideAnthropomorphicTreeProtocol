@@ -434,13 +434,20 @@ bool Handler::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3
     return signal_closed;
 }
 
-pair<size_t, vector<StreamIdentifier>> Handler::get_pending_chunks_size(int64_t, size_t veccnt)
+pair<size_t, vector<StreamIdentifier>> Handler::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
 {
     // This logic relies on the server receiving one or more chunks from the client.
     // However, it does not really matter how many or what request_ids the client sent for this purpose:  
     //     All scid matching chunks are candidates for sending.
     // In other words, setting up the correct RequestHandlers is the job for the receiving side of the process.
-    return server()->listener().planForNOutgoingChunks(get_scid(), veccnt);
+    auto it = streams_.find(stream_id);
+    if (it == streams_.end())
+    {
+        // If the stream does not exist, return 0 size and an empty vector
+        return {0, {}};
+    }
+    auto &stream = it->second;
+    return server()->listener().planForNOutgoingChunks(get_scid(), veccnt, stream->req);
 }
 
 void Handler::unlock_chunks(nghttp3_vec *vec, size_t veccnt)
@@ -4230,8 +4237,9 @@ bool QuicListener::processResponseStream() {
                 outgoingChunks.erase(stream_cb.first);
             }
             {
-                lock_guard<std::mutex> lock(returnPathsMutex);
-                returnPaths.erase(stream_cb.first);
+                // TODO: garbage collect old unused return paths
+                //lock_guard<std::mutex> lock(returnPathsMutex);
+                //returnPaths.erase(stream_cb.first);
             }
             // And by definition, it is not in the requestorQueue anymore
         }

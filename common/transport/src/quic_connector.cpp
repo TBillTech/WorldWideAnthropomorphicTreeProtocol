@@ -2018,10 +2018,17 @@ bool Client::lock_outgoing_chunks(chunks &locked_chunks, vector<StreamIdentifier
     return signal_closed;
 }
 
-pair<size_t, vector<StreamIdentifier>> Client::get_pending_chunks_size(int64_t /* stream_id */, size_t veccnt)
+pair<size_t, vector<StreamIdentifier>> Client::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
 {
+    auto it = streams_.find(stream_id);
+    if (it == streams_.end())
+    {
+        // If the stream is not found, we return 0 size and an empty vector
+        return {0, {}};
+    }
+    auto &stream = it->second;
     // Simply ask the quic_connector_ for the size of the pending chunks
-    return quic_connector_.planForNOutgoingChunks(get_dcid(), veccnt);
+    return quic_connector_.planForNOutgoingChunks(get_dcid(), veccnt, stream->req);
 }
 
 void Client::unlock_chunks(nghttp3_vec *vec, size_t veccnt)
@@ -2778,8 +2785,9 @@ bool QuicConnector::processRequestStream() {
                 outgoingChunks.erase(stream_cb.first);
             }
             {
-                lock_guard<std::mutex> lock(returnPathsMutex);
-                returnPaths.erase(stream_cb.first);
+                // TODO: Garbage collect old unsused returnPaths
+                //lock_guard<std::mutex> lock(returnPathsMutex);
+                //returnPaths.erase(stream_cb.first);
                 // Don't erase from the staticRequests though
             }
             // And by definition, it is not in the requestorQueue anymore

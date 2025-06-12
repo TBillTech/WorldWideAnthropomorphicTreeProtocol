@@ -715,6 +715,7 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
         if (backend.hasNextRequest()) {
             auto req = backend.getRequestUrlInfo();
             StreamIdentifier stream_id = connector.getNewRequestStreamIdentifier(req);
+            cerr << "Requesting stream_id: " << stream_id.logical_id << std::endl << flush;
             auto theRequest = ongoingRequests_.emplace(stream_id, backend.popNextRequest());
             theRequest.first->second.setRequestId(stream_id.logical_id);
             HTTP3TreeMessage& theMessage = theRequest.first->second;

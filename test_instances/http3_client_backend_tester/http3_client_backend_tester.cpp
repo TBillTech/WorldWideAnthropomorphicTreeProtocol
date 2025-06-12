@@ -142,17 +142,17 @@ int main() {
     timesecs += 0.1;
     cout << "In Main: Client should be started up" << endl;
 
-    auto theReaderRequest = Request{.scheme = "https", .authority = "localhost", .path = "/init/wwatp/", .pri = {0, 0}};
+    Request theReaderRequest{.scheme = "https", .authority = "localhost", .path = "/init/wwatp/", .pri = {0, 0}};
     MemoryTree local_reader_tree;
     SimpleBackend local_reader_backend(local_reader_tree);
 
-    auto theWriterRequest = Request{.scheme = "https", .authority = "localhost", .path = "/uninit/wwatp/", .pri = {0, 0}};
+    Request theWriterRequest{.scheme = "https", .authority = "localhost", .path = "/uninit/wwatp/", .pri = {0, 0}};
     MemoryTree local_writer_tree;
     SimpleBackend local_writer_backend(local_writer_tree);
     MemoryTree reader_of_writer_tree;
     SimpleBackend reader_of_writer_backend(reader_of_writer_tree);
 
-    auto theBlockingRequest = Request{.scheme = "https", .authority = "localhost", .path = "/blocking/wwatp/", .pri = {0, 0}};
+    Request theBlockingRequest{.scheme = "https", .authority = "localhost", .path = "/blocking/wwatp/", .pri = {0, 0}};
     MemoryTree local_blocking_tree;
     SimpleBackend local_blocking_backend(local_blocking_tree);
     ThreadsafeBackend local_blocking_backend_threadsafe(local_blocking_backend);
@@ -173,7 +173,7 @@ int main() {
         }
     }
 
-    auto response_cycle = [&client_backend_updater, &client_communication, &server_communication, &wait_loops, &timesecs]() {
+    auto response_cycle = [&client_backend_updater, &client_communication, &server_communication, &wait_loops, &timesecs](string label = "") {
         // Service the client communication for a while to allow the client to send the request.
         for(int i = 0; i < wait_loops; i++) {
             client_backend_updater.maintainRequestHandlers(*client_communication, timesecs);
@@ -182,9 +182,10 @@ int main() {
             this_thread::sleep_for(chrono::milliseconds(20));
             timesecs += 0.02;
         }
+        cerr << "In Main: Waited for " << label << endl << flush;
     };
 
-    response_cycle();
+    response_cycle("reader_tester requestFullTreeSync");
     {
         BackendTestbed reader_tester(reader_client, false, false);
         reader_tester.testBackendLogically();
@@ -194,14 +195,14 @@ int main() {
         writer_tester.addAnimalsToBackend();
         writer_tester.addNotesPageTree();
     }
-    response_cycle();
+    response_cycle("writer_tester add animals and notes");
     {
         BackendTestbed writer_tester(writer_client, false, true);
         writer_tester.testBackendLogically();
     }
-    response_cycle();
+    response_cycle("writer_tester testBackendLogically");
     reader_of_writer_client.requestFullTreeSync();
-    response_cycle();
+    response_cycle("reader_of_writer_client requestFullTreeSync");
     {
         BackendTestbed reader_tester(reader_of_writer_client, false, false);
         reader_tester.testAnimalNodesNoElephant();

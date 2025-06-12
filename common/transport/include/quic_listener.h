@@ -7,6 +7,7 @@
 #include <thread>
 #include <ev.h>
 #include <set>
+#include <list>
 
 using namespace std;
 
@@ -93,15 +94,30 @@ public:
         return true;
     }
 
-    pair<size_t, vector<StreamIdentifier>> planForNOutgoingChunks(ngtcp2_cid const& dcid, size_t n) {
+    pair<size_t, vector<StreamIdentifier>> planForNOutgoingChunks(ngtcp2_cid const& dcid, size_t n, Request const & req) {
         size_t size = 0;
-        lock_guard<std::mutex> lock(outgoingChunksMutex);
         auto used_identifiers = vector<StreamIdentifier>();
         auto unused_identifiers = set<StreamIdentifier>();
-        for (const auto& pair : outgoingChunks) {
-            if (pair.first.cid == dcid) {
-                unused_identifiers.insert(pair.first);
+        auto potential_identifiers = list<StreamIdentifier>();
+        {
+            lock_guard<std::mutex> lock(outgoingChunksMutex);
+            for (const auto& pair : outgoingChunks) {
+                if (pair.first.cid == dcid) {
+                    potential_identifiers.push_back(pair.first);
+                }
             }
+        }
+        {
+            lock_guard<std::mutex> lock(returnPathsMutex);
+            for (const auto& sid : potential_identifiers) {
+                auto it = returnPaths.find(sid);
+                if (it != returnPaths.end()) {
+                    // Check if the request matches the return path
+                    if (it->second == req) {
+                        unused_identifiers.insert(sid);
+                    }
+                }
+            }    
         }
         while((n > 0) && (unused_identifiers.size() > 0)) {
             // choose an unused identifier at random:
@@ -111,13 +127,16 @@ public:
             unused_identifiers.erase(it);
             used_identifiers.push_back(sid);
 
-            auto outgoing = outgoingChunks.find(sid);
-            if (outgoing != outgoingChunks.end()) {
-                for (auto it = outgoing->second.begin(); it != outgoing->second.begin() + std::min(n, outgoing->second.size()); ++it) {
-                    auto& chunk = *it;
-                    size += chunk.size()+chunk.get_signal_size();
+            {
+                lock_guard<std::mutex> lock(outgoingChunksMutex);
+                auto outgoing = outgoingChunks.find(sid);
+                if (outgoing != outgoingChunks.end()) {
+                    for (auto it = outgoing->second.begin(); it != outgoing->second.begin() + std::min(n, outgoing->second.size()); ++it) {
+                        auto& chunk = *it;
+                        size += chunk.size()+chunk.get_signal_size();
+                    }
+                    n -= std::min(n, outgoing->second.size());
                 }
-                n -= std::min(n, outgoing->second.size());
             }
         }
         return make_pair(size, vector<StreamIdentifier>(used_identifiers.begin(), used_identifiers.end()));
