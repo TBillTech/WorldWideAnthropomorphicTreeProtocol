@@ -292,11 +292,26 @@ void Http3ClientBackend::processNotification() {
         return;
     }
     awaitResponse();
-    while (notificationBlock_.load()) {
+        // Sleep time is computed as 1/10 th of the journalRequestsPerMinute/60.
+    auto sleepTime = std::chrono::milliseconds(1000 * (journalRequestsPerMinute_ / 600));
+    auto waitForNotification = [&sleepTime](atomic<bool>& notificationBlock) {
         // Wait for the notification to be processed to make sure the journaling
         // system change from the server has been flushed through.
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        while (notificationBlock.load()) {
+            std::this_thread::sleep_for(sleepTime);
+        }
+    };
+    if (journalRequestWaiting_.load()) {
+        // If we are currently waiting for a journal request, there is a chance this journal request will
+        // return stale information.  So wait it out:
+        waitForNotification(notificationBlock_);
+        // Then wait for the next notification to be processed.
+        notificationBlock_.store(true);
+        // And set lastJournalRequestTime_ to 2.0 to immediately trigger a new journal request.
+        // (less than or equal to 1.0 will suppress the journal request).
+        lastJournalRequestTime_.store(2.0);
     }
+    waitForNotification(notificationBlock_);
 }
 
 void Http3ClientBackend::processHTTP3Response(HTTP3TreeMessage& response) {
@@ -363,17 +378,13 @@ void Http3ClientBackend::processHTTP3Response(HTTP3TreeMessage& response) {
             break;
         case payload_chunk_header::SIGNAL_WWATP_GET_PAGE_TREE_RESPONSE: {
                 std::vector<TreeNode> nodes = response.decode_getPageTreeResponse();
-                // Alternatively, if the request page was the mutable page tree, this should never do the
-                // response signal.
-                string mutable_page_tree_label_rule = "MutableNodes";
-                {
-                    std::lock_guard<std::mutex> lock(handlerMutex_);
-                    mutable_page_tree_label_rule = mutablePageTreeLabelRule_;
-                }
-                if (response.decode_getPageTreeRequest() == mutablePageTreeLabelRule_) {
+                // Alternatively, if the request was actually a sync-up from the Journal Request, 
+                // then this should never do the response signal, but _should_ clear the notification block.
+                if (response.isJournalRequest()) {
                     disableServerSync();
                     upsertNode(nodes);
                     enableServerSync();
+                    notificationBlock_.store(false); // Clear the notification block
                 } else {
                     {
                         std::lock_guard<std::mutex> lock(handlerMutex_);
@@ -454,15 +465,43 @@ void Http3ClientBackend::processHTTP3Response(HTTP3TreeMessage& response) {
             }
             break;
         case payload_chunk_header::SIGNAL_WWATP_REGISTER_LISTENER_RESPONSE: {
+                bool result = response.decode_registerNodeListenerResponse();
+                {
+                    std::lock_guard<std::mutex> lock(handlerMutex_);
+                    boolResponse = result;
+                }
+                if (blockingMode_) {
+                    responseSignal();
+                }
             }
             break;
         case payload_chunk_header::SIGNAL_WWATP_DEREGISTER_LISTENER_RESPONSE: {
+                bool result = response.decode_deregisterNodeListenerResponse();
+                {
+                    std::lock_guard<std::mutex> lock(handlerMutex_);
+                    boolResponse = result;
+                }
+                if (blockingMode_) {
+                    responseSignal();
+                }
             }
             break;
         case payload_chunk_header::SIGNAL_WWATP_NOTIFY_LISTENERS_RESPONSE: {
+                bool result = response.decode_notifyListenersResponse();
+                {
+                    std::lock_guard<std::mutex> lock(handlerMutex_);
+                    boolResponse = result;
+                }
+                if (blockingMode_) {
+                    responseSignal();
+                }
             }
             break;
         case payload_chunk_header::SIGNAL_WWATP_PROCESS_NOTIFICATION_RESPONSE: {
+                response.decode_processNotificationResponse();
+                if (blockingMode_) {
+                    responseSignal();
+                }
             }
             break;
         case payload_chunk_header::SIGNAL_WWATP_GET_JOURNAL_RESPONSE: {
@@ -488,7 +527,11 @@ void Http3ClientBackend::processHTTP3Response(HTTP3TreeMessage& response) {
                     lastNotification = it;
                 }
                 if (notificationGap) {
-                    getMutablePageTreeInMode(false);
+                    getMutablePageTreeInMode(false, true);
+                }
+                else {
+                    // If there is no gap, then immediately clear any notification block
+                    notificationBlock_.store(false);
                 }
                 updateLastNotification(*lastNotification);
             }
@@ -577,10 +620,10 @@ void Http3ClientBackend::setMutablePageTreeLabelRule(std::string label_rule) {
 }
 
 void Http3ClientBackend::getMutablePageTree() {
-    getMutablePageTreeInMode(blockingMode_);
+    getMutablePageTreeInMode(blockingMode_, false);
 }
 
-void Http3ClientBackend::getMutablePageTreeInMode(bool blocking_mode) {
+void Http3ClientBackend::getMutablePageTreeInMode(bool blocking_mode, bool isJournalRequest) {
     // Use the caching localBackend_ to get the mutable page tree
     string label_rule = "MutableNodes";
     {
@@ -590,6 +633,7 @@ void Http3ClientBackend::getMutablePageTreeInMode(bool blocking_mode) {
     {
         HTTP3TreeMessage request(0);
         request.encode_getPageTreeRequest(label_rule);
+        request.setIsJournalRequest(isJournalRequest);
         std::lock_guard<std::mutex> lock(handlerMutex_);
         pendingRequests_.push_back(std::move(request));
     }
@@ -631,8 +675,9 @@ void Http3ClientBackend::updateLastNotification(SequentialNotification const& no
     lastNotification_ = notification;
 }
 
-Http3ClientBackend& Http3ClientBackendUpdater::addBackend(Backend& local_backend, bool blocking_mode, Request request){
-    return backends_.emplace_back(local_backend, blocking_mode, request);
+Http3ClientBackend& Http3ClientBackendUpdater::addBackend(Backend& local_backend, bool blocking_mode, Request request,
+        size_t journal_requests_per_minute, fplus::maybe<TreeNode> static_node) {
+    return backends_.emplace_back(local_backend, blocking_mode, request, journal_requests_per_minute, static_node);
 }
 
 Http3ClientBackend& Http3ClientBackendUpdater::getBackend(const std::string& url) {
@@ -642,6 +687,27 @@ Http3ClientBackend& Http3ClientBackendUpdater::getBackend(const std::string& url
         }
     }
     throw std::runtime_error("Backend not found");
+}
+
+bool Http3ClientBackend::needToSendJournalRequest(double time) {
+    if (journalRequestWaiting_.load()) {
+        return false; // If we are already waiting for a journal request, then don't need to send one.
+    }
+    if ((journalRequestsPerMinute_ == 0) || (lastJournalRequestTime_.load() <= 1.0)) {
+        lastJournalRequestTime_.store(time);
+        return false;
+    }
+    double timeDelta = time - lastJournalRequestTime_.load();
+    bool needToSend = (timeDelta*journalRequestsPerMinute_ > 60.0);
+    if (needToSend) {
+        journalRequestWaiting_.store(true); // Set the flag to indicate we are waiting for a journal request.
+        lastJournalRequestTime_.store(time);
+    }
+    return needToSend;
+}
+
+void Http3ClientBackend::setJournalRequestComplete() {
+    journalRequestWaiting_.store(false); // Reset the flag to indicate we are no longer waiting for a journal request.
 }
 
 void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector, double time) {
@@ -682,7 +748,7 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
             };
             connector.registerResponseHandler(stream_id, messageHandler);
         }
-        if (backend.haveJournalRequest(time)) {
+        if (backend.needToSendJournalRequest(time)) {
             auto req = backend.getRequestUrlInfo();
             StreamIdentifier stream_id = connector.getNewRequestStreamIdentifier(req);
             auto theRequest = ongoingRequests_.emplace(stream_id, backend.solicitJournalRequest());
@@ -707,6 +773,7 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
                     signal_chunk_header signal(stream_identifier.logical_id, signal_chunk_header::SIGNAL_CLOSE_STREAM);
                     request.push_back(shared_span<>(signal, true));
                     connector.deregisterResponseHandler(stream_identifier);
+                    backend.setJournalRequestComplete();
                 }
                 return request;
             };

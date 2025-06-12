@@ -110,6 +110,12 @@ public:
     bool isInitialized() const {
         return isInitialized_;
     }
+    bool isJournalRequest() const {
+        return isJournalRequest_;
+    }
+    void setIsJournalRequest(bool is_journal_request) {
+        isJournalRequest_ = is_journal_request;
+    }
     void setRequestId(uint16_t request_id); // Implicitly sets request complete
     bool isRequestComplete() const {
         return requestComplete;
@@ -137,12 +143,12 @@ public:
         return request_id_;
     }
  
-    // assignment operator
     HTTP3TreeMessage(const HTTP3TreeMessage&& other) :
         request_id_(other.request_id_),
         signal_(other.signal_),
         isInitialized_(other.isInitialized_),
         requestChunks(std::move(other.requestChunks)),
+        isJournalRequest_(other.isJournalRequest_),
         requestComplete(other.requestComplete),
         responseChunks(std::move(other.responseChunks)),
         responseComplete(other.responseComplete),
@@ -163,6 +169,7 @@ private:
 
     bool isInitialized_ = false;
     chunkList requestChunks;
+    bool isJournalRequest_ = false;
 
     bool requestComplete = false;
     chunkList responseChunks;

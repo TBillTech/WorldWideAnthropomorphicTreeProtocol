@@ -2690,6 +2690,19 @@ void QuicConnector::registerResponseHandler(StreamIdentifier sid, stream_callbac
     requestorQueue.push_back(std::make_pair(sid, cb));
 }
 
+bool QuicConnector::hasResponseHandler(StreamIdentifier sid) {
+    lock_guard<std::mutex> lock(requestorQueueMutex);
+    auto it = std::find_if(requestorQueue.begin(), requestorQueue.end(),
+        [&sid](const stream_callback& stream_cb) {
+            return stream_cb.first == sid;
+        });
+    if (it != requestorQueue.end()) {
+        // The stream callback is already in the queue
+        return true;
+    }
+    return false;
+}
+
 void QuicConnector::deregisterResponseHandler(StreamIdentifier sid) {
     lock_guard<std::mutex> lock(requestorQueueMutex);
     auto it = std::remove_if(requestorQueue.begin(), requestorQueue.end(),

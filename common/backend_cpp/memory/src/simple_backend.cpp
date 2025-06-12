@@ -89,7 +89,7 @@ std::vector<TreeNode> SimpleBackend::getPageTree(const std::string& page_node_la
     // Check if the page node exists
     auto page_node = memory_tree_.getNode(page_node_label_rule);
     if (page_node.is_nothing()) {
-        throw std::runtime_error("Page node not found: " + page_node_label_rule);
+        return {};
     }
     // Now collect the children label rules
     auto children_label_rules = page_node.lift_def(std::vector<std::string>{}, [](const TreeNode& node) {

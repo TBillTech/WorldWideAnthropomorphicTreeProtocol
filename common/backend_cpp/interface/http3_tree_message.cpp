@@ -605,6 +605,7 @@ void HTTP3TreeMessage::encode_getJournalRequest(SequentialNotification const& la
     std::lock_guard<std::mutex> lock(requestChunksMutex);
     requestChunks.insert(requestChunks.end(), std::make_move_iterator(encoded.begin()), std::make_move_iterator(encoded.end()));
     isInitialized_ = true;
+    isJournalRequest_ = true;
 }
 
 SequentialNotification HTTP3TreeMessage::decode_getJournalRequest()
@@ -618,6 +619,7 @@ SequentialNotification HTTP3TreeMessage::decode_getJournalRequest()
         throw invalid_argument("Cannot decode SequentialNotification");
     }
     requestComplete = true;
+    isJournalRequest_ = true;
     return notification.second;
 }
 
@@ -628,6 +630,7 @@ void HTTP3TreeMessage::encode_getJournalResponse(const std::vector<SequentialNot
     std::lock_guard<std::mutex> lock(responseChunksMutex);
     responseChunks.insert(responseChunks.end(), std::make_move_iterator(encoded.begin()), std::make_move_iterator(encoded.end()));
     responseComplete = true;
+    isJournalRequest_ = true;
 }
 
 std::vector<SequentialNotification> HTTP3TreeMessage::decode_getJournalResponse()
@@ -638,6 +641,7 @@ std::vector<SequentialNotification> HTTP3TreeMessage::decode_getJournalResponse(
     std::lock_guard<std::mutex> lock(responseChunksMutex);
     auto decoded = decode_VectorSequentialNotification(responseChunks);
     processingFinished = true;
+    isJournalRequest_ = true;
     return decoded.second;
 }
 

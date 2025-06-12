@@ -4023,6 +4023,19 @@ void QuicListener::registerResponseHandler(StreamIdentifier sid, stream_callback
     requestorQueue.push_back(std::make_pair(sid, cb));
 }
 
+bool QuicListener::hasResponseHandler(StreamIdentifier sid) {
+    lock_guard<std::mutex> lock(requestorQueueMutex);
+    auto it = std::find_if(requestorQueue.begin(), requestorQueue.end(),
+        [&sid](const stream_callback& stream_cb) {
+            return stream_cb.first == sid;
+        });
+    if (it != requestorQueue.end()) {
+        // The handler is already registered
+        return true;
+    }
+    return false;
+}
+
 void QuicListener::deregisterResponseHandler(StreamIdentifier sid) {
     lock_guard<std::mutex> lock(requestorQueueMutex);
     auto it = std::remove_if(requestorQueue.begin(), requestorQueue.end(),

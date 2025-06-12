@@ -144,6 +144,7 @@ public:
     // 3. stream_data_chunks outgoingChunks: For mapping outgoing chunks to StreamIdentifiers
     virtual StreamIdentifier getNewRequestStreamIdentifier(Request const &req) = 0;
     virtual void registerResponseHandler(StreamIdentifier sid, stream_callback_fn cb) = 0;
+    virtual bool hasResponseHandler(StreamIdentifier sid) = 0;
     virtual void deregisterResponseHandler(StreamIdentifier sid) = 0;
     // In order to separate the nominally client side handler threads from the Communication IO thread, a handler thread can call 
     // this function to make the callback from a worker thread and take as much time as necessary without interrupting the 

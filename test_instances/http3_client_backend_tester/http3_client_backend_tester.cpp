@@ -164,7 +164,7 @@ int main() {
     Http3ClientBackend& writer_client = client_backend_updater.addBackend(local_writer_backend, false, theWriterRequest);
     Http3ClientBackend& reader_of_writer_client = client_backend_updater.addBackend(reader_of_writer_backend, false, theWriterRequest);
     
-    Http3ClientBackend& blocking_client = client_backend_updater.addBackend(local_blocking_backend_threadsafe, true, theBlockingRequest);
+    Http3ClientBackend& blocking_client = client_backend_updater.addBackend(local_blocking_backend_threadsafe, true, theBlockingRequest, 60);
 
     int wait_loops = 100;
     if (const char* env_p = std::getenv("DEBUG")) {
@@ -196,7 +196,7 @@ int main() {
     }
     response_cycle();
     {
-        BackendTestbed writer_tester(writer_client, false);
+        BackendTestbed writer_tester(writer_client, false, true);
         writer_tester.testBackendLogically();
     }
     response_cycle();

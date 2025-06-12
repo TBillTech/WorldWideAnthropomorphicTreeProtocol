@@ -13,12 +13,13 @@ public:
     // Make sure blocking_mode is set to true if you want to block on the applyTransaction call, 
     // ESPECIALLY if you wrap this class in a TransactionalBackend.
     Http3ClientBackend(Backend& local_backend, bool blocking_mode, 
-                       Request request, size_t journalRequestsPerMinute = 60,
-                       fplus::maybe<TreeNode> staticNode = fplus::maybe<TreeNode>())
+                       Request request, size_t journalRequestsPerMinute,
+                       fplus::maybe<TreeNode> staticNode)
         : localBackend_(local_backend), lastNotification_({0, {}}), 
           blockingMode_(blocking_mode), requestUrlInfo_(request),
           journalRequestsPerMinute_(journalRequestsPerMinute),
           staticNode_(staticNode) {
+            lastJournalRequestTime_.store(0);
             if ((staticNode_.is_just()) && request.isWWATP()) {
                 throw std::runtime_error("Static node must be used with static request (not WWATP).");
             }
@@ -43,10 +44,10 @@ public:
         requestUrlInfo_(std::move(other.requestUrlInfo_)),
         pendingRequests_(std::move(other.pendingRequests_)),
         journalRequestsPerMinute_(other.journalRequestsPerMinute_),
-        lastJournalRequestTime_(other.lastJournalRequestTime_),
         staticNode_(std::move(other.staticNode_)),
         notificationBlock_(other.notificationBlock_.load())
     {
+        lastJournalRequestTime_.store(other.lastJournalRequestTime_.load());
     }
     // Delete copy constructor
     Http3ClientBackend& operator=(const Http3ClientBackend&) = delete;
@@ -103,21 +104,15 @@ public:
     void setMutablePageTreeLabelRule(std::string label_rule = "MutableNodes");
     void getMutablePageTree();
 
-    bool haveJournalRequest(double time) {
-        if ((journalRequestsPerMinute_ == 0) || (lastJournalRequestTime_ <= 1.0)) {
-            lastJournalRequestTime_ = time;
-            return false;
-        }
-        double timeDelta = time - lastJournalRequestTime_;
-        lastJournalRequestTime_ = time;
-        return (timeDelta*journalRequestsPerMinute_ > 60.0);
-    }
+    bool needToSendJournalRequest(double time);
+    void setJournalRequestComplete();
 
 private:
     void requestStaticNodeData();
     void setNodeChunks(chunks& chunks);
 
-    void getMutablePageTreeInMode(bool blocking_mode);
+    // isJournalRequest = true is used to properly handle the return of the mutable page tree as the response to a journal request when the client is not in sync.
+    void getMutablePageTreeInMode(bool blocking_mode, bool isJournalRequest = false);
 
     void awaitResponse();
     bool awaitBoolResponse();
@@ -166,7 +161,8 @@ private:
     std::list<HTTP3TreeMessage> pendingRequests_;
 
     size_t journalRequestsPerMinute_;
-    double lastJournalRequestTime_ = 0.0;
+    atomic<double> lastJournalRequestTime_;
+    atomic<bool> journalRequestWaiting_{false};
 
     fplus::maybe<TreeNode> staticNode_;
     atomic<bool> notificationBlock_{false};  // Used to block until a journal notification has been processed
@@ -186,7 +182,8 @@ class Http3ClientBackendUpdater {
         // Add a backend to the updater. This method should only be used with Request object that are tree urls.
         // Getting static assets at Request urls is done elsewhere.
         // NOTE: Please add all backends before calling maintainRequestHandlers.
-        Http3ClientBackend& addBackend(Backend& local_backend, bool blocking_mode, Request request);
+        Http3ClientBackend& addBackend(Backend& local_backend, bool blocking_mode, Request request, size_t journalRequestsPerMinute = 0, 
+                                       fplus::maybe<TreeNode> staticNode = fplus::maybe<TreeNode>());
         Http3ClientBackend& getBackend(const std::string& url);
 
         // There can be multiple request streams per backend, so each new request

@@ -28,6 +28,7 @@ public:
     }
     StreamIdentifier getNewRequestStreamIdentifier(Request const &req) override;
     void registerResponseHandler(StreamIdentifier sid, stream_callback_fn cb) override;
+    bool hasResponseHandler(StreamIdentifier sid) override;
     void deregisterResponseHandler(StreamIdentifier sid) override;
     bool processRequestStream() override;
     void registerRequestHandler(named_prepare_fn preparer) override;

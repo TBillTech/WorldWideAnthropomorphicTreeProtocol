@@ -69,6 +69,15 @@ void TcpCommunication::registerRequestHandler(named_prepare_fn preparer)
     preparersStack.push_back(preparer);
 }
 
+bool TcpCommunication::hasResponseHandler(StreamIdentifier sid) {
+    lock_guard<std::mutex> lock(preparerStackMutex);
+    auto it = std::find_if(requestorQueue.begin(), requestorQueue.end(),
+        [&sid](const stream_callback& stream_cb) {
+            return stream_cb.first == sid;
+        });
+    return it != requestorQueue.end();
+}
+
 void TcpCommunication::deregisterRequestHandler(string preparer_name)
 {
     lock_guard<std::mutex> lock(preparerStackMutex);
