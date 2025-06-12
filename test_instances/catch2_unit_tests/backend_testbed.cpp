@@ -214,8 +214,8 @@ vector<TreeNode> prefixNodeLabels(string label_prefix, vector<TreeNode> nodes) {
 }
 
 BackendTestbed::BackendTestbed(Backend& backend, bool should_test_notifications, bool should_test_changes)
-    : backend_(backend), should_test_changes_(should_test_changes), 
-      should_test_notifications_(should_test_notifications) {}
+    : backend_(backend), should_test_notifications_(should_test_notifications), 
+      should_test_changes_(should_test_changes) {}
 
 void BackendTestbed::stressTestConstructions(size_t count) {
     for(size_t i = 0; i < count; ++i) {
@@ -294,7 +294,17 @@ void BackendTestbed::testBackendLogically(string label_prefix) {
     bool lion_node_created = false;
     bool lion_node_deleted = false;
     string lion_label = label_prefix + "lion";
-    backend_.registerNodeListener("lion_listener", lion_label, false, [lion_label, &lion_node_created, &lion_node_deleted](Backend& backend, const string listener_name, const fplus::maybe<TreeNode> node) {
+    auto backend_address = &backend_;
+    backend_.registerNodeListener("lion_listener", lion_label, false, 
+        [lion_label, &lion_node_created, &lion_node_deleted, backend_address](Backend& notified_backend, const string label_rule, const fplus::maybe<TreeNode> node) {
+        if (useCatch2) {
+            REQUIRE(lion_label == label_rule);
+            REQUIRE(backend_address == &notified_backend);
+        }
+        else {
+            assert(lion_label == label_rule);
+            assert(backend_address == &notified_backend);
+        }
         if (node.is_just()) {
             auto found_node = node.get_with_default(TreeNode());
             if (found_node.getLabelRule() == lion_label) {

@@ -49,8 +49,6 @@ int main() {
     double timesecs = 1.0;
 
     string protocol = "QUIC";
-    //string protocol = "TCP";
-    bool zeroRTT_test = true;
     if(protocol == "QUIC")
     {
         auto data_path = realpath("../test_instances/data/", nullptr);
@@ -66,6 +64,8 @@ int main() {
         auto client_data_path = std::string(sandbox_path) + "/data.client";
         free(sandbox_path);
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
         config = Config{
             .tx_loss_prob = 0.,
             .rx_loss_prob = 0.,
@@ -97,7 +97,7 @@ int main() {
             .ack_thresh = 2,
             .initial_pkt_num = UINT32_MAX,
           };
-    
+#pragma GCC diagnostic pop    
     }
     boost::asio::io_context io_context;
 
@@ -111,7 +111,6 @@ int main() {
     // Add a named_prepare_fn for theServerHandler to the server_communication
     HTTP3Server theServer({});
     prepare_stream_callback_fn theServerHandlerWrapper = [&theServer](const Request &req) {
-        uri_response_info response_info = {true, true, false, 0};
         return theServer.getResponseCallback(req);
     };
     server_communication->registerRequestHandler(make_pair("test", theServerHandlerWrapper));
@@ -143,17 +142,17 @@ int main() {
     timesecs += 0.1;
     cout << "In Main: Client should be started up" << endl;
 
-    auto theReaderRequest = Request{.scheme = "https", .authority = "localhost", .path = "/init/wwatp/"};
+    auto theReaderRequest = Request{.scheme = "https", .authority = "localhost", .path = "/init/wwatp/", .pri = {0, 0}};
     MemoryTree local_reader_tree;
     SimpleBackend local_reader_backend(local_reader_tree);
 
-    auto theWriterRequest = Request{.scheme = "https", .authority = "localhost", .path = "/uninit/wwatp/"};
+    auto theWriterRequest = Request{.scheme = "https", .authority = "localhost", .path = "/uninit/wwatp/", .pri = {0, 0}};
     MemoryTree local_writer_tree;
     SimpleBackend local_writer_backend(local_writer_tree);
     MemoryTree reader_of_writer_tree;
     SimpleBackend reader_of_writer_backend(reader_of_writer_tree);
 
-    auto theBlockingRequest = Request{.scheme = "https", .authority = "localhost", .path = "/blocking/wwatp/"};
+    auto theBlockingRequest = Request{.scheme = "https", .authority = "localhost", .path = "/blocking/wwatp/", .pri = {0, 0}};
     MemoryTree local_blocking_tree;
     SimpleBackend local_blocking_backend(local_blocking_tree);
     ThreadsafeBackend local_blocking_backend_threadsafe(local_blocking_backend);

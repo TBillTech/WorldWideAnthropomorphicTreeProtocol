@@ -1,6 +1,6 @@
 #include "tcp_communication.h"
 
-StreamIdentifier TcpCommunication::getNewRequestStreamIdentifier(Request const &req) {
+StreamIdentifier TcpCommunication::getNewRequestStreamIdentifier(Request const &) {
     // This is just a test, so we don't need to do anything with the cid.
     // The request is just a placeholder for now.
     return theStreamIdentifier();    
@@ -50,7 +50,6 @@ bool TcpCommunication::processRequestStream() {
                 inserted.first->second.swap(processed);
             }
             else {
-                int chunk_count = 0;
                 for (auto &chunk : processed) {
                     outgoing->second.emplace_back(chunk);
                 }
@@ -127,8 +126,7 @@ void TcpCommunication::setupResponses() {
         return;
     }
     prepared_unhandled_response = true;
-    const std::string_view uri = "tcp://localhost/wwatp/test";
-    Request req = Request{.scheme = "https", .authority = "localhost", .path = "/wwatp/test"};
+    Request req = Request{.scheme = "https", .authority = "localhost", .path = "/wwatp/test", .pri = {.urgency = 0, .inc = 0}};
     lock_guard<std::mutex> lock(preparerStackMutex);
     for (auto &preparer : preparersStack) {
         auto response = preparer.second(req);

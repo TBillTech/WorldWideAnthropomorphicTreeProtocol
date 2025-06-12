@@ -220,10 +220,10 @@ void SimpleBackend::notifyListeners(const std::string& label_rule, const maybe<T
         for (auto listener : listeners) {
             if (found->first == label_rule) {
                 // The parent == label and callback is unconditionally met
-                listener.second.second(*this, listener.first, node);
+                listener.second.second(*this, label_rule, node);
             } else if (listener.second.first && checkLabelRuleOverlap(found->first, label_rule)) {
                 // The label_rule contains the listener's label_rule, and the callback matches children
-                listener.second.second(*this, listener.first, node);
+                listener.second.second(*this, label_rule, node);
             } // Otherwise, the label_rule contains the listener's label_rule, but the callback does not match children
         }
         if (found != node_listeners_.begin()) {

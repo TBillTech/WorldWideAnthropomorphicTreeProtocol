@@ -63,6 +63,7 @@ PODType pod_from_chunk(typename std::remove_const<PODType>::type &result, vector
     return result;
 }
 
+#pragma pack(push, 1)
 struct payload_chunk_header {
     payload_chunk_header() :
         signal(0), request_id(0), data_length(0) {}
@@ -128,7 +129,9 @@ struct payload_chunk_header {
     static constexpr uint8_t SIGNAL_WWATP_GET_JOURNAL_REQUEST = 0x21;
     static constexpr uint8_t SIGNAL_WWATP_GET_JOURNAL_RESPONSE = 0x22;
 };
+#pragma pack(pop)
 
+#pragma pack(push, 1)
 struct signal_chunk_header {
     signal_chunk_header() : signal(0), request_id(0) {}
     signal_chunk_header(uint16_t request_id, uint8_t signal) 
@@ -153,7 +156,9 @@ struct signal_chunk_header {
     static constexpr uint8_t SIGNAL_CLOSE_STREAM = 0x00000001;
     static constexpr uint8_t SIGNAL_HEARTBEAT = 0x00000002;
 };
+#pragma pack(pop)
 
+#pragma pack(push, 1)
 struct no_chunk_header {
     static constexpr uint8_t GLOBAL_SIGNAL_TYPE = 0;
     const uint8_t signal_type = GLOBAL_SIGNAL_TYPE;
@@ -161,6 +166,7 @@ struct no_chunk_header {
         return 1;
     }
 };
+#pragma pack(pop)
 
 extern no_chunk_header global_no_chunk_header;
 
