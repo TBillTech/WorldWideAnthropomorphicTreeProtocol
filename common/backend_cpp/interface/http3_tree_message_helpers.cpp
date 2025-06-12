@@ -138,7 +138,9 @@ pair<size_t, fplus::maybe<TreeNode>> decode_MaybeTreeNode(chunkList encoded) {
     iss >> node;
     size_t contents_count;
     iss >> std::hex >> contents_count;
-    shared_span<> contents(std::next(encoded.begin(), chunk_start), std::next(encoded.begin(), chunk_start + contents_count));
+    chunkList::iterator start_it = std::next(encoded.begin(), chunk_start);
+    chunkList::iterator end_it = std::next(encoded.begin(), chunk_start + contents_count);
+    shared_span<> contents(start_it, end_it);
     node.setContents(move(contents));
     return {chunk_start+contents_count, fplus::maybe<TreeNode>(node)};
 }

@@ -210,12 +210,13 @@ class Http3ClientBackendUpdater {
         // NOTE: Using the block mode of the Http3ClientBackend is most easily done in mode 2.
         void run(Communication& connector, double time, size_t sleep_milli = 100) {
             stopFlag.store(false);
-            updaterThread_ = thread([this, &connector, &time, sleep_milli]() {
+            updaterThread_ = thread([this, &connector, time, sleep_milli]() {
+                double local_time = time;
                 while (!stopFlag.load()) {
-                    maintainRequestHandlers(connector, time);
+                    maintainRequestHandlers(connector, local_time);
                     connector.processRequestStream();
                     std::this_thread::sleep_for(std::chrono::milliseconds(sleep_milli));
-                    time += 0.1;  // track the time for journaling purposes
+                    local_time += 0.1;  // track the time for journaling purposes
                 }
                 return EXIT_SUCCESS;
             });

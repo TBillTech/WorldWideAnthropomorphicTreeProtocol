@@ -220,3 +220,18 @@ TEST_CASE("shared_span iostreams", "[shared_span]") {
         REQUIRE(check_span_data(new_sspan, std::span<const uint8_t>(memoryBlock0 + 7, 50)));
     }
 }
+
+TEST_CASE("shared_span construction from non-empty vector with end iterators", "[shared_span]") {
+    // Create a non-empty vector of shared_span<>
+    std::vector<shared_span<>> vec;
+    shared_span<> sspan(global_no_chunk_header, true);
+    vec.push_back(sspan);
+    vec.push_back(sspan);
+    vec.push_back(sspan);
+
+    // Both iterators point to end()
+    shared_span<> empty_span(std::next(vec.begin(), vec.size()), std::next(vec.begin(), vec.size()));
+
+    REQUIRE(empty_span.size() == 0);
+    REQUIRE(empty_span.begin<uint8_t>() == empty_span.end<uint8_t>());
+}

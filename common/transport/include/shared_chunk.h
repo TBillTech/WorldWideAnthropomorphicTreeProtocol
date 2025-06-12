@@ -179,7 +179,11 @@ public:
     shared_span(const shared_span &other) : chunks(other.chunks), signal_type(other.signal_type) {
     }
     template <typename InputIt>
-    shared_span(InputIt begin, InputIt end) : signal_type(begin->signal_type) {
+    shared_span(InputIt begin, InputIt end) : signal_type(no_chunk_header::GLOBAL_SIGNAL_TYPE) {
+        if (begin == end) {
+            return;
+        }
+        signal_type = begin->get_signal_type();
         for (auto it = begin; it != end; ++it) {
             chunks.insert(chunks.end(), it->chunks.begin(), it->chunks.end());
         }
