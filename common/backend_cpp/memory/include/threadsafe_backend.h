@@ -6,7 +6,7 @@
 // The ThreadsafeBackend class is a layer on top of another Backend that provides thread safe access.
 // For most of the methods, it simply locks the mutex, and delegates to the underlying Backend.
 // However, node listeners are a little more complicated.
-// The ThreadsafeBackend class will also track node nofications in a stack, and provide a processNotification 
+// The ThreadsafeBackend class will also track node nofications in a stack, and provide a processNotifications 
 // method for worker threads to deal with the notifications asynchronously without blocking other threads from 
 // accessing the tree.
 class ThreadsafeBackend : public Backend {
@@ -38,12 +38,14 @@ public:
     std::vector<TreeNode> getFullTree() const override;
 
     void registerNodeListener(const std::string listener_name, const std::string label_rule, bool child_notify, NodeListenerCallback callback) override;
+    // Note that deregisterNodeListener will not remove any prior notifications that have already been queued.  
+    // To make sure that no further notifications are processed for a deregistered listener, you should call processNotifications after deregistering the listener.
     void deregisterNodeListener(const std::string listener_name, const std::string label_rule) override;
 
     void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node);
 
     // Process one notification for a specific label rule.  
-    void processNotification() override;
+    void processNotifications() override;
 
 private:
     Backend& tree_;

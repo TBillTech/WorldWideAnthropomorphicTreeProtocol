@@ -56,8 +56,8 @@ public:
     // even though the higher level backend is not explicitly tracking the listeners. So, notifyListeners is in this interface:
     virtual void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node) = 0;
 
-    // Process one notification for a specific label rule (if the backend supports it).  This is used to process notifications in a worker thread.
-    virtual void processNotification() = 0;
+    // Process all pending notifications (most backends are noop).  This is used to process notifications in a worker thread for threadsafe, and wait for server on HTTP3.
+    virtual void processNotifications() = 0;
 };
 
 using Notification = std::pair<std::string, fplus::maybe<TreeNode>>;

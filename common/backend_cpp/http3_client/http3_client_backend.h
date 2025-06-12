@@ -85,7 +85,7 @@ public:
     // Notify listeners for a specific label rule.
     void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node) override;
 
-    void processNotification() override;
+    void processNotifications() override;
 
     // Processing requests and responses are outside the backend interface.  
     // This is because worker threads need to be able to

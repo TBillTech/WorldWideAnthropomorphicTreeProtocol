@@ -38,7 +38,7 @@ class CompositeBackend : public Backend {
         // Notify listeners for a specific label rule.
         void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node);
     
-        void processNotification() override;
+        void processNotifications() override;
 
         // There is a function unique to the CompositeBackend that allows you to mount a backend to a specific label rule.
         std::pair<std::map<std::string, Backend &>::iterator, bool> mountBackend(const std::string& label_rule, Backend& backend);

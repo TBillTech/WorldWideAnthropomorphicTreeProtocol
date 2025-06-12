@@ -80,12 +80,14 @@ void ThreadsafeBackend::notifyListeners(const std::string& label_rule, const fpl
     tree_.notifyListeners(label_rule, node);
 }
 
-void ThreadsafeBackend::processNotification() {
+void ThreadsafeBackend::processNotifications() {
     std::unique_lock<std::mutex> lock(notification_mutex_);
-    if (!notification_stack_.empty()) {
+    while (!notification_stack_.empty()) {
         auto [args, callback] = notification_stack_.back();
         notification_stack_.pop_back();
         lock.unlock(); // Unlock the mutex before calling the callback
         callback(*this, std::get<0>(args), std::get<1>(args));
+        lock.lock();
     }
+    lock.unlock();
 }

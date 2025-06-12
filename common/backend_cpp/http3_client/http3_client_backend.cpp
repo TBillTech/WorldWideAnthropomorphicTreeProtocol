@@ -267,7 +267,7 @@ void Http3ClientBackend::notifyListeners(const std::string& label_rule, const fp
     }
 }
 
-void Http3ClientBackend::processNotification() {
+void Http3ClientBackend::processNotifications() {
     // This blocks until a journal request and response has occurred.
     // Since this is the ONLY use of notificationBlock_, it doesn't hurt to store true
     // even when not in blocking mode.
@@ -275,7 +275,7 @@ void Http3ClientBackend::processNotification() {
     // Meanwhile, tell the backend to process notifications.
     {
         std::lock_guard<std::mutex> lock(backendMutex_);
-        localBackend_.processNotification();
+        localBackend_.processNotifications();
     }
     // And then also tell the server to process notifications.
     {

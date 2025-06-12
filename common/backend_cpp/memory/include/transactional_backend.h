@@ -37,7 +37,7 @@ public:
 
     void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node);
 
-    void processNotification() override { tree_.processNotification(); };
+    void processNotifications() override { tree_.processNotifications(); };
 
 private:
     Backend& tree_;

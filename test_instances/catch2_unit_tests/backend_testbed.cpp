@@ -316,7 +316,7 @@ void BackendTestbed::testBackendLogically(string label_prefix) {
     });
     auto prefixed_lion_nodes = prefixNodeLabels(label_prefix, createLionNodes());
     backend_.upsertNode(prefixed_lion_nodes);
-    backend_.processNotification();
+    backend_.processNotifications();
     if (useCatch2) {
         REQUIRE(lion_node_created);
     }
@@ -324,7 +324,7 @@ void BackendTestbed::testBackendLogically(string label_prefix) {
         assert(lion_node_created);
     }
     backend_.deleteNode(lion_label);
-    backend_.processNotification();
+    backend_.processNotifications();
     if (useCatch2) {
         REQUIRE(lion_node_deleted);
     }
@@ -332,10 +332,11 @@ void BackendTestbed::testBackendLogically(string label_prefix) {
         assert(lion_node_deleted);
     }
     backend_.deregisterNodeListener("lion_listener", lion_label);
+    backend_.processNotifications();
     lion_node_created = false;
     lion_node_deleted = false;
     backend_.upsertNode(prefixed_lion_nodes);
-    backend_.processNotification();
+    backend_.processNotifications();
     if (useCatch2) {
         REQUIRE(!lion_node_created);
     }
@@ -343,7 +344,7 @@ void BackendTestbed::testBackendLogically(string label_prefix) {
         assert(!lion_node_created);
     }
     backend_.deleteNode(lion_label);
-    backend_.processNotification();
+    backend_.processNotifications();
     if (useCatch2) {
         REQUIRE(!lion_node_deleted);
     }

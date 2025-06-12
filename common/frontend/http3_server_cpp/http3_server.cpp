@@ -170,7 +170,7 @@ void Http3ServerRoute::buildResponseChunks(HTTP3TreeMessage& requested) {
             break;
         case payload_chunk_header::SIGNAL_WWATP_PROCESS_NOTIFICATION_REQUEST:
             {
-                backend_.processNotification();
+                backend_.processNotifications();
                 requested.encode_processNotificationResponse();
             }
             break;

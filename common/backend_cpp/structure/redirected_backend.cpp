@@ -116,7 +116,7 @@ void RedirectedBackend::notifyListeners(const std::string& label_rule, const fpl
     root_backend_.notifyListeners(relative_label_rule, node_copy);
 }
 
-void RedirectedBackend::processNotification() {
-    root_backend_.processNotification();
+void RedirectedBackend::processNotifications() {
+    root_backend_.processNotifications();
 }
 

@@ -146,10 +146,10 @@ void CompositeBackend::notifyListeners(const std::string& label_rule, const fplu
     index_backend.second.notifyListeners(relative_label_rule, node_copy);
 }
 
-void CompositeBackend::processNotification() {
-    root_backend_.processNotification();
+void CompositeBackend::processNotifications() {
+    root_backend_.processNotifications();
     for (const auto& [label_rule, backend] : mounted_backends_) {
-        backend.processNotification();
+        backend.processNotifications();
     }
 }
 
