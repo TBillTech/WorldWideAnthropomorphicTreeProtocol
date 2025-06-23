@@ -23,6 +23,12 @@ public:
             if ((staticNode_.is_just()) && request.isWWATP()) {
                 throw std::runtime_error("Static node must be used with static request (not WWATP).");
             }
+            if ((staticNode_.is_just()) && journalRequestsPerMinute_ > 0) {
+                throw std::runtime_error("Static node mode should not be used with journaling.");
+            }
+            if (staticNode_.is_just() && !blockingMode_) {
+                requestStaticNodeData();
+            }
           };
     ~Http3ClientBackend() override = default;
 
@@ -51,6 +57,9 @@ public:
     }
     // Delete copy constructor
     Http3ClientBackend& operator=(const Http3ClientBackend&) = delete;
+
+    // Retrieve node by static url.
+    fplus::maybe<TreeNode>& getStaticNode();
 
     // Retrieve a node by its label rule.
     fplus::maybe<TreeNode> getNode(const std::string& label_rule) const override;

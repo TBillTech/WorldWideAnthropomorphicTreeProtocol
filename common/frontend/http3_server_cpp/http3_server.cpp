@@ -259,7 +259,7 @@ prepared_stream_callback HTTP3Server::getResponseCallback(const Request & req) {
             };
             size_t sum_size = 0;
             for (const auto& chunk : asset) {
-                sum_size += chunk.size() + chunk.get_signal_size();
+                sum_size += chunk.size();
             }
             return std::make_pair(uri_response_info{true, false, false, sum_size}, callback);
         }

@@ -69,6 +69,7 @@ struct ClientStream {
     Client *handler;
     shared_span<> partial_chunk;
     chunks locked_chunks;
+    bool trailers_sent;
 };
 
 struct Endpoint {

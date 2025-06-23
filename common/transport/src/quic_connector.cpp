@@ -45,7 +45,8 @@ ClientStream::ClientStream(const Request &req, int64_t stream_id, Client *client
         stream_id(stream_id),
         fd(-1),
         handler(client),
-        partial_chunk(global_no_chunk_header, false) {}
+        partial_chunk(global_no_chunk_header, false),
+        trailers_sent(false) {}
 
 ClientStream::~ClientStream() {
   if (fd != -1) {
@@ -85,6 +86,11 @@ int ClientStream::open_file(const std::string_view &path) {
 }
 
 void ClientStream::append_data(std::span<const uint8_t> data) {
+    if (!req.isWWATP()) {
+        shared_span<> other_chunk(global_no_chunk_header, data);
+        handler->push_incoming_chunk(move(other_chunk), req);
+        return;
+    }
     if (data.empty()) {
         return;
     }
@@ -2000,9 +2006,13 @@ bool Client::lock_outgoing_chunks(chunks &locked_chunks, vector<StreamIdentifier
     // But first zero out the vec, in case the outgoingChunks queue cannot fill it up
     std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
 
+    if (quic_connector_.noMoreChunks(sids))
+    {
+        // If there are no more chunks, we return is_closing
+        return true;
+    }
     // Ask the quic_connector_ for veccnt chunks
     chunks to_send = quic_connector_.popNOutgoingChunks(sids, veccnt);
-    bool signal_closed = quic_connector_.noMoreChunks(sids);
     size_t vec_index = 0;
 
     for (auto chunk: to_send)
@@ -2015,7 +2025,7 @@ bool Client::lock_outgoing_chunks(chunks &locked_chunks, vector<StreamIdentifier
         vec_index++;
     }
     locked_chunks.insert(locked_chunks.end(), std::make_move_iterator(to_send.begin()), std::make_move_iterator(to_send.end()));
-    return signal_closed;
+    return false;
 }
 
 pair<size_t, vector<StreamIdentifier>> Client::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
@@ -2140,13 +2150,13 @@ namespace
             is_closing = stream->lock_outgoing_chunks(pending.second, vec, veccnt);
         }
     
-        if (is_closing) {
+        if (is_closing && (!config.send_trailers || stream->trailers_sent)) {
             *pflags |= NGHTTP3_DATA_FLAG_EOF;
         } else {
             *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
         }
     
-        if (is_closing && config.send_trailers)
+        if (is_closing && config.send_trailers && !stream->trailers_sent)
         {
             auto stream_id_str = util::format_uint(stream_id);
             auto trailers = std::to_array({
@@ -2161,6 +2171,8 @@ namespace
                             << std::endl;
                 return NGHTTP3_ERR_CALLBACK_FAILURE;
             }
+            stream->trailers_sent = true;
+            *pflags |= NGHTTP3_DATA_FLAG_EOF;
         }
 
         return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
@@ -2672,8 +2684,6 @@ StreamIdentifier QuicConnector::getNewRequestStreamIdentifier(Request const &req
         // This is not a WWATP request, so check if it is already in the staticRequests
         auto findit = staticRequests.find(req);
         if (findit != staticRequests.end()) {
-            // This is a static request, so return the stream_id
-            returnPaths.insert(make_pair(findit->second, req));
             return findit->second;
         }
     }
@@ -2683,6 +2693,11 @@ StreamIdentifier QuicConnector::getNewRequestStreamIdentifier(Request const &req
     // Use the atomic stream_id_counter to simultaneously increment and return the stream_id
     auto stream_id = stream_id_counter.fetch_add(1);
     auto newStreamIdentifier = StreamIdentifier(cid, stream_id);
+    while(returnPaths.find(newStreamIdentifier) != returnPaths.end()) {
+        // If the newStreamIdentifier is already in the returnPaths, we need to increment the stream_id
+        stream_id = stream_id_counter.fetch_add(1);
+        newStreamIdentifier = StreamIdentifier(cid, stream_id);
+    }
     lock_guard<std::mutex> lock(returnPathsMutex);
     if (!req.isWWATP()) {
         // This is not a WWATP request, so add it to the staticRequests
@@ -2869,7 +2884,10 @@ void QuicConnector::listen(const string &, const string&, int) {
 }
 
 void QuicConnector::close() {
-    socket.close();
+    terminate_.store(true);
+    if (reqrep_thread_.joinable()) {
+        reqrep_thread_.join();
+    }
 }
 
 void QuicConnector::connect(const string &peer_name, const string& peer_ip_addr, int peer_port) {
@@ -2927,7 +2945,9 @@ void QuicConnector::connect(const string &peer_name, const string& peer_ip_addr,
 
             auto port_str = std::to_string(peer_port);
             if (run(c, loop, peer_ip_addr.c_str(), port_str.c_str(), tls_ctx, terminate_) != 0) {
-                exit(EXIT_FAILURE);
+                if(!terminate_.load()) {
+                    exit(EXIT_FAILURE);
+                }
             }
 
             if (config.preferred_versions.empty()) {

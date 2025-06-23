@@ -173,6 +173,9 @@ private:
         // Set the terminate flag
         terminate_.store(true);
 
+        if (loop == nullptr) {
+            return; // If the loop is already destroyed, nothing to do
+        }
         // Send the terminate signal
         ev_async_send(loop, &async_terminate);
 
@@ -180,6 +183,10 @@ private:
         if (reqrep_thread_.joinable()) {
             reqrep_thread_.join();
         }
+        // Clean up the event loop
+        ev_async_stop(loop, &async_terminate);
+        ev_loop_destroy(loop);
+        loop = nullptr;
     }
 
     

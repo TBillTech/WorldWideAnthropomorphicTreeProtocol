@@ -649,6 +649,7 @@ void HTTP3TreeMessage::setup_staticNodeDataRequest(void) {
     if (isInitialized_) {
         throw invalid_argument("HTTP3TreeMessage is already initialized");
     }
+    signal_ = payload_chunk_header::SIGNAL_OTHER_CHUNK;
     isInitialized_ = true;
 }
 

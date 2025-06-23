@@ -100,6 +100,8 @@ struct Stream {
     bool live_stream;
     // Span for caching partial chunks
     shared_span<> partial_chunk;
+    // Has sent trailers?
+    bool trailers_sent;
 };
 
 class Server;

@@ -114,6 +114,9 @@ public:
     }
     void stop() {
         stopFlag.store(true);
+        if (serverThread_.joinable()) {
+            serverThread_.join();
+        }
     }
 
 

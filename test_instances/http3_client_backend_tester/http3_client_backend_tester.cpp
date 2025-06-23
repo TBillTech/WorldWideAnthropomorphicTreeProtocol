@@ -41,6 +41,76 @@ unique_ptr<Communication> createClientCommunication(const string& protocol, boos
     }
 }
 
+vector<shared_span<>> readFileChunks(string const& file_path) {
+    vector<shared_span<>> chunks;
+    int fd = open(file_path.c_str(), O_RDONLY);
+    if (fd < 0) {
+        cerr << "Error opening file: " << file_path << endl;
+        return chunks;
+    }
+    struct stat file_stat;
+    if (fstat(fd, &file_stat) < 0) {
+        cerr << "Error getting file size: " << file_path << endl;
+        close(fd);
+        return chunks;
+    }
+    size_t file_size = file_stat.st_size;
+    size_t chunk_size = shared_span<>::chunk_size;
+    size_t chunk_payload_size = chunk_size - sizeof(payload_chunk_header);
+    size_t num_chunks = (file_size + chunk_payload_size - 1) / chunk_payload_size; // Round up to the nearest chunk size
+    for (size_t i = 0; i < num_chunks; ++i) {
+        size_t offset = i * chunk_payload_size;
+        size_t size_to_read = min(chunk_payload_size, file_size - offset);
+        if (size_to_read == 0) {
+            break; // No more data to read
+        }
+        // use pread, and create a span<const uint8_t> from the data read
+        char memory[shared_span<>::chunk_size];
+        ssize_t bytes_read = pread(fd, memory, size_to_read, offset);
+        if (bytes_read < 0) {
+            cerr << "Error reading file: " << file_path << endl;
+            close(fd);
+            return chunks;
+        }
+        auto memory_span = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(memory), bytes_read);
+        payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, bytes_read);
+        chunks.emplace_back(header, memory_span);
+    }
+    close(fd);
+    return chunks;
+}
+
+void verifyStaticData(TreeNode const& withContents, chunks const& originalStaticData) {
+    auto contents = withContents.getContents();
+    // We cannot directly compare contents chunks with originalStaticData chunks, since the chunk lengths may differ.
+    // So use the shared_span flattening to convert the originalStaticData to a shared_span,
+    // and then use a uint8_t shared_span<> iterator to compare the individual bytes.
+    shared_span<> originalSpan(originalStaticData.begin(), originalStaticData.end());
+    auto withContentsIterator = contents.begin<uint8_t>();
+    auto originalSpanIterator = originalSpan.begin<uint8_t>();
+    size_t index = 0;
+    if (withContentsIterator == contents.end<uint8_t>() && originalSpanIterator != originalSpan.end<uint8_t>()) {
+        throw runtime_error("Static data content mismatch: original span has more data than withContents up to index " + to_string(index));
+    }
+    if (originalSpanIterator == originalSpan.end<uint8_t>() && withContentsIterator != contents.end<uint8_t>()) {
+        throw runtime_error("Static data content mismatch: withContents has more data than original span up to index " + to_string(index));
+    }
+    while (withContentsIterator != contents.end<uint8_t>() && originalSpanIterator != originalSpan.end<uint8_t>()) {
+        if (*withContentsIterator != *originalSpanIterator) {
+            throw runtime_error("Static data content mismatch at index " + to_string(index));
+        }
+        ++withContentsIterator;
+        ++originalSpanIterator;
+        ++index;
+        if (withContentsIterator == contents.end<uint8_t>() && originalSpanIterator != originalSpan.end<uint8_t>()) {
+            throw runtime_error("Static data content mismatch: original span has more data than withContents up to index " + to_string(index));
+        }
+        if (originalSpanIterator == originalSpan.end<uint8_t>() && withContentsIterator != contents.end<uint8_t>()) {
+            throw runtime_error("Static data content mismatch: withContents has more data than original span up to index " + to_string(index));
+        }
+    }
+}
+
 int main() {
     disableCatch2();
     // set to pool size for the type UDPChunk to 4 GB
@@ -93,6 +163,7 @@ int main() {
             .max_dyn_length = 20_m,
             .cc_algo = NGTCP2_CC_ALGO_CUBIC,
             .initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT,
+            .send_trailers = false,
             .handshake_timeout = UINT64_MAX,
             .ack_thresh = 2,
             .initial_pkt_num = UINT32_MAX,
@@ -129,6 +200,10 @@ int main() {
     MemoryTree blocking_test_memory_tree;
     SimpleBackend blocking_test_backend(blocking_test_memory_tree);
     theServer.addBackendRoute(blocking_test_backend, 1000, "/blocking/wwatp/");
+    auto index_chunks = readFileChunks("../test_instances/data/libtest_index.html");
+    theServer.addStaticAsset("/index.html", index_chunks);
+    auto random_chunks = readFileChunks("../test_instances/data/randombytes.bin");
+    theServer.addStaticAsset("/randombytes.bin", random_chunks);
 
     this_thread::sleep_for(chrono::microseconds(100));
     timesecs += 0.1;
@@ -141,6 +216,33 @@ int main() {
     this_thread::sleep_for(chrono::milliseconds(100));
     timesecs += 0.1;
     cout << "In Main: Client should be started up" << endl;
+
+    Request staticHtmlRequest{.scheme = "https", .authority = "localhost", .path = "/index.html", .pri = {0, 0}};
+    Request staticBlockingHtmlRequest{.scheme = "https", .authority = "localhost", .path = "/index.html", .pri = {1, 0}};
+    TreeNodeVersion aVersion;
+    TreeNode staticHtmlNode(
+        "index.html",
+        "Static HTML file",
+        {"html"},
+        aVersion,
+        {},
+        shared_span<>(global_no_chunk_header, false),
+        fplus::nothing<std::string>(),
+        fplus::nothing<std::string>()
+    );
+    Request randomBytesRequest{.scheme = "https", .authority = "localhost", .path = "/randombytes.bin", .pri = {0, 0}};
+    TreeNode randomBytesNode(
+        "randombytes.bin",
+        "Random bytes file",
+        {"bin"},
+        aVersion,
+        {},
+        shared_span<>(global_no_chunk_header, false),
+        fplus::nothing<std::string>(),
+        fplus::nothing<std::string>()
+    );
+    MemoryTree static_tree;
+    SimpleBackend static_backend(static_tree);
 
     Request theReaderRequest{.scheme = "https", .authority = "localhost", .path = "/init/wwatp/", .pri = {0, 0}};
     MemoryTree local_reader_tree;
@@ -158,6 +260,10 @@ int main() {
     ThreadsafeBackend local_blocking_backend_threadsafe(local_blocking_backend);
 
     Http3ClientBackendUpdater client_backend_updater;
+    Http3ClientBackend& static_html_client = client_backend_updater.addBackend(static_backend, false, staticHtmlRequest, 0, fplus::just(staticHtmlNode));
+    Http3ClientBackend& random_bytes_client = client_backend_updater.addBackend(static_backend, false, randomBytesRequest, 0, fplus::just(randomBytesNode));
+    Http3ClientBackend& static_blocking_html_client = client_backend_updater.addBackend(static_backend, true, staticBlockingHtmlRequest, 0, fplus::just(staticHtmlNode));
+
     Http3ClientBackend& reader_client = client_backend_updater.addBackend(local_reader_backend, false, theReaderRequest);
     reader_client.requestFullTreeSync();
     
@@ -185,7 +291,11 @@ int main() {
         cerr << "In Main: Waited for " << label << endl << flush;
     };
 
-    response_cycle("reader_tester requestFullTreeSync");
+    response_cycle("static requests and reader_tester requestFullTreeSync");
+    TreeNode const& readStaticHtmlNode = static_html_client.getStaticNode().get_or_throw(runtime_error("Failed to get static HTML node"));
+    verifyStaticData(readStaticHtmlNode, index_chunks);
+    TreeNode const& readRandomBytesNode = random_bytes_client.getStaticNode().get_or_throw(runtime_error("Failed to get random bytes node"));
+    verifyStaticData(readRandomBytesNode, random_chunks);
     {
         BackendTestbed reader_tester(reader_client, false, false);
         reader_tester.testBackendLogically();
@@ -212,6 +322,8 @@ int main() {
     theServer.run(*server_communication, 100);
 
     {
+        TreeNode const& readBlockingHtmlNode = static_blocking_html_client.getStaticNode().get_or_throw(runtime_error("Failed to get blocking HTML node"));
+        verifyStaticData(readBlockingHtmlNode, index_chunks);
         blocking_client.requestFullTreeSync();
         BackendTestbed blocking_tester(blocking_client);
         blocking_tester.addAnimalsToBackend();

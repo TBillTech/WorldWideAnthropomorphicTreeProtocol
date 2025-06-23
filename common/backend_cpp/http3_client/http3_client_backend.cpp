@@ -52,6 +52,14 @@ void Http3ClientBackend::responseSignal()
     responseCondition.notify_one();
 }
 
+fplus::maybe<TreeNode>& Http3ClientBackend::getStaticNode() {
+    // If the static node is not set, then we need to request it from the server.
+    if (blockingMode_) {
+        requestStaticNodeData();
+    }
+    return staticNode_;
+}
+
 fplus::maybe<TreeNode> Http3ClientBackend::getNode(const std::string& label_rule) const {
     // Use the caching localBackend_ to get the node
     std::lock_guard<std::mutex> lock(backendMutex_);

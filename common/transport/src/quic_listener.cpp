@@ -63,7 +63,8 @@ Stream::Stream(int64_t stream_id, Handler *handler)
       dyndataleft(0),
       dynbuflen(0),
       live_stream(false),
-      partial_chunk(global_no_chunk_header, false) {}
+      partial_chunk(global_no_chunk_header, false),
+      trailers_sent(false) {}
 
 namespace
 {
@@ -414,9 +415,12 @@ bool Handler::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3
     // But first zero out the vec, in case the outgoingChunks queue cannot fill it up
     std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
 
+    if(server()->listener().noMoreChunks(sids)) {
+        return true; // If no more chunks are available, signal closed
+    }
+
     // Ask the quic_listener_ for veccnt chunks
     chunks to_send = server()->listener().popNOutgoingChunks(sids, veccnt);
-    bool signal_closed = server()->listener().noMoreChunks(sids);
     size_t vec_index = 0;
 
     for (auto chunk: to_send)
@@ -426,12 +430,19 @@ bool Handler::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3
         auto locked_ptr = reinterpret_cast<uint8_t*>(chunk.use_chunk());
         vec[vec_index].base = locked_ptr;
         vec[vec_index].len = chunk.get_signal_size() + chunk.size();
+        if (chunk.get_signal_type() == payload_chunk_header::GLOBAL_SIGNAL_TYPE) {
+            if (chunk.get_signal_signal() == payload_chunk_header::SIGNAL_OTHER_CHUNK){
+                // If the chunk is an OTHER_CHUNK_HEADER, then we only send the data, not the header
+                vec[vec_index].len -= chunk.get_signal_size();
+                vec[vec_index].base += chunk.get_signal_size();
+            }
+        }
         vec_index++;
 
         // Call shared_span_incr_rc to increment the reference count
         shared_span_incr_rc(locked_ptr, std::move(chunk));
     }
-    return signal_closed;
+    return false;
 }
 
 pair<size_t, vector<StreamIdentifier>> Handler::get_pending_chunks_size(int64_t stream_id, size_t veccnt)
@@ -510,7 +521,7 @@ namespace
         {
             return NGHTTP3_ERR_WOULDBLOCK;
         }
-        if (pending.first == 0)
+        if ((pending.first == 0) || (stream->dyndataleft == 0))
         {
             is_closing = true;
         } else {
@@ -525,17 +536,13 @@ namespace
         {
             stream->dyndataleft -= len;
         }
-        if (stream->dyndataleft == 0)
-        {
-            is_closing = true;
-        }
 
-        if (is_closing) {
+        if (is_closing && (!config.send_trailers || stream->trailers_sent)) {
             *pflags |= NGHTTP3_DATA_FLAG_EOF;
         } else {
             *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
         }
-        if (is_closing && config.send_trailers)
+        if (is_closing && config.send_trailers && !stream->trailers_sent)
         {
             auto stream_id_str = util::format_uint(stream_id);
             auto trailers = std::to_array({
@@ -550,6 +557,8 @@ namespace
                             << std::endl;
                 return NGHTTP3_ERR_CALLBACK_FAILURE;
             }
+            stream->trailers_sent = true;
+            *pflags |= NGHTTP3_DATA_FLAG_EOF;
         }
 
         return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
@@ -4326,7 +4335,7 @@ void QuicListener::listen(const string &local_name, const string &local_ip_addr,
 
 void QuicListener::close()
 {
-    socket.close();
+    terminate();
 }
 
 void QuicListener::connect(const string &, const string &, int)
