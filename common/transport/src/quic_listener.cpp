@@ -363,29 +363,50 @@ namespace
     {
         // First zero out the vec, for various cases where not all the data space is
         std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
-        // TODONE: Use the outgoingChunks queue instead of dyn_buf
+        // Notice that live_stream essentially means the stream length is not defined (see find_dyn_length).
+        // TODONE: Use the outgoingChunks queue
         auto stream = static_cast<Stream *>(stream_user_data);
         bool is_closing = false;
 
         ngtcp2_conn_info ci;
         ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
+        // auto stream_window = ngtcp2_conn_get_max_stream_data_left(stream->handler->conn(), stream_id);
+        // auto connection_window = ngtcp2_conn_get_max_data_left(stream->handler->conn());
+        
+        // std::cout << "Stream flow control window: " << stream_window << std::endl;
+        // std::cout << "Connection flow control window: " << connection_window << std::endl;
+
         auto pending = stream->handler->get_pending_chunks_size(stream_id, veccnt);
         if (pending.first > ci.cwnd)
         {
             return NGHTTP3_ERR_WOULDBLOCK;
         }
-        if (pending.first == 0) {
+        if ((pending.first == 0) || (stream->dyndataleft == 0))
+        {
             is_closing = true;
         } else {
             is_closing = stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
         }
+        if (is_closing && stream->req.isWWATP())
+        {
+            stream->trailers_sent = true; // Avoid trailers for WWATP streams
+        }
 
-        if (is_closing) {
+        // This looks wrong if dyndataleft == -1, but note that it will get cast to infinity, and turn out correct.
+        auto len = std::min(pending.first, static_cast<size_t>(stream->dyndataleft));
+
+        stream->dynbuflen += len;
+        if (!stream->live_stream)
+        {
+            stream->dyndataleft -= len;
+        }
+
+        if (is_closing && (!config.send_trailers || stream->trailers_sent)) {
             *pflags |= NGHTTP3_DATA_FLAG_EOF;
         } else {
             *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
         }
-        if (is_closing && config.send_trailers)
+        if (is_closing && config.send_trailers && !stream->trailers_sent)
         {
             auto stream_id_str = util::format_uint(stream_id);
             auto trailers = std::to_array({
@@ -397,10 +418,12 @@ namespace
                 rv != 0)
             {
                 std::cerr << "Server nghttp3_conn_submit_trailers: " << nghttp3_strerror(rv)
-                          << std::endl;
+                            << std::endl;
                 return NGHTTP3_ERR_CALLBACK_FAILURE;
             }
-        } 
+            stream->trailers_sent = true;
+            *pflags |= NGHTTP3_DATA_FLAG_EOF;
+        }
 
         return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
             return v.base != nullptr; // Check if the base pointer is not nullptr
@@ -441,6 +464,9 @@ bool Handler::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3
 
         // Call shared_span_incr_rc to increment the reference count
         shared_span_incr_rc(locked_ptr, std::move(chunk));
+    }
+    if(server()->listener().noMoreChunks(sids)) {
+        return true; // If no more chunks are available, signal closed
     }
     return false;
 }
@@ -501,69 +527,7 @@ namespace
                                 nghttp3_vec *vec, size_t veccnt, uint32_t *pflags,
                                 void *, void *stream_user_data)
     {
-        // First zero out the vec, for various cases where not all the data space is
-        std::fill(vec, vec + veccnt, nghttp3_vec{nullptr, 0});
-        // Notice that live_stream essentially means the stream length is not defined (see find_dyn_length).
-        // TODONE: Use the outgoingChunks queue
-        auto stream = static_cast<Stream *>(stream_user_data);
-        bool is_closing = false;
-
-        ngtcp2_conn_info ci;
-        ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
-        // auto stream_window = ngtcp2_conn_get_max_stream_data_left(stream->handler->conn(), stream_id);
-        // auto connection_window = ngtcp2_conn_get_max_data_left(stream->handler->conn());
-        
-        // std::cout << "Stream flow control window: " << stream_window << std::endl;
-        // std::cout << "Connection flow control window: " << connection_window << std::endl;
-
-        auto pending = stream->handler->get_pending_chunks_size(stream_id, veccnt);
-        if (pending.first > ci.cwnd)
-        {
-            return NGHTTP3_ERR_WOULDBLOCK;
-        }
-        if ((pending.first == 0) || (stream->dyndataleft == 0))
-        {
-            is_closing = true;
-        } else {
-            is_closing = stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
-        }
-
-        // This looks wrong if dyndataleft == -1, but note that it will get cast to infinity, and turn out correct.
-        auto len = std::min(pending.first, static_cast<size_t>(stream->dyndataleft));
-
-        stream->dynbuflen += len;
-        if (!stream->live_stream)
-        {
-            stream->dyndataleft -= len;
-        }
-
-        if (is_closing && (!config.send_trailers || stream->trailers_sent)) {
-            *pflags |= NGHTTP3_DATA_FLAG_EOF;
-        } else {
-            *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
-        }
-        if (is_closing && config.send_trailers && !stream->trailers_sent)
-        {
-            auto stream_id_str = util::format_uint(stream_id);
-            auto trailers = std::to_array({
-                util::make_nv_nc("x-ngtcp2-stream-id"sv, stream_id_str),
-            });
-
-            if (auto rv = nghttp3_conn_submit_trailers(
-                    conn, stream_id, trailers.data(), trailers.size());
-                rv != 0)
-            {
-                std::cerr << "Server nghttp3_conn_submit_trailers: " << nghttp3_strerror(rv)
-                            << std::endl;
-                return NGHTTP3_ERR_CALLBACK_FAILURE;
-            }
-            stream->trailers_sent = true;
-            *pflags |= NGHTTP3_DATA_FLAG_EOF;
-        }
-
-        return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
-            return v.base != nullptr; // Check if the base pointer is not nullptr
-        });
+        return read_data(conn, stream_id, vec, veccnt, pflags, nullptr, stream_user_data);
     }
 } // namespace
 
