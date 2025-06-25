@@ -2025,9 +2025,6 @@ bool Client::lock_outgoing_chunks(chunks &locked_chunks, vector<StreamIdentifier
         vec_index++;
     }
     locked_chunks.insert(locked_chunks.end(), std::make_move_iterator(to_send.begin()), std::make_move_iterator(to_send.end()));
-    if(quic_connector_.noMoreChunks(sids)) {
-        return true; // If no more chunks are available, signal closed
-    }
     return false;
 }
 
@@ -2077,7 +2074,7 @@ void Client::push_incoming_chunk(shared_span<> &&chunk, Request const &req)
 }
 
 namespace {
-    nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec,
+    nghttp3_ssize read_data(nghttp3_conn *, int64_t stream_id, nghttp3_vec *vec,
                         size_t veccnt, uint32_t *pflags, void * /* user_data */,
                         void *stream_user_data) {
         // First zero out the vec, for various cases where not all the data space is used.
@@ -2099,36 +2096,13 @@ namespace {
         } else {
             is_closing = stream->lock_outgoing_chunks(pending.second, vec, veccnt);
         }
-        if (is_closing && stream->req.isWWATP())
-        {
-            stream->trailers_sent = true; // Avoid trailers for WWATP streams
-        }
     
-        if (is_closing && (!config.send_trailers || stream->trailers_sent)) {
+        if (is_closing) {
             *pflags |= NGHTTP3_DATA_FLAG_EOF;
         } else {
             *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
         }
     
-        if (is_closing && config.send_trailers && !stream->trailers_sent)
-        {
-            auto stream_id_str = util::format_uint(stream_id);
-            auto trailers = std::to_array({
-                util::make_nv_nc("x-ngtcp2-stream-id"sv, stream_id_str),
-            });
-
-            if (auto rv = nghttp3_conn_submit_trailers(
-                    conn, stream_id, trailers.data(), trailers.size());
-                rv != 0)
-            {
-                std::cerr << "Server nghttp3_conn_submit_trailers: " << nghttp3_strerror(rv)
-                            << std::endl;
-                return NGHTTP3_ERR_CALLBACK_FAILURE;
-            }
-            stream->trailers_sent = true;
-            *pflags |= NGHTTP3_DATA_FLAG_EOF;
-        }
-
         return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
             return v.base != nullptr; // Check if the base pointer is not nullptr
         });

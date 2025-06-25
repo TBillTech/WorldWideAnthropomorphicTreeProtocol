@@ -260,9 +260,9 @@ int main() {
     ThreadsafeBackend local_blocking_backend_threadsafe(local_blocking_backend);
 
     Http3ClientBackendUpdater client_backend_updater;
-    //Http3ClientBackend& static_html_client = client_backend_updater.addBackend(static_backend, false, staticHtmlRequest, 0, fplus::just(staticHtmlNode));
-    //Http3ClientBackend& random_bytes_client = client_backend_updater.addBackend(static_backend, false, randomBytesRequest, 0, fplus::just(randomBytesNode));
-    //Http3ClientBackend& static_blocking_html_client = client_backend_updater.addBackend(static_backend, true, staticBlockingHtmlRequest, 0, fplus::just(staticHtmlNode));
+    Http3ClientBackend& static_html_client = client_backend_updater.addBackend(static_backend, false, staticHtmlRequest, 0, fplus::just(staticHtmlNode));
+    Http3ClientBackend& random_bytes_client = client_backend_updater.addBackend(static_backend, false, randomBytesRequest, 0, fplus::just(randomBytesNode));
+    Http3ClientBackend& static_blocking_html_client = client_backend_updater.addBackend(static_backend, true, staticBlockingHtmlRequest, 0, fplus::just(staticHtmlNode));
 
     Http3ClientBackend& reader_client = client_backend_updater.addBackend(local_reader_backend, false, theReaderRequest);
     reader_client.requestFullTreeSync();
@@ -292,10 +292,10 @@ int main() {
     };
 
     response_cycle("static requests and reader_tester requestFullTreeSync");
-    //TreeNode const& readStaticHtmlNode = static_html_client.getStaticNode().get_or_throw(runtime_error("Failed to get static HTML node"));
-    //verifyStaticData(readStaticHtmlNode, index_chunks);
-    //TreeNode const& readRandomBytesNode = random_bytes_client.getStaticNode().get_or_throw(runtime_error("Failed to get random bytes node"));
-    //verifyStaticData(readRandomBytesNode, random_chunks);
+    TreeNode const& readStaticHtmlNode = static_html_client.getStaticNode().get_or_throw(runtime_error("Failed to get static HTML node"));
+    verifyStaticData(readStaticHtmlNode, index_chunks);
+    TreeNode const& readRandomBytesNode = random_bytes_client.getStaticNode().get_or_throw(runtime_error("Failed to get random bytes node"));
+    verifyStaticData(readRandomBytesNode, random_chunks);
     {
         BackendTestbed reader_tester(reader_client, false, false);
         reader_tester.testBackendLogically();
@@ -322,8 +322,8 @@ int main() {
     theServer.run(*server_communication, 100);
 
     {
-        //TreeNode const& readBlockingHtmlNode = static_blocking_html_client.getStaticNode().get_or_throw(runtime_error("Failed to get blocking HTML node"));
-        //verifyStaticData(readBlockingHtmlNode, index_chunks);
+        TreeNode const& readBlockingHtmlNode = static_blocking_html_client.getStaticNode().get_or_throw(runtime_error("Failed to get blocking HTML node"));
+        verifyStaticData(readBlockingHtmlNode, index_chunks);
         blocking_client.requestFullTreeSync();
         BackendTestbed blocking_tester(blocking_client);
         blocking_tester.addAnimalsToBackend();

@@ -367,6 +367,7 @@ namespace
         // TODONE: Use the outgoingChunks queue
         auto stream = static_cast<Stream *>(stream_user_data);
         bool is_closing = false;
+        bool data_finished = false;
 
         ngtcp2_conn_info ci;
         ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
@@ -387,10 +388,6 @@ namespace
         } else {
             is_closing = stream->handler->lock_outgoing_chunks(pending.second, vec, veccnt);
         }
-        if (is_closing && stream->req.isWWATP())
-        {
-            stream->trailers_sent = true; // Avoid trailers for WWATP streams
-        }
 
         // This looks wrong if dyndataleft == -1, but note that it will get cast to infinity, and turn out correct.
         auto len = std::min(pending.first, static_cast<size_t>(stream->dyndataleft));
@@ -400,13 +397,17 @@ namespace
         {
             stream->dyndataleft -= len;
         }
+        if (stream->dyndataleft == 0)
+        {
+            data_finished = true;
+        }
 
         if (is_closing && (!config.send_trailers || stream->trailers_sent)) {
             *pflags |= NGHTTP3_DATA_FLAG_EOF;
         } else {
             *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
         }
-        if (is_closing && config.send_trailers && !stream->trailers_sent)
+        if (data_finished && config.send_trailers && !stream->trailers_sent)
         {
             auto stream_id_str = util::format_uint(stream_id);
             auto trailers = std::to_array({
@@ -422,12 +423,15 @@ namespace
                 return NGHTTP3_ERR_CALLBACK_FAILURE;
             }
             stream->trailers_sent = true;
-            *pflags |= NGHTTP3_DATA_FLAG_EOF;
         }
 
-        return std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
+        nghttp3_ssize count = std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
             return v.base != nullptr; // Check if the base pointer is not nullptr
         });
+        if (count == 0) {
+            *pflags |= NGHTTP3_DATA_FLAG_EOF;
+        }
+        return count;
     }
 } // namespace
 
@@ -464,9 +468,6 @@ bool Handler::lock_outgoing_chunks(vector<StreamIdentifier> const &sids, nghttp3
 
         // Call shared_span_incr_rc to increment the reference count
         shared_span_incr_rc(locked_ptr, std::move(chunk));
-    }
-    if(server()->listener().noMoreChunks(sids)) {
-        return true; // If no more chunks are available, signal closed
     }
     return false;
 }
