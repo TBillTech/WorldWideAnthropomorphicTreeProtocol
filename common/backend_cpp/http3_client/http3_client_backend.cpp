@@ -723,7 +723,7 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
         if (backend.hasNextRequest()) {
             auto req = backend.getRequestUrlInfo();
             StreamIdentifier stream_id = connector.getNewRequestStreamIdentifier(req);
-            cerr << "Requesting stream_id: " << stream_id.logical_id << std::endl << flush;
+            cerr << "Requesting stream_id: " << stream_id.logical_id << " for request: " << req << std::endl << flush;
             auto theRequest = ongoingRequests_.emplace(stream_id, backend.popNextRequest());
             theRequest.first->second.setRequestId(stream_id.logical_id);
             HTTP3TreeMessage& theMessage = theRequest.first->second;
@@ -738,7 +738,7 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
                 for (auto& chunk : response) {
                     theMessage.pushResponseChunk(chunk);
                 }
-                if (response.empty() && request.empty() && !theMessage.isResponseComplete()) {
+                if (response.empty() && request.empty() && !theMessage.isResponseComplete() && backend.getRequestUrlInfo().isWWATP()) {
                     chunks response_chunks;
                     auto tag = payload_chunk_header(stream_identifier.logical_id, payload_chunk_header::SIGNAL_HEARTBEAT, 0);
                     response_chunks.emplace_back(tag, span<const char>("", 0));

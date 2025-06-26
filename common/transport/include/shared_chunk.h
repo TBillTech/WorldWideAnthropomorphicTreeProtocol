@@ -93,6 +93,7 @@ struct payload_chunk_header {
     static constexpr uint8_t SIGNAL_OTHER_CHUNK = 0x00;
     static constexpr uint8_t SIGNAL_CLOSE_STREAM = 0x01;
     static constexpr uint8_t SIGNAL_HEARTBEAT = 0x02;
+    static constexpr uint8_t SIGNAL_PLACEHOLDER = 0xFF;
     //Since the entirety of the transport logic exists only to support the http3 server and client for WWATP,
     //the various signal codes for used by the http3_tree_messages can be defined here. These track the backend.h interface,
     //but also have the journaling api.

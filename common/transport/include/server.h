@@ -73,6 +73,9 @@ struct Stream {
     int64_t find_dyn_length(const Request &path);
     void append_data(std::span<const uint8_t> data);
     void http_acked_stream_data(uint64_t datalen);
+    Request &get_request() { 
+        assert(req.method == method);
+        return req;}
 
     int64_t stream_id;
     Handler *handler;

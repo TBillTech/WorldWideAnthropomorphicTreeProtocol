@@ -36,6 +36,7 @@ public:
     void deregisterRequestHandler(string preparer_name) override;
     uri_response_info prepareInfo(const Request& uri);
     uri_response_info prepareHandler(StreamIdentifier stream_id, const Request& uri);
+    uri_response_info prepareStaticHandler(ngtcp2_cid stream_id, const Request& uri);
     bool processResponseStream() override;
     void check_deadline();
     void listen(const string &local_name, const string& local_ip_addr, int local_port) override;
@@ -145,7 +146,7 @@ public:
     void pushIncomingChunk(const Request& req, ngtcp2_cid const& scid, shared_span<> &&chunk)
     {
         StreamIdentifier sid(scid, chunk.get_request_id());
-        bool handler_ready = false;
+        bool handler_ready = !req.isWWATP();  // static handlers are prepared separately and unconditionally
         {
             lock_guard<std::mutex> lock(responderQueueMutex);
             if(std::find_if(responderQueue.begin(), responderQueue.end(),
@@ -155,6 +156,7 @@ public:
         }
         if (!handler_ready)
         {
+            cout << "Preparing handler for request: " << req << " at stream: " << sid << endl;
             prepareHandler(sid, req);
         }
 

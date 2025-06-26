@@ -80,7 +80,7 @@ vector<shared_span<>> readFileChunks(string const& file_path) {
     return chunks;
 }
 
-void verifyStaticData(TreeNode const& withContents, chunks const& originalStaticData) {
+void verifyStaticData(TreeNode const& withContents, chunks const& originalStaticData, bool allow_trailers) {
     auto contents = withContents.getContents();
     // We cannot directly compare contents chunks with originalStaticData chunks, since the chunk lengths may differ.
     // So use the shared_span flattening to convert the originalStaticData to a shared_span,
@@ -105,10 +105,64 @@ void verifyStaticData(TreeNode const& withContents, chunks const& originalStatic
         if (withContentsIterator == contents.end<uint8_t>() && originalSpanIterator != originalSpan.end<uint8_t>()) {
             throw runtime_error("Static data content mismatch: original span has more data than withContents up to index " + to_string(index));
         }
+        if (allow_trailers && originalSpanIterator == originalSpan.end<uint8_t>())
+        {
+            // If trailers are allowed, we can stop here, since the original span may have trailing data.
+            break;
+        }
         if (originalSpanIterator == originalSpan.end<uint8_t>() && withContentsIterator != contents.end<uint8_t>()) {
             throw runtime_error("Static data content mismatch: withContents has more data than original span up to index " + to_string(index));
         }
     }
+}
+
+void test_static_with_curl(Request const& req, const uint16_t port, const string temporary_file_path,
+    const string expected_file_path, const string certificates_path)
+{
+    // This function creates a system call to curl to fetch the static file
+    // and compares the result with the expected file.  It waits 2 seconds for the curl command to complete.
+    //string curl_command = "curl -s -o " + temporary_file_path + " http://localhost:" + to_string(port) + req.path;
+    // curl command also needs to be provided with the --http3 option and the certificates
+    // files in the certificates_path are cert.pem and private_key.pem
+    string curl_command = "curl -v -s --http3 --insecure --cert " + certificates_path + "/cert.pem --key " + certificates_path + "/private_key.pem -o " + temporary_file_path +
+        " https://127.0.0.1:" + to_string(port) + req.path;
+    // example: curl -v -s --http3 --insecure --cert ../test_instances/data//cert.pem --key ../test_instances/data//private_key.pem -o ../test_instances/sandbox/temporary_index.html https://127.0.0.1:12345/index.html
+    cout << "Executing curl command: " << curl_command << endl; 
+    int result = system(curl_command.c_str());
+    if (result != 0) {
+        cerr << "Curl command failed with error code: " << result << endl;
+        throw runtime_error("Curl command failed"); 
+    }
+    this_thread::sleep_for(chrono::seconds(2)); // Wait for curl to finish
+    ifstream expected_file(expected_file_path, ios::binary);
+    if (!expected_file) {
+        cerr << "Expected file not found: " << expected_file_path << endl;
+        throw runtime_error("Expected file not found"); 
+    }
+    ifstream temporary_file(temporary_file_path, ios::binary);
+    if (!temporary_file) {
+        cerr << "Temporary file not found: " << temporary_file_path << endl;
+        throw runtime_error("Temporary file not found");
+    }
+    vector<uint8_t> expected_data((istreambuf_iterator<char>(expected_file)), istreambuf_iterator<char>());
+    vector<uint8_t> temporary_data((istreambuf_iterator<char>(temporary_file)), istreambuf_iterator<char>());
+    if (expected_data.size() != temporary_data.size()) {
+        cerr << "File sizes do not match: expected " << expected_data.size() << ", got " << temporary_data.size() << endl;
+        throw runtime_error("File sizes do not match");
+    }
+    for (size_t i = 0; i < expected_data.size(); ++i) {
+        if (expected_data[i] != temporary_data[i]) {
+            cerr << "File content mismatch at byte " << i << ": expected " << static_cast<int>(expected_data[i])
+                 << ", got " << static_cast<int>(temporary_data[i]) << endl;
+            throw runtime_error("File content mismatch");
+        }
+    }
+    // cleanup temporary file
+    if (remove(temporary_file_path.c_str()) != 0) {
+        cerr << "Error deleting temporary file: " << temporary_file_path << endl;
+        throw runtime_error("Error deleting temporary file");
+    }
+    cout << "Static file test passed for " << req.path << endl;
 }
 
 int main() {
@@ -145,13 +199,12 @@ int main() {
             .htdocs = move(htdocs),
             .mime_types_file = "/etc/mime.types",
             .version = NGTCP2_PROTO_VER_V1,
-            .quiet = true,
+            .quiet = false,
             .timeout = 30 * NGTCP2_SECONDS,
             .early_response = false,
             .session_file = move(session_filename),
             .tp_file = move(tp_filename),
             .keylog_filename = move(keylog_filename),
-            .http_method = "POST"sv,        
             .max_data = 24_m,
             .max_stream_data_bidi_local = 16_m,
             .max_stream_data_bidi_remote = 256_k,
@@ -163,7 +216,7 @@ int main() {
             .max_dyn_length = 20_m,
             .cc_algo = NGTCP2_CC_ALGO_CUBIC,
             .initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT,
-            .send_trailers = true,
+            .send_trailers = false,
             .handshake_timeout = UINT64_MAX,
             .ack_thresh = 2,
             .initial_pkt_num = UINT32_MAX,
@@ -217,8 +270,8 @@ int main() {
     timesecs += 0.1;
     cout << "In Main: Client should be started up" << endl;
 
-    Request staticHtmlRequest{.scheme = "https", .authority = "localhost", .path = "/index.html", .pri = {0, 0}};
-    Request staticBlockingHtmlRequest{.scheme = "https", .authority = "localhost", .path = "/index.html", .pri = {1, 0}};
+    Request staticHtmlRequest{.scheme = "https", .authority = "localhost", .path = "/index.html", .method = "GET", .pri = {0, 0}};
+    Request staticBlockingHtmlRequest{.scheme = "https", .authority = "localhost", .path = "/index.html", .method = "GET", .pri = {1, 0}};
     TreeNodeVersion aVersion;
     TreeNode staticHtmlNode(
         "index.html",
@@ -230,7 +283,7 @@ int main() {
         fplus::nothing<std::string>(),
         fplus::nothing<std::string>()
     );
-    Request randomBytesRequest{.scheme = "https", .authority = "localhost", .path = "/randombytes.bin", .pri = {0, 0}};
+    Request randomBytesRequest{.scheme = "https", .authority = "localhost", .path = "/randombytes.bin", .method = "GET", .pri = {0, 0}};
     TreeNode randomBytesNode(
         "randombytes.bin",
         "Random bytes file",
@@ -244,24 +297,24 @@ int main() {
     MemoryTree static_tree;
     SimpleBackend static_backend(static_tree);
 
-    Request theReaderRequest{.scheme = "https", .authority = "localhost", .path = "/init/wwatp/", .pri = {0, 0}};
+    Request theReaderRequest{.scheme = "https", .authority = "localhost", .path = "/init/wwatp/", .method = "POST", .pri = {0, 0}};
     MemoryTree local_reader_tree;
     SimpleBackend local_reader_backend(local_reader_tree);
 
-    Request theWriterRequest{.scheme = "https", .authority = "localhost", .path = "/uninit/wwatp/", .pri = {0, 0}};
+    Request theWriterRequest{.scheme = "https", .authority = "localhost", .path = "/uninit/wwatp/", .method = "POST", .pri = {0, 0}};
     MemoryTree local_writer_tree;
     SimpleBackend local_writer_backend(local_writer_tree);
     MemoryTree reader_of_writer_tree;
     SimpleBackend reader_of_writer_backend(reader_of_writer_tree);
 
-    Request theBlockingRequest{.scheme = "https", .authority = "localhost", .path = "/blocking/wwatp/", .pri = {0, 0}};
+    Request theBlockingRequest{.scheme = "https", .authority = "localhost", .path = "/blocking/wwatp/", .method = "POST", .pri = {0, 0}};
     MemoryTree local_blocking_tree;
     SimpleBackend local_blocking_backend(local_blocking_tree);
     ThreadsafeBackend local_blocking_backend_threadsafe(local_blocking_backend);
 
     Http3ClientBackendUpdater client_backend_updater;
     Http3ClientBackend& static_html_client = client_backend_updater.addBackend(static_backend, false, staticHtmlRequest, 0, fplus::just(staticHtmlNode));
-    Http3ClientBackend& random_bytes_client = client_backend_updater.addBackend(static_backend, false, randomBytesRequest, 0, fplus::just(randomBytesNode));
+    //Http3ClientBackend& random_bytes_client = client_backend_updater.addBackend(static_backend, false, randomBytesRequest, 0, fplus::just(randomBytesNode));
     Http3ClientBackend& static_blocking_html_client = client_backend_updater.addBackend(static_backend, true, staticBlockingHtmlRequest, 0, fplus::just(staticHtmlNode));
 
     Http3ClientBackend& reader_client = client_backend_updater.addBackend(local_reader_backend, false, theReaderRequest);
@@ -281,6 +334,7 @@ int main() {
 
     auto response_cycle = [&client_backend_updater, &client_communication, &server_communication, &wait_loops, &timesecs](string label = "") {
         // Service the client communication for a while to allow the client to send the request.
+        cerr << "In Main: Waiting for " << label << endl << flush;
         for(int i = 0; i < wait_loops; i++) {
             client_backend_updater.maintainRequestHandlers(*client_communication, timesecs);
             client_communication->processRequestStream();
@@ -293,9 +347,9 @@ int main() {
 
     response_cycle("static requests and reader_tester requestFullTreeSync");
     TreeNode const& readStaticHtmlNode = static_html_client.getStaticNode().get_or_throw(runtime_error("Failed to get static HTML node"));
-    verifyStaticData(readStaticHtmlNode, index_chunks);
+    verifyStaticData(readStaticHtmlNode, index_chunks, config.send_trailers);
     TreeNode const& readRandomBytesNode = random_bytes_client.getStaticNode().get_or_throw(runtime_error("Failed to get random bytes node"));
-    verifyStaticData(readRandomBytesNode, random_chunks);
+    verifyStaticData(readRandomBytesNode, random_chunks, config.send_trailers);
     {
         BackendTestbed reader_tester(reader_client, false, false);
         reader_tester.testBackendLogically();
@@ -323,7 +377,11 @@ int main() {
 
     {
         TreeNode const& readBlockingHtmlNode = static_blocking_html_client.getStaticNode().get_or_throw(runtime_error("Failed to get blocking HTML node"));
-        verifyStaticData(readBlockingHtmlNode, index_chunks);
+        verifyStaticData(readBlockingHtmlNode, index_chunks, config.send_trailers);
+        test_static_with_curl(staticBlockingHtmlRequest, 12345, "../test_instances/sandbox/temporary_index.html",
+            "../test_instances/data/libtest_index.html", "../test_instances/data/");
+        //cout << "**************** In Main: Now sleeping main thread, ready for manual curl test!" << endl;
+        //this_thread::sleep_for(chrono::seconds(20));
         blocking_client.requestFullTreeSync();
         BackendTestbed blocking_tester(blocking_client);
         blocking_tester.addAnimalsToBackend();

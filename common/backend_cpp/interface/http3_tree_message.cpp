@@ -651,6 +651,9 @@ void HTTP3TreeMessage::setup_staticNodeDataRequest(void) {
     }
     signal_ = payload_chunk_header::SIGNAL_OTHER_CHUNK;
     isInitialized_ = true;
+    auto tag = payload_chunk_header(0, payload_chunk_header::SIGNAL_PLACEHOLDER, 0);
+    std::lock_guard<std::mutex> lock(requestChunksMutex);
+    requestChunks.emplace_back(tag, true);
 }
 
 void HTTP3TreeMessage::setRequestId(uint16_t request_id) {

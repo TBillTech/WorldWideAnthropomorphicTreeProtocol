@@ -51,7 +51,7 @@ SSL_CTX *TLSServerContext::get_native_handle() const { return ssl_ctx_; }
 namespace {
 int alpn_select_proto_h3_cb(SSL *ssl, const unsigned char **out,
                             unsigned char *outlen, const unsigned char *in,
-                            unsigned int inlen, void *arg) {
+                            unsigned int inlen, void * /* arg */) {
   auto conn_ref = static_cast<ngtcp2_crypto_conn_ref *>(SSL_get_app_data(ssl));
   auto h = static_cast<HandlerBase *>(conn_ref->user_data);
   const uint8_t *alpn;
@@ -93,7 +93,7 @@ int alpn_select_proto_h3_cb(SSL *ssl, const unsigned char **out,
 namespace {
 int alpn_select_proto_hq_cb(SSL *ssl, const unsigned char **out,
                             unsigned char *outlen, const unsigned char *in,
-                            unsigned int inlen, void *arg) {
+                            unsigned int inlen, void * /* arg */) {
   auto conn_ref = static_cast<ngtcp2_crypto_conn_ref *>(SSL_get_app_data(ssl));
   auto h = static_cast<HandlerBase *>(conn_ref->user_data);
   const uint8_t *alpn;
@@ -133,7 +133,7 @@ int alpn_select_proto_hq_cb(SSL *ssl, const unsigned char **out,
 } // namespace
 
 namespace {
-int verify_cb(int preverify_ok, X509_STORE_CTX *ctx) {
+int verify_cb(int /* preverify_ok */, X509_STORE_CTX * /* ctx */) {
   // We don't verify the client certificate.  Just request it for the
   // testing purpose.
   return 1;
@@ -224,7 +224,7 @@ int TLSServerContext::init(const char *private_key_file, const char *cert_file,
 extern std::ofstream keylog_file;
 
 namespace {
-void keylog_callback(const SSL *ssl, const char *line) {
+void keylog_callback(const SSL * /* ssl */, const char *line) {
   keylog_file.write(line, strlen(line));
   keylog_file.put('\n');
   keylog_file.flush();

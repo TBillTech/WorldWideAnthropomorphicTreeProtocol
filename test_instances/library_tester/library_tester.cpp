@@ -109,7 +109,6 @@ int main() {
             .session_file = move(session_filename),
             .tp_file = move(tp_filename),
             .keylog_filename = move(keylog_filename),
-            .http_method = "POST"sv,        
             .max_data = 24_m,
             .max_stream_data_bidi_local = 16_m,
             .max_stream_data_bidi_remote = 256_k,
@@ -223,7 +222,7 @@ int main() {
     this_thread::sleep_for(chrono::milliseconds(100));
     cout << "In Main: Client should be started up" << endl;
 
-    auto theRequest = Request{.scheme = "https", .authority = "localhost", .path = "/wwatp/"};
+    auto theRequest = Request{.scheme = "https", .authority = "localhost", .path = "/wwatp/", .method = "POST", .pri = {0, 0}};
     auto theClientHandler = [&send_states](const StreamIdentifier& stream_id, chunks &response) {
         if (response.empty() && !send_states.client_sent_data) {
             cout << "Client is idle, so sending data" << endl;

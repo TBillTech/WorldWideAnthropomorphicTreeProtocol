@@ -66,6 +66,7 @@ Stream::Stream(int64_t stream_id, Handler *handler)
       partial_chunk(global_no_chunk_header, false),
       trailers_sent(false) {}
 
+
 namespace
 {
     constexpr auto NGTCP2_SERVER = "nghttp3/ngtcp2 server"sv;
@@ -99,7 +100,7 @@ namespace
 
 namespace
 {
-    Request request_path(const std::string_view &uri, bool is_connect)
+    void set_request_path(Request & req, const std::string_view &uri, bool is_connect)
     {
         bool is_wwatp = uri.find("wwatp/") != std::string_view::npos;
         string default_static = "/index.html";
@@ -108,21 +109,13 @@ namespace
             default_static = "/";
         }
         urlparse_url u;
-        Request req{
-            .scheme = "",
-            .authority = "",
-            .path = "",
-            .pri =
-                {
-                    .urgency = -1,
-                    .inc = -1,
-                },
-        };
 
         if (auto rv = urlparse_parse_url(uri.data(), uri.size(), is_connect, &u);
             rv != 0)
         {
-            return req;
+            assert(false && "Failed to parse URL");
+            std::cerr << "Failed to parse URL: " << uri << ", error code: " << rv << std::endl;
+            return;
         }
 
         if (u.field_set & (1 << URLPARSE_PATH))
@@ -149,6 +142,8 @@ namespace
             req.path = default_static;
         }
 
+        req.pri.urgency = -1;
+        req.pri.inc = -1;
         if (u.field_set & (1 << URLPARSE_QUERY))
         {
             static constexpr auto urgency_prefix = "u="sv;
@@ -200,7 +195,6 @@ namespace
                 ++p;
             }
         }
-        return req;
     }
 } // namespace
 
@@ -423,6 +417,7 @@ namespace
                 return NGHTTP3_ERR_CALLBACK_FAILURE;
             }
             stream->trailers_sent = true;
+            //*pflags |= NGHTTP3_DATA_FLAG_EOF;
         }
 
         nghttp3_ssize count = std::count_if(vec, vec + veccnt, [](const nghttp3_vec &v) {
@@ -618,21 +613,29 @@ int Stream::start_response(nghttp3_conn *httpconn)
         return send_status_response(httpconn, 400);
     }
 
-    auto req = request_path(uri, method == "CONNECT");
-    if (req.path.empty())
+    set_request_path(req, uri, method == "CONNECT");
+    req.method = method;
+    if (get_request().path.empty())
     {
         return send_status_response(httpconn, 400);
     }
+    cout << "Stream Request is: " << get_request() << endl << flush;
 
-    auto dyn_len = find_dyn_length(req);
+    auto dyn_len = find_dyn_length(get_request());
 
     int64_t content_length = -1;
     nghttp3_data_reader dr{};
     auto content_type = "text/plain"sv;
 
+    if (!get_request().isWWATP())
+    {
+        handler->server()->listener().prepareStaticHandler(handler->get_scid(),get_request());
+        cout << "Preparing static handler for request: " << get_request() << " At scid: " << handler->get_scid() << endl;
+    }
+
     if ((!live_stream) && (dyn_len == -1))
     {
-        auto path = config.htdocs + req.path;
+        auto path = config.htdocs + get_request().path;
         auto [fe, rv] = open_file(path);
         if (rv != 0)
         {
@@ -656,13 +659,13 @@ int Stream::start_response(nghttp3_conn *httpconn)
 
         dr.read_data = read_data;
 
-        auto ext = std::end(req.path) - 1;
-        for (; ext != std::begin(req.path) && *ext != '.' && *ext != '/'; --ext)
+        auto ext = std::end(get_request().path) - 1;
+        for (; ext != std::begin(get_request().path) && *ext != '.' && *ext != '/'; --ext)
             ;
         if (*ext == '.')
         {
             ++ext;
-            auto it = config.mime_types.find(std::string{ext, std::end(req.path)});
+            auto it = config.mime_types.find(std::string{ext, std::end(get_request().path)});
             if (it != std::end(config.mime_types))
             {
                 content_type = (*it).second;
@@ -694,14 +697,14 @@ int Stream::start_response(nghttp3_conn *httpconn)
     };
 
     size_t nvlen = 4;
-    if (live_stream) {
-        // Don't send content-length for live streams
+    if (live_stream || config.send_trailers) {
+        // Don't send content-length for live streams or if adding trailera
         nvlen = 3;
     }
 
     std::string prival;
 
-    if (req.pri.urgency != -1 || req.pri.inc != -1)
+    if (get_request().pri.urgency != -1 || get_request().pri.inc != -1)
     {
         nghttp3_pri pri;
 
@@ -713,13 +716,13 @@ int Stream::start_response(nghttp3_conn *httpconn)
             return -1;
         }
 
-        if (req.pri.urgency != -1)
+        if (get_request().pri.urgency != -1)
         {
-            pri.urgency = req.pri.urgency;
+            pri.urgency = get_request().pri.urgency;
         }
-        if (req.pri.inc != -1)
+        if (get_request().pri.inc != -1)
         {
-            pri.inc = req.pri.inc;
+            pri.inc = get_request().pri.inc;
         }
 
         if (auto rv =
@@ -1417,10 +1420,11 @@ void Handler::http_recv_request_header(Stream *stream, int32_t token,
     {
     case NGHTTP3_QPACK_TOKEN__PATH:
         stream->uri = std::string{v.base, v.base + v.len};
-        stream->req = request_path(stream->uri, false);
+        set_request_path(stream->get_request(), stream->uri, false);
         break;
     case NGHTTP3_QPACK_TOKEN__METHOD:
         stream->method = std::string{v.base, v.base + v.len};
+        stream->req.method = stream->method;
         break;
     case NGHTTP3_QPACK_TOKEN__AUTHORITY:
         stream->authority = std::string{v.base, v.base + v.len};
@@ -4102,6 +4106,8 @@ stream_callback_fn global_noop_stream_callback = [](StreamIdentifier, chunks) { 
 
 uri_response_info QuicListener::prepareHandler(StreamIdentifier sid, const Request& req)
 {
+    cerr << "Preparing handler for request: " << req.path << " at sid: " << sid << endl << flush;
+    assert(req.method != "");
     unique_lock<std::mutex> preparerlock(preparerStackMutex);
     for (auto &preparer : preparersStack) {
         auto response = preparer.second(req);
@@ -4112,6 +4118,41 @@ uri_response_info QuicListener::prepareHandler(StreamIdentifier sid, const Reque
             if (!response_info.is_file)
             {
                 if (!response_info.is_live_stream)
+                {
+                    throw std::runtime_error("Static handlers should not be handled as live streams in prepareHandler.");
+                }
+                {
+                    lock_guard<std::mutex> lock(responderQueueMutex);
+                    responderQueue.push_back(stream_callback);
+                }
+                {
+                    lock_guard<std::mutex> lock(returnPathsMutex);
+                    returnPaths.insert(make_pair(sid, req));
+                }
+            }
+            return response_info;
+        }
+    }
+    return {false, false, false, 0};
+}
+
+uri_response_info QuicListener::prepareStaticHandler(ngtcp2_cid cid, const Request& req)
+{
+    unique_lock<std::mutex> preparerlock(preparerStackMutex);
+    StreamIdentifier sid(cid, (uint16_t)1); // Logical ID is not used for static handlers
+    for (auto &preparer : preparersStack) {
+        auto response = preparer.second(req);
+        preparerlock.unlock();
+        auto stream_callback = make_pair(sid, response.second);
+        auto response_info = response.first;
+        if (response_info.can_handle) {
+            if (!response_info.is_file)
+            {
+                if (response_info.is_live_stream)
+                {
+                    throw std::runtime_error("Static handlers should not be live streams.");
+                }
+                if(!response_info.is_live_stream)
                 {
                     chunks no_input;
                     auto static_chunks = response.second(sid, no_input);
@@ -4142,6 +4183,8 @@ uri_response_info QuicListener::prepareHandler(StreamIdentifier sid, const Reque
     }
     return {false, false, false, 0};
 }
+
+
 
 bool QuicListener::processResponseStream() {
     std::unique_lock<std::mutex> responderLock(responderQueueMutex);

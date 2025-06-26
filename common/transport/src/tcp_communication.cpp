@@ -135,7 +135,7 @@ void TcpCommunication::setupResponses() {
         return;
     }
     prepared_unhandled_response = true;
-    Request req = Request{.scheme = "https", .authority = "localhost", .path = "/wwatp/test", .pri = {.urgency = 0, .inc = 0}};
+    Request req = Request{.scheme = "https", .authority = "localhost", .path = "/wwatp/test", .method = "GET", .pri = {.urgency = 0, .inc = 0}};
     lock_guard<std::mutex> lock(preparerStackMutex);
     for (auto &preparer : preparersStack) {
         auto response = preparer.second(req);

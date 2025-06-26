@@ -1989,8 +1989,11 @@ int Client::on_extend_max_streams() {
     Request req = quic_connector_.getOutstandingRequest();
     auto stream = std::make_unique<ClientStream>(req, stream_id, this);
 
-    if (submit_http_request(stream.get(), true) != 0) {
-      break;
+    if (submit_http_request(stream.get(), stream->req.isWWATP()) != 0) {
+        break;
+    }
+    if (!req.isWWATP()) {
+        quic_connector_.clearStaticRequest(req);
     }
 
     streams_.emplace(stream_id, std::move(stream));
@@ -2123,7 +2126,7 @@ int Client::submit_http_request(ClientStream *stream, bool live_stream) {
   std::string content_length_str;
 
   std::array<nghttp3_nv, 6> nva{
-    util::make_nv_nn(":method", config.http_method),
+    util::make_nv_nn(":method", stream->req.method),
     util::make_nv_nn(":scheme", stream->req.scheme),
     util::make_nv_nn(":authority", stream->req.authority),
     util::make_nv_nn(":path", stream->req.path),
@@ -2139,16 +2142,18 @@ int Client::submit_http_request(ClientStream *stream, bool live_stream) {
     debug::print_http_request_headers(stream->stream_id, nva.data(), nvlen);
   }
 
+  nghttp3_data_reader *dr_ptr = nullptr;
   nghttp3_data_reader dr{
     .read_data = read_data,
   };
   if (live_stream) {
     dr.read_data = dyn_read_data;
+    dr_ptr = &dr;
   }
 
   if (auto rv = nghttp3_conn_submit_request(
     httpconn_, stream->stream_id, nva.data(), nvlen,
-    &dr, stream);
+    dr_ptr, stream);
     rv != 0) {
     std::cerr << "Client nghttp3_conn_submit_request: " << nghttp3_strerror(rv)
             << std::endl;
@@ -2958,4 +2963,32 @@ Request QuicConnector::getOutstandingRequest()
         }
     }
     throw std::runtime_error("No request found in the requestSet, but getRequest should only be called when there is a request in the set");
+}
+
+void QuicConnector::clearStaticRequest(Request &req)
+{
+    unique_lock<std::mutex> srlock(returnPathsMutex);
+    auto findit = staticRequests.find(req);
+    if(findit == staticRequests.end()) {
+        assert(false && "clearStaticRequest called with a request that is not in the static requests");
+        return;
+    }
+    StreamIdentifier sid = findit->second;
+    srlock.unlock();
+
+    unique_lock<std::mutex> oc_lock(outgoingChunksMutex);
+    auto it = outgoingChunks.find(sid);
+    if (it != outgoingChunks.end()) {
+        // Clear placeholder chunks for this request by checking the signal type of the chunk
+        // Filter out placeholder chunks from it->second using std::remove_if
+        it->second.erase(std::remove_if(it->second.begin(), it->second.end(),
+            [](const shared_span<> &chunk) {
+                return (chunk.get_signal_type() == payload_chunk_header::GLOBAL_SIGNAL_TYPE) &&
+                       (chunk.get_signal_signal() == payload_chunk_header::SIGNAL_PLACEHOLDER);
+            }), it->second.end());
+        if (it->second.empty())
+        {
+            outgoingChunks.erase(it); // Remove the entry if empty
+        }
+    }    
 }

@@ -182,6 +182,7 @@ public:
     set<Request> getCurrentRequests();
     bool hasOutstandingRequest();
     Request getOutstandingRequest();
+    void clearStaticRequest(Request &req);
 
 private:
     void terminate() {

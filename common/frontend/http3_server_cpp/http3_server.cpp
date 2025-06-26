@@ -248,7 +248,7 @@ prepared_stream_callback HTTP3Server::getResponseCallback(const Request & req) {
         // Note that each outstanding request on the client side will have a different stream id,
         // so returning sum_size will apply to only this one asset.
         // That will control when the server stops sending data.
-        // To control the number of times the chunks are sent, prepareHandler will directly
+        // To control the number of times the chunks are sent, prepareStaticHandler will directly
         // call the callback with the stream id and immediately add them to the outgoing queue,
         // while substituting a noop for the responder callback. 
         auto it = staticAssets_.find(req.path);

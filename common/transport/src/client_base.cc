@@ -191,7 +191,7 @@ int ClientBase::read_transport_params(const char *path,
 
 ngtcp2_conn *ClientBase::conn() const { return conn_; }
 
-void qlog_write_cb(void *user_data, uint32_t flags, const void *data,
+void qlog_write_cb(void *user_data, uint32_t /* flags */, const void *data,
                    size_t datalen) {
   auto c = static_cast<ClientBase *>(user_data);
   c->write_qlog(data, datalen);

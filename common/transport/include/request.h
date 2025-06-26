@@ -8,6 +8,7 @@ struct Request {
     std::string_view scheme;  // Example: "https"
     std::string authority; // Example: "www.example.com:443"
     std::string path; // Example: "/path/to/resource"
+    std::string method; // Example: "GET", "POST", etc.
     struct {
         int32_t urgency;
         int inc;
@@ -33,6 +34,12 @@ struct Request {
         if (scheme > req.scheme) {
             return false;
         }
+        if (method < req.method) {
+            return true;
+        }
+        if (method > req.method) {
+            return false;
+        }
         if (pri.urgency < req.pri.urgency) {
             return true;
         }
@@ -43,11 +50,11 @@ struct Request {
     }
     bool operator==(const Request &req) const {
         return scheme == req.scheme && authority == req.authority &&
-            path == req.path && pri.urgency == req.pri.urgency &&
+            path == req.path && method == req.method && pri.urgency == req.pri.urgency &&
             pri.inc == req.pri.inc;
     }
     friend std::ostream& operator<<(std::ostream& os, const Request& req) {
-        os << "Request: scheme=" << req.scheme << ", authority=" << req.authority << ", path=" << req.path << ", urgency=" << req.pri.urgency << ", inc=" << req.pri.inc;
+        os << "Request: scheme=" << req.scheme << ", authority=" << req.authority << ", path=" << req.path << ", method=" << req.method<< ", urgency=" << req.pri.urgency << ", inc=" << req.pri.inc;
         return os;
     }
     bool isWWATP() const {
