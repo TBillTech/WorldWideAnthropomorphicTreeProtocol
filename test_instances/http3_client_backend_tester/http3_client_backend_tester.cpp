@@ -314,7 +314,7 @@ int main() {
 
     Http3ClientBackendUpdater client_backend_updater;
     Http3ClientBackend& static_html_client = client_backend_updater.addBackend(static_backend, false, staticHtmlRequest, 0, fplus::just(staticHtmlNode));
-    //Http3ClientBackend& random_bytes_client = client_backend_updater.addBackend(static_backend, false, randomBytesRequest, 0, fplus::just(randomBytesNode));
+    Http3ClientBackend& random_bytes_client = client_backend_updater.addBackend(static_backend, false, randomBytesRequest, 0, fplus::just(randomBytesNode));
     Http3ClientBackend& static_blocking_html_client = client_backend_updater.addBackend(static_backend, true, staticBlockingHtmlRequest, 0, fplus::just(staticHtmlNode));
 
     Http3ClientBackend& reader_client = client_backend_updater.addBackend(local_reader_backend, false, theReaderRequest);
