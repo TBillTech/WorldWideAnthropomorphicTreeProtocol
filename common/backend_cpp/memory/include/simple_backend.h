@@ -5,6 +5,7 @@
 #include <map>
 
 bool checkLabelRuleOverlap(const string& label_rule_1, const string& label_rule_2);
+bool partialLabelRuleMatch(const std::string& label_rule, const std::string& notification_rule);
 
 // A simple in-memory implementation of the Backend interface.
 class SimpleBackend : public Backend {
