@@ -171,6 +171,11 @@ public:
     }
 
 private:
+    uint16_t getNextStaticLogicalId() {
+        // Increment the static stream ID counter and return the next logical ID
+        return static_stream_id_counter.fetch_add(2); // Use odd IDs for static streams
+    }
+
     void terminate() {
         // Set the terminate flag
         terminate_.store(true);
@@ -191,7 +196,7 @@ private:
         loop = nullptr;
     }
 
-    
+    std::atomic<uint16_t> static_stream_id_counter = 1; // Start from 1, and use odd IDs for static stream logical Ids
 
     boost::asio::io_context& io_context;
     struct ev_loop* loop;

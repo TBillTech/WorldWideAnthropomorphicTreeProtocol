@@ -4139,7 +4139,7 @@ uri_response_info QuicListener::prepareHandler(StreamIdentifier sid, const Reque
 uri_response_info QuicListener::prepareStaticHandler(ngtcp2_cid cid, const Request& req)
 {
     unique_lock<std::mutex> preparerlock(preparerStackMutex);
-    StreamIdentifier sid(cid, (uint16_t)1); // Logical ID is not used for static handlers
+    StreamIdentifier sid(cid, getNextStaticLogicalId());
     for (auto &preparer : preparersStack) {
         auto response = preparer.second(req);
         preparerlock.unlock();

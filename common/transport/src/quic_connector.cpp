@@ -2634,11 +2634,11 @@ StreamIdentifier QuicConnector::getNewRequestStreamIdentifier(Request const &req
     // and also add the StreamIdentifier and Request to the stream_return_paths
     ngtcp2_cid cid = client->get_dcid();
     // Use the atomic stream_id_counter to simultaneously increment and return the stream_id
-    auto stream_id = stream_id_counter.fetch_add(1);
+    auto stream_id = stream_id_counter.fetch_add(2);
     auto newStreamIdentifier = StreamIdentifier(cid, stream_id);
     while(returnPaths.find(newStreamIdentifier) != returnPaths.end()) {
         // If the newStreamIdentifier is already in the returnPaths, we need to increment the stream_id
-        stream_id = stream_id_counter.fetch_add(1);
+        stream_id = stream_id_counter.fetch_add(2);
         newStreamIdentifier = StreamIdentifier(cid, stream_id);
     }
     lock_guard<std::mutex> lock(returnPathsMutex);

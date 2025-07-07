@@ -112,7 +112,7 @@ js_client_lib: frontend; direct_javascript dom_link_javascript, backend_js; http
 
 Here are some examples:
 * A game client composed of an unreal_engine frontend using an http3_client backend_cpp.
-* A game client server composed of an http3_server_cpp frontend and a postgres backend_cpp.
+* A game server composed of an http3_server_cpp frontend and a postgres backend_cpp.
 * A digital employee composed of:
     * A browser dom_link_javascript frontend using an http3_client backend_js.
     * A composer for browser with http3_server_cpp frontend presenting the curent task, backlog, status, and the css blob (memory backend?)
@@ -121,13 +121,15 @@ Here are some examples:
     * A worker manager using direct_cpp frontend and http3_client backend_cpp, which can create worker/tool processes:
     * Multiple worker/tool processes using direct_cpp frontend and http3_client backend_cpp, additionally tools having various ways to transform tree information to additional tree information.  For example, performing algebra on equations using maxima.  Or watching a yaml file, and keeping the tree in sync with the yaml file.
 
-Currently, the following backends are planned.  Note these usually assume an underlying backend, not a direct implementation:
+The following backends are tested in the project:
 * Simple Backend: Simply delegates tree data storage to a memory tree object, and supports applying transactions.  This implementation can stand alone, unlike most of the others.
 * Transactional Backend: Supportings building a transaction in memory, and then attempting to apply to the underlying backend.
 * Threadsafe Backend: Controls access to the underlying backend, so that the threadsafe backend can be used by multiple backends all used by different threads. It supports worker threads dealing with notifications to avoid blocking other notifications.
+* Composite & Redirection Backends: Will allow mounting branches from other Backends as branches in a composed greater tree.
+
+Currently, the following backends are planned.  Note these usually assume an underlying backend, not a direct implementation:
 * NOT GOING TO IMPLEMENT: JournalingBackend: because as far as I know only the http3_client needs this, and only the http3_server_cpp supports this.  So rather than build journaling into the most general backend interface, the journaling concept will be implemented along with http3 and the usage of the transport layer.
 * PostGRES Backend: Will also be a standalone implementation, and will present a PostGRES database as a Tree using the Backend interface.  But this will be developed in a separate project, not in WWATP project.
-* Composite Backend: Will allow mounting branches from other Backends as branches in a composed greater tree.
 * HTTP3Client Backend (Both cpp and javascript): Will keep a current cached tree, and track changes to it via journaling, and connect to a http3_server_cpp instance which can support querying the journal, and fast fowarding changes.
 
 Terminology for frontend capabilities:
@@ -136,6 +138,9 @@ Terminology for frontend capabilities:
 * An Application is composed of a Watcher for the Observable Tree input <-> View output, and multiple Watchers for Controller input <-> Callback Tree output
 * A Tool is composed of a Watcher for the Observable Tree input <-> Controller output, and multiple Watchers for Controller input <-> Callback Tree output
 * A Service is composed of a Watcher for the Backend Tree input <-> Transported Tree output, and a Watcher for Transported Tree input <-> Backend Tree output
+
+The following frontends are tested in the project:
+
 
 Currently, the following frontends are planned.  Most of these will not be done in the WWATP project, and these are indicated by (WWATP):
 * HTTP3Application Frontend Service (WWATP): Will support querying the journal and fast forward in detail.  If the URL is not a tree query, will return a web page bootstrap which will run the DOMLinkFrontend.  The server frontend will provide CSS from the tree, and scripting from the tree, supporting a LLMToolFrontend-> generated CSS and LLMToolFrontend -> generated javascript.
@@ -177,6 +182,7 @@ For use case writing a book and writing a paper, we want the following features.
 * Flat SSML Mediator Frontend, which simply converts DOM elements into SSML markdown
 * DOMLink Frontend, which also uses MathLive LaTeX DOM, implying HTTP3ServerFrontend should convert LaTeX front <-> MathJSON back, PlotLY for declarative PlotLy front <- declarative Chart back
 * In a different project: Careful Prose Tool Mediator Frontend
+* LaTeX Mediator Frontend, using MathLive for LaTeX front <-> MathJSON back, ? front <- declarative Chart back
 
 There should be a lot of overlap between the Flat HTML Mediator (javacript? on node.js?) and the DOMLink, especially when it comes to editing formulas.  MathLive is probably the right library to use in the DOMLink: https://github.com/arnog/mathlive .  PlotLY seems to be the Chart library of choice.
 

@@ -199,7 +199,7 @@ int main() {
             .htdocs = move(htdocs),
             .mime_types_file = "/etc/mime.types",
             .version = NGTCP2_PROTO_VER_V1,
-            .quiet = false,
+            .quiet = true,
             .timeout = 30 * NGTCP2_SECONDS,
             .early_response = false,
             .session_file = move(session_filename),
@@ -380,8 +380,6 @@ int main() {
         verifyStaticData(readBlockingHtmlNode, index_chunks, config.send_trailers);
         test_static_with_curl(staticBlockingHtmlRequest, 12345, "../test_instances/sandbox/temporary_index.html",
             "../test_instances/data/libtest_index.html", "../test_instances/data/");
-        //cout << "**************** In Main: Now sleeping main thread, ready for manual curl test!" << endl;
-        //this_thread::sleep_for(chrono::seconds(20));
         blocking_client.requestFullTreeSync();
         BackendTestbed blocking_tester(blocking_client);
         blocking_tester.addAnimalsToBackend();

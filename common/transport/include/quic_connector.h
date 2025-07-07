@@ -215,7 +215,7 @@ private:
     std::atomic<bool> terminate_ = false;
     string received_so_far;  // This is a buffer for partially read messages
     bool is_server = false;
-    std::atomic<uint16_t> stream_id_counter = 1;
+    std::atomic<uint16_t> stream_id_counter = 2; // Start from 2, and use even IDs for client stream logical Ids
 
     stream_callbacks requestorQueue;
 
