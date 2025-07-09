@@ -276,7 +276,7 @@ int main() {
     TreeNode staticHtmlNode(
         "index.html",
         "Static HTML file",
-        {"html"},
+        {{"html", "index"}},
         aVersion,
         {},
         shared_span<>(global_no_chunk_header, false),
@@ -287,7 +287,7 @@ int main() {
     TreeNode randomBytesNode(
         "randombytes.bin",
         "Random bytes file",
-        {"bin"},
+        {{"bin", "randombytes"}},
         aVersion,
         {},
         shared_span<>(global_no_chunk_header, false),

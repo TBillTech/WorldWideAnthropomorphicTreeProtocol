@@ -8,14 +8,14 @@ void disableCatch2() {
     useCatch2 = false;
 }
 
-TreeNode createNoContentTreeNode(string label_rule, string description, vector<string> property_infos, 
+TreeNode createNoContentTreeNode(string label_rule, string description, vector<TreeNode::PropertyInfo> property_infos, 
     TreeNodeVersion version, vector<string> child_names, 
     maybe<string> query_how_to, maybe<string> qa_sequence) {
     shared_span<> no_content(global_no_chunk_header, false);
     return TreeNode(label_rule, description, property_infos, version, child_names, std::move(no_content), std::move(query_how_to), std::move(qa_sequence));
 }
 
-TreeNode createAnimalNode(string animal, string description, vector<string> property_infos, 
+TreeNode createAnimalNode(string animal, string description, vector<TreeNode::PropertyInfo> property_infos, 
     TreeNodeVersion version, vector<string> child_names, 
     vector<pair<int, string>> property_data, string query_how_to, string qa_sequence) {
     payload_chunk_header header(0, payload_chunk_header::SIGNAL_WWATP_UPSERT_NODE_REQUEST, 0);
@@ -72,7 +72,7 @@ vector<TreeNode> createLionNodes() {
     TreeNode lion = createAnimalNode(
         "lion",
         "King of the jungle", 
-        {"integer", "string"},
+        {{"int", "popularity"}, {"string", "diet"}},
         {1, 0, "public", maybe<string>(), maybe<string>("tester"), maybe<string>("tester"), maybe<int>(2)}, 
         {"Simba", "Nala"},
         {{10, "carnivore"}},
@@ -88,7 +88,7 @@ vector<TreeNode> createElephantNodes() {
     TreeNode elephant = createAnimalNode(
         "elephant", 
         "Largest land animal", 
-        {"integer", "string"}, 
+        {{"int", "popularity"}, {"string", "diet"}},
         {1, 0, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
         {"Dumbo", "Babar"}, 
         {{8, "herbivore"}},
@@ -108,7 +108,7 @@ vector<TreeNode> createParrotNodes() {
     TreeNode parrot = createAnimalNode(
         "parrot", 
         "Colorful bird", 
-        {"integer", "string"}, 
+        {{"int", "popularity"}, {"string", "diet"}},
         {1, 0, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
         {"Polly", "Jerome"}, 
         {{7, "omnivore"}},

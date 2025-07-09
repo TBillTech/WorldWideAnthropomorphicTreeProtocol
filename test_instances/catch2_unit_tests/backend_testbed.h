@@ -10,11 +10,11 @@
 using namespace std;
 using namespace fplus;
 
-TreeNode createNoContentTreeNode(string label_rule, string description, vector<string> property_infos, 
+TreeNode createNoContentTreeNode(string label_rule, string description, vector<TreeNode::PropertyInfo> property_infos, 
     TreeNodeVersion version, vector<string> child_names, 
     maybe<string> query_how_to, maybe<string> qa_sequence);
 
-TreeNode createAnimalNode(string animal, string description, vector<string> property_infos, 
+TreeNode createAnimalNode(string animal, string description, vector<TreeNode::PropertyInfo> property_infos, 
     TreeNodeVersion version, vector<string> child_names, 
     vector<pair<int, string>> property_data, string query_how_to, string qa_sequence);
 

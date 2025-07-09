@@ -60,12 +60,16 @@ std::string getNodeFileName(const std::string& base_path, const std::string& lab
     return base_path + label_rule + ".node";
 }
 
-std::string getContentFileName(const std::string& base_path, const std::string& label_rule, int order, const std::string& literal_type)
+std::string getContentFileName(const std::string& base_path, const std::string& label_rule, int order, const TreeNode::PropertyInfo& property_info)
 {
-    return base_path + label_rule + "." + std::to_string(order) + "." + literal_type;
+    if (property_info.second.empty())
+    {
+        return base_path + label_rule + "." + std::to_string(order) + "." + property_info.first;
+    }
+    return base_path + label_rule + "." + std::to_string(order) + "." + property_info.second + "." + property_info.first;
 }
 
-std::vector<std::string> getContentFileNames(const std::string& base_path, const std::string& label_rule, const std::vector<std::string>& property_infos)
+std::vector<std::string> getContentFileNames(const std::string& base_path, const std::string& label_rule, const std::vector<TreeNode::PropertyInfo>& property_infos)
 {
     std::vector<std::string> content_file_names;
     for (size_t order = 0; order < property_infos.size(); ++order) {
@@ -78,7 +82,7 @@ std::string getLabelRuleFromFileName(const std::string& base_path, const std::st
 {
     // There are three cases:
     // 1. The file name is a node file: "label_rule.node"
-    // 2. The file name is a content file: "label_rule.order.literal_type"
+    // 2. The file name is a content file: "label_rule.order.property_info"
     // 3. The file name is a directory: "label_rule/"
 
     // Case 1 is handled by checking if the file name ends with ".node".
@@ -156,8 +160,8 @@ vector<std::string> parseContentTypes(vector<std::string> content_file_names)
         // Extract the literal type from the file name
         size_t last_dot = file_name.find_last_of('.');
         if (last_dot != std::string::npos) {
-            std::string literal_type = file_name.substr(last_dot + 1);
-            content_types.push_back(literal_type);
+            std::string property_info = file_name.substr(last_dot + 1);
+            content_types.push_back(property_info);
         }
     }
     return content_types;
@@ -466,7 +470,7 @@ bool deleteNodeFiles(const std::string& base_path, const std::string& label_rule
         std::cerr << "Failed to delete node directory: " << node_dir << std::endl;
     }
     // Also delete each content file individually
-    auto content_files = getContentFileNames(base_path, label_rule, {});
+    auto content_files = readContentFileNames(base_path, label_rule);
     for (const auto& content_file : content_files) {
         if (content_file.substr(0, base_path.size()) != base_path) {
             std::cerr << "Refusing to delete content file outside of base path: " << content_file << std::endl;
@@ -756,7 +760,7 @@ vector<std::string> collect_watch_paths(const std::string& base_path, const std:
     // Always watch the node file itself
     watch_paths.push_back(getNodeFileName(base_path, label_rule));
     // And all content files
-    auto content_files = getContentFileNames(base_path, label_rule, {});
+    auto content_files = readContentFileNames(base_path, label_rule);
     watch_paths.insert(watch_paths.end(), content_files.begin(), content_files.end());
     // If child_notify is true, also watch the directory for changes
     if (child_notify) {

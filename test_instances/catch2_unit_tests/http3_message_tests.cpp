@@ -101,7 +101,7 @@ TEST_CASE("HTTP3TreeMessage encode and decode getNodeRequest", "[http3_tree_mess
     uint16_t request_id = 6;
     std::string label_rule = "test_label";
 
-    auto anAnimal = createAnimalNode("Seal", "A marine mammal", {"Mammal"}, 
+    auto anAnimal = createAnimalNode("Seal", "A marine mammal", {{"txt", ""}, {"txt", ""}}, 
     {1, 1}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
     "How to query seal", "Seal QA sequence");
 
@@ -137,12 +137,13 @@ TEST_CASE("HTTP3TreeMessage encode and decode upsertNodeRequest", "[http3_tree_m
 
     uint16_t request_id = 6;
 
-    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", {"Mammal"}, 
+    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", 
+        {{"txt", "pup_1_dossier"}, {"txt", "pup_2_dossier"}},
         {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");
-    auto anAnimal = createAnimalNode("Seal", "A marine mammal", {"Mammal"}, 
+    auto anAnimal = createAnimalNode("Seal", "A marine mammal", {{"txt", ""}, {"txt", ""}}, 
         {1, 1}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query seal", "Seal QA sequence");
 
@@ -211,12 +212,13 @@ TEST_CASE("HTTP3TreeMessage encode and decode getPageTreeRequest", "[http3_tree_
 
     uint16_t request_id = 6;
 
-    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", {"Mammal"}, 
+    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", 
+        {{"txt", "pup_1_dossier"}, {"txt", "pup_2_dossier"}}, 
         {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");
-    auto anAnimal = createAnimalNode("Seal", "A marine mammal", {"Mammal"}, 
+    auto anAnimal = createAnimalNode("Seal", "A marine mammal", {{"txt", ""}, {"txt", ""}}, 
         {1, 1}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query seal", "Seal QA sequence");
 
@@ -256,12 +258,14 @@ TEST_CASE("HTTP3TreeMessage encode and decode getQueryNodesRequest", "[http3_tre
 
     uint16_t request_id = 6;
 
-    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", {"Mammal"}, 
+    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", 
+        {{"txt", "pup_1_dossier"}, {"txt", "pup_2_dossier"}},
         {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");
-    auto anAnimal = createAnimalNode("Seal", "A marine mammal", {"Mammal"}, 
+    auto anAnimal = createAnimalNode("Seal", "A marine mammal", 
+        {{"txt", "dossier_1"}, {"txt", "dossier_2"}}, 
         {1, 1}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query seal", "Seal QA sequence");
     queryNodesRequestTest(request_id++, "test_page", {anAnimal, complex_node});
@@ -299,12 +303,14 @@ TEST_CASE("HTTP3TreeMessage encode and decode openTransactionLayerRequest", "[ht
 
     uint16_t request_id = 6;
 
-    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", {"Mammal"}, 
+    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", 
+        {{"txt", "pup_1_dossier"}, {"txt", "pup_2_dossier"}},
         {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");
-    auto anAnimal = createAnimalNode("Seal", "A marine mammal", {"Mammal"}, 
+    auto anAnimal = createAnimalNode("Seal", "A marine mammal", 
+        {{"txt", "dossier_1"}, {"txt", "dossier_2"}}, 
         {1, 1}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query seal", "Seal QA sequence");
 
@@ -371,7 +377,8 @@ TEST_CASE("HTTP3TreeMessage encode and decode applyTransactionRequest", "[http3_
 
     uint16_t request_id = 6;
         
-    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", {"Mammal"}, 
+    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", 
+        {{"txt", "pup_1_dossier"}, {"txt", "pup_2_dossier"}},
         {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
@@ -434,12 +441,14 @@ TEST_CASE("HTTP3TreeMessage encode and decode getFullTreeRequest", "[http3_tree_
 
     uint16_t request_id = 6;
 
-    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", {"Mammal"}, 
+    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", 
+        {{"txt", "pup_1_dossier"}, {"txt", "pup_2_dossier"}},
         {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");
-    auto anAnimal = createAnimalNode("Seal", "A marine mammal", {"Mammal"}, 
+    auto anAnimal = createAnimalNode("Seal", "A marine mammal", 
+        {{"txt", "dossier_1"}, {"txt", "dossier_2"}},
         {1, 1}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}},
         "How to query seal", "Seal QA sequence");
     fullTreeRequestTest(request_id++, true, {anAnimal, complex_node, simpleAnimal});
@@ -538,12 +547,14 @@ TEST_CASE("HTTP3TreeMessage encode and decode notifyListenersRequest", "[http3_t
 
     uint16_t request_id = 6;
 
-    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", {"Mammal"}, 
+    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", 
+        {{"txt", "pup_1_dossier"}, {"txt", "pup_2_dossier"}},
         {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");
-    auto anAnimal = createAnimalNode("Seal", "A marine mammal", {"Mammal"}, 
+    auto anAnimal = createAnimalNode("Seal", "A marine mammal", 
+        {{"txt", "dossier_1"}, {"txt", "dossier_2"}},
         {1, 1}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}},
         "How to query seal", "Seal QA sequence");
     notifyListenersTest(request_id++, {"listener1", maybe<TreeNode>(anAnimal)}, true);
@@ -621,7 +632,8 @@ TEST_CASE("HTTP3TreeMessage encode and decode getJournalRequest", "[http3_tree_m
     SequentialNotification single_notification(1, Notification("", fplus::maybe<TreeNode>()));
 
     // More complex vector
-    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", {"Mammal"}, 
+    TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", 
+        {{"txt", "pup_1_dossier"}, {"txt", "pup_2_dossier"}},
         {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 

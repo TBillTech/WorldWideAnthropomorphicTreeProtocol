@@ -9,7 +9,7 @@ TreeNode::TreeNode()
     {}
 
 TreeNode::TreeNode(const std::string& label_rule, const std::string& description, 
-        const std::vector<std::string>& property_infos,
+        const std::vector<TreeNode::PropertyInfo>& property_infos,
         const TreeNodeVersion& version,
         const std::vector<std::string>& child_names,
         shared_span<>&& property_data, 
@@ -124,11 +124,11 @@ void TreeNode::setQaSequence(const fplus::maybe<std::string>& qa_sequence) {
     }
 }
 
-const std::vector<std::string>& TreeNode::getPropertyInfo() const {
+const std::vector<TreeNode::PropertyInfo>& TreeNode::getPropertyInfo() const {
     return property_infos;
 }
 
-void TreeNode::setPropertyInfo(const std::vector<std::string>& property_infos) {
+void TreeNode::setPropertyInfo(const std::vector<TreeNode::PropertyInfo>& property_infos) {
     this->property_infos = property_infos;
 }
 
@@ -246,8 +246,10 @@ std::ostream& operator<<(std::ostream& os, const TreeNode& node)
     os << "label_rule: " << node.getLabelRule() << "\n";
     write_length_string(os, "description", node.getDescription());
     os << "property_infos: [ ";
-    for (const auto& type : node.getPropertyInfo()) {
-        os << type << ", ";
+    for (const auto& info : node.getPropertyInfo()) {
+        auto type = info.first; // Type of the property
+        auto name = info.second; // Name of the property
+        os << type << " (" << name << "), ";
     }
     os << "], ";
     os << "version: " << node.getVersion() << ", ";
@@ -284,20 +286,28 @@ std::istream& operator>>(std::istream& is, TreeNode& node)
     auto description = read_length_string(is);
     node.setDescription(description.second);
 
-    std::vector<std::string> property_infos;
+    std::vector<TreeNode::PropertyInfo> property_infos;
     is >> label; // Consume "property_infos:"
     is >> label; // Consume " ["
     is.get(); // Consume the space after "["
     while (is.peek() != ']') {
         std::string type;
+        std::string name;
         is >> type;
+        is >> name; // Read the property name
+        if (name.back() == ',') {
+            name.pop_back(); // Remove the trailing comma
+        }
+        if (name.front() == '(' && name.back() == ')') {
+            name = name.substr(1, name.size() - 2); // Remove parentheses
+        }
         if (type.back() == ',') {
             type.pop_back(); // Remove the trailing comma
         }
         if (is.peek() == ' ') {
             is.get(); // Consume the space after the comma
         }
-        property_infos.push_back(type);
+        property_infos.push_back({type, name});
     }
     is >> label; // Consume "]"
     node.setPropertyInfo(property_infos);

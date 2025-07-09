@@ -85,10 +85,12 @@ class TreeNodeVersion {
 // Represents a node in the tree structure.
 class TreeNode {
 public:
+    using PropertyInfo = std::pair<std::string, std::string>; // Type and name of the property
+
     // Constructors
     TreeNode();
     TreeNode(const std::string& label_rule, const std::string& description, 
-        const std::vector<std::string>& property_infos,
+        const std::vector<PropertyInfo>& property_infos,
         const TreeNodeVersion& version,
         const std::vector<std::string>& child_names,
         shared_span<>&& property_data, 
@@ -115,8 +117,8 @@ public:
     const fplus::maybe<std::string>& getQaSequence() const;
     void setQaSequence(const fplus::maybe<std::string>& qa_sequence);
 
-    const std::vector<std::string>& getPropertyInfo() const;
-    void setPropertyInfo(const std::vector<std::string>& property_infos);
+    const std::vector<PropertyInfo>& getPropertyInfo() const;
+    void setPropertyInfo(const std::vector<PropertyInfo>& property_infos);
 
     const string& getPolicy() const;
     void setPolicy(const string& policy);
@@ -146,7 +148,7 @@ public:
 private:
     std::string label_rule;
     std::string description;
-    std::vector<std::string> property_infos;
+    std::vector<PropertyInfo> property_infos;
     TreeNodeVersion version;
     std::vector<std::string> child_names;
     shared_span<> property_data;
