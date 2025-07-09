@@ -615,10 +615,10 @@ void Http3ClientBackend::setNodeChunks(chunks& chunks) {
     std::lock_guard<std::mutex> lock(backendMutex_);
     if (staticNode_.is_just()) {
         shared_span<> concatted(chunks.begin(), chunks.end());
-        staticNode_.unsafe_get_just().setContents(move(concatted));
+        staticNode_.unsafe_get_just().setPropertyData(move(concatted));
         localBackend_.upsertNode({staticNode_.unsafe_get_just()});
     } else {
-        std::cerr << "Error: Static Node for storing contents is not defined" << std::endl;
+        std::cerr << "Error: Static Node for storing property_data is not defined" << std::endl;
     }
 }
 
@@ -723,7 +723,6 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
         if (backend.hasNextRequest()) {
             auto req = backend.getRequestUrlInfo();
             StreamIdentifier stream_id = connector.getNewRequestStreamIdentifier(req);
-            cerr << "Requesting stream_id: " << stream_id.logical_id << " for request: " << req << std::endl << flush;
             auto theRequest = ongoingRequests_.emplace(stream_id, backend.popNextRequest());
             theRequest.first->second.setRequestId(stream_id.logical_id);
             HTTP3TreeMessage& theMessage = theRequest.first->second;

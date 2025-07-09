@@ -65,11 +65,11 @@ std::string getContentFileName(const std::string& base_path, const std::string& 
     return base_path + label_rule + "." + std::to_string(order) + "." + literal_type;
 }
 
-std::vector<std::string> getContentFileNames(const std::string& base_path, const std::string& label_rule, const std::vector<std::string>& literal_types)
+std::vector<std::string> getContentFileNames(const std::string& base_path, const std::string& label_rule, const std::vector<std::string>& property_infos)
 {
     std::vector<std::string> content_file_names;
-    for (size_t order = 0; order < literal_types.size(); ++order) {
-        content_file_names.push_back(getContentFileName(base_path, label_rule, order, literal_types[order]));
+    for (size_t order = 0; order < property_infos.size(); ++order) {
+        content_file_names.push_back(getContentFileName(base_path, label_rule, order, property_infos[order]));
     }
     return content_file_names;
 }
@@ -180,7 +180,7 @@ shared_span<> readContentFiles(vector<std::string> content_file_names)
             continue; // Skip this file if it cannot be opened
         }
 
-        // Read the file contents into a buffer
+        // Read the file property_data into a buffer
         std::vector<uint8_t> buffer(std::istreambuf_iterator<char>(file), {});
         // if this is not a fixed size type, we need to add the size of the buffer in a span first:
         if (fixed_size_types.find(types[order]) == fixed_size_types.end()) {
@@ -313,7 +313,7 @@ void writeNodeFile(const std::string& base_path, const TreeNode& node)
     if (!node_file) {
         throw std::runtime_error("Error opening node file for writing: " + node_file_name);
     }
-    // Write the node data to the file, but since the contents are handled separately, pass the ofstream the flag to hide contents.
+    // Write the node data to the file, but since the property_data are handled separately, pass the ofstream the flag to hide property_data.
     node_file << hide_contents << node;
     node_file.close();
 }
@@ -375,9 +375,9 @@ bool writeNodeToFiles(const std::string& base_path, const TreeNode& node)
     try {
         createNodeDirectory(base_path, node.getLabelRule());
         writeNodeFile(base_path, node);
-        auto filenames = getContentFileNames(base_path, node.getLabelRule(), node.getLiteralTypes());
+        auto filenames = getContentFileNames(base_path, node.getLabelRule(), node.getPropertyInfo());
         auto content_types = parseContentTypes(filenames);
-        writeContentFiles(content_types, filenames, node.getContents());
+        writeContentFiles(content_types, filenames, node.getPropertyData());
     } catch (const std::exception& e) {
         std::cerr << "Error writing node to files: " << e.what() << std::endl;
         return false;
@@ -392,8 +392,8 @@ fplus::maybe<TreeNode> readNodeFromFiles(const std::string& base_path, const std
         if (node.is_nothing()) {
             return node;
         }
-        auto content_files = getContentFileNames(base_path, label_rule, node.unsafe_get_just().getLiteralTypes());
-        node.unsafe_get_just().setContents(readContentFiles(content_files));
+        auto content_files = getContentFileNames(base_path, label_rule, node.unsafe_get_just().getPropertyInfo());
+        node.unsafe_get_just().setPropertyData(readContentFiles(content_files));
         return node;
     } catch (const std::exception& e) {
         std::cerr << "Error reading node from files: " << e.what() << std::endl;
@@ -452,7 +452,7 @@ bool deleteDirectoryRecursively(const std::string& base_path, const std::string&
         perror("rmdir");
         return false; // Return false if the directory could not be removed
     }
-    return true; // Return true if the directory and its contents were removed successfully
+    return true; // Return true if the directory and its property_data were removed successfully
 }
 
 bool deleteNodeFiles(const std::string& base_path, const std::string& label_rule, bool recursive)

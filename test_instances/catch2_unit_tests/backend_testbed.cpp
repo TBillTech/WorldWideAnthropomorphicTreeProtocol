@@ -8,27 +8,27 @@ void disableCatch2() {
     useCatch2 = false;
 }
 
-TreeNode createNoContentTreeNode(string label_rule, string description, vector<string> literal_types, 
+TreeNode createNoContentTreeNode(string label_rule, string description, vector<string> property_infos, 
     TreeNodeVersion version, vector<string> child_names, 
     maybe<string> query_how_to, maybe<string> qa_sequence) {
     shared_span<> no_content(global_no_chunk_header, false);
-    return TreeNode(label_rule, description, literal_types, version, child_names, std::move(no_content), std::move(query_how_to), std::move(qa_sequence));
+    return TreeNode(label_rule, description, property_infos, version, child_names, std::move(no_content), std::move(query_how_to), std::move(qa_sequence));
 }
 
-TreeNode createAnimalNode(string animal, string description, vector<string> literal_types, 
+TreeNode createAnimalNode(string animal, string description, vector<string> property_infos, 
     TreeNodeVersion version, vector<string> child_names, 
-    vector<pair<int, string>> contents, string query_how_to, string qa_sequence) {
+    vector<pair<int, string>> property_data, string query_how_to, string qa_sequence) {
     payload_chunk_header header(0, payload_chunk_header::SIGNAL_WWATP_UPSERT_NODE_REQUEST, 0);
     shared_span<> animal_data(header, true);
     pair<bool, pair<size_t, size_t>> next = {false, {0, 0}};
-    for (auto& content : contents) {
+    for (auto& content : property_data) {
         next = {true, animal_data.copy_type<int>(content.first, next)};
         auto a_string = content.second;
         next.second = animal_data.copy_type<int>(a_string.size(), next);
         next.second = animal_data.copy_span<const char>(std::span<const char>(a_string.c_str(), a_string.size()), next);
     }
     auto only_animal_data = animal_data.restrict_upto(next.second);
-    if (contents.empty()) {
+    if (property_data.empty()) {
         only_animal_data = shared_span<>(global_no_chunk_header, false);
     }
     auto m_query_how_to = maybe<string>(query_how_to);
@@ -45,7 +45,7 @@ TreeNode createAnimalNode(string animal, string description, vector<string> lite
     else {
         assert(m_qa_sequence.get_with_default("") == qa_sequence);
     }
-    return TreeNode(animal, description, literal_types, version, child_names, std::move(only_animal_data), m_query_how_to, m_qa_sequence);
+    return TreeNode(animal, description, property_infos, version, child_names, std::move(only_animal_data), m_query_how_to, m_qa_sequence);
 }
 
 vector<TreeNode> createAnimalDossiers(TreeNode &animal_node) {

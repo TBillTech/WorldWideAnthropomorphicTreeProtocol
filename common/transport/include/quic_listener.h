@@ -156,7 +156,6 @@ public:
         }
         if (!handler_ready)
         {
-            cout << "Preparing handler for request: " << req << " at stream: " << sid << endl;
             prepareHandler(sid, req);
         }
 

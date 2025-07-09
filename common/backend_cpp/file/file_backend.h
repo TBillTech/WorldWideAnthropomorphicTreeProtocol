@@ -22,11 +22,11 @@
 //    Lion/Simba.node
 //    Lion/Simba.<order>.<fileformat> (for example Lion/Simba.0.dossier.txt, Lion/Simba.1.history.yaml) 
 //
-// The .node extension file contains the node metadata, such as label rule, description, version, child names, contents, query how-to, and QA sequence.
-// Note that the literal_types field is derived from the contents fileformats, so it is not stored in the .node file.
-// The additional files with the <order>.<fileformat> extension contain data which is loaded into the node's contents member.
-// First, the <order> part so that the files can be loaded into the contents in the correct order (sort of like the linux boot loader does with initrd files).
-// If contents are seen as attributes of the node, then it is idiomatic to have the first content be a list of names, for example, "Lion.0.names".
+// The .node extension file contains the node metadata, such as label rule, description, version, child names, property_data, query how-to, and QA sequence.
+// Note that the property_infos field is derived from the property_data fileformats, so it is not stored in the .node file.
+// The additional files with the <order>.<fileformat> extension contain data which is loaded into the node's property_data member.
+// First, the <order> part so that the files can be loaded into the property_data in the correct order (sort of like the linux boot loader does with initrd files).
+// If property_data are seen as attributes of the node, then it is idiomatic to have the first content be a list of names, for example, "Lion.0.names".
 // The names are used to identify the category of content, such as "triangles", "motivations", etc, which is a more or less an open category name.
 // If a simple category name does not seem specific enough, for example if we want to give it a proper name, it should probably be a child node instead.
 // We envision, when schemas are necessary to fully identify the type of content, that there would be in addition a content section with a schema name,
@@ -34,7 +34,7 @@
 // which indicates to the framework the format the data takes on disk.
 //
 // Thus, there are some clear specifications for the parts of the file name:
-// <order> is a zero-padded integer, such as "0000", "0001", etc.  It is used to order the files in the contents vector (and conveniently in file listings).
+// <order> is a zero-padded integer, such as "0000", "0001", etc.  It is used to order the files in the property_data vector (and conveniently in file listings).
 // <fileformat> is a string that identifies the file format, such as:
 // "int", "string", "double", "py", "css", "html", "txt", "yaml", "json", and ought to be from a relatively small set of file formats that the framework supports.
 
@@ -46,7 +46,7 @@ std::string getNodeName(const std::string& base_path, const std::string& label_r
 std::string getNodeParentPath(const std::string& base_path, const std::string& label_rule);
 std::string getNodeFileName(const std::string& base_path, const std::string& label_rule);
 std::string getContentFileName(const std::string& base_path, const std::string& label_rule, int order, const std::string& literal_type);
-std::vector<std::string> getContentFileNames(const std::string& base_path, const std::string& label_rule, const std::vector<std::string>& literal_types);
+std::vector<std::string> getContentFileNames(const std::string& base_path, const std::string& label_rule, const std::vector<std::string>& property_infos);
 std::string getLabelRuleFromFileName(const std::string& base_path, const std::string& file_name);
 vector<std::string> readContentFileNames(const std::string& base_path, const std::string& label_rule);
 vector<std::string> parseContentTypes(vector<std::string> content_file_names);

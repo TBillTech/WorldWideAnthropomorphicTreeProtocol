@@ -1985,7 +1985,6 @@ int Client::on_extend_max_streams() {
         break;
     }
 
-    cerr << "Client Now sending outstanding request: " << stream_id << endl << flush;
     Request req = quic_connector_.getOutstandingRequest();
     auto stream = std::make_unique<ClientStream>(req, stream_id, this);
 

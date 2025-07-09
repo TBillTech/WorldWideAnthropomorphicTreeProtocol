@@ -88,10 +88,10 @@ public:
     // Constructors
     TreeNode();
     TreeNode(const std::string& label_rule, const std::string& description, 
-        const std::vector<std::string>& literal_types,
+        const std::vector<std::string>& property_infos,
         const TreeNodeVersion& version,
         const std::vector<std::string>& child_names,
-        shared_span<>&& contents, 
+        shared_span<>&& property_data, 
         const fplus::maybe<std::string>& query_how_to,
         const fplus::maybe<std::string>& qa_sequence);
 
@@ -115,8 +115,8 @@ public:
     const fplus::maybe<std::string>& getQaSequence() const;
     void setQaSequence(const fplus::maybe<std::string>& qa_sequence);
 
-    const std::vector<std::string>& getLiteralTypes() const;
-    void setLiteralTypes(const std::vector<std::string>& literal_types);
+    const std::vector<std::string>& getPropertyInfo() const;
+    void setPropertyInfo(const std::vector<std::string>& property_infos);
 
     const string& getPolicy() const;
     void setPolicy(const string& policy);
@@ -125,8 +125,8 @@ public:
     std::vector<std::string> getAbsoluteChildNames() const;
     void setChildNames(const std::vector<std::string>& child_names);
 
-    const shared_span<>& getContents() const;
-    void setContents(shared_span<>&& contents);
+    const shared_span<>& getPropertyData() const;
+    void setPropertyData(shared_span<>&& property_data);
 
     const TreeNodeVersion& getVersion() const;
     void setVersion(const TreeNodeVersion& version);
@@ -146,10 +146,10 @@ public:
 private:
     std::string label_rule;
     std::string description;
-    std::vector<std::string> literal_types;
+    std::vector<std::string> property_infos;
     TreeNodeVersion version;
     std::vector<std::string> child_names;
-    shared_span<> contents;
+    shared_span<> property_data;
     fplus::maybe<std::string> query_how_to;
     fplus::maybe<std::string> qa_sequence;
 };

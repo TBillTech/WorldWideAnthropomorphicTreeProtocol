@@ -108,15 +108,15 @@ chunkList encode_MaybeTreeNode(uint16_t request_id, uint8_t signal, const fplus:
     oss << "\n";
 
     payload_chunk_header header(request_id, signal, 0);
-    auto contents_vec = node.getContents().flatten_with_signal(header);
-    // Output node.getContents().size() as hex, padded to fixed width
+    auto contents_vec = node.getPropertyData().flatten_with_signal(header);
+    // Output node.getPropertyData().size() as hex, padded to fixed width
     // However, worrying about a 32 bit system, use sizeof(size_t) == 8
     oss << std::setw(8 * 2) << std::setfill('0') << std::hex << contents_vec.size();
     oss << std::dec; // Reset to decimal for any further output
 
     chunkList encoded = encode_long_string(request_id, signal, oss.str());
-    chunkList contents(std::make_move_iterator(contents_vec.begin()), std::make_move_iterator(contents_vec.end()));
-    encoded.insert(encoded.end(), std::make_move_iterator(contents.begin()), std::make_move_iterator(contents.end()));
+    chunkList property_data(std::make_move_iterator(contents_vec.begin()), std::make_move_iterator(contents_vec.end()));
+    encoded.insert(encoded.end(), std::make_move_iterator(property_data.begin()), std::make_move_iterator(property_data.end()));
     return encoded;
 }
 
@@ -140,8 +140,8 @@ pair<size_t, fplus::maybe<TreeNode>> decode_MaybeTreeNode(chunkList encoded) {
     iss >> std::hex >> contents_count;
     chunkList::iterator start_it = std::next(encoded.begin(), chunk_start);
     chunkList::iterator end_it = std::next(encoded.begin(), chunk_start + contents_count);
-    shared_span<> contents(start_it, end_it);
-    node.setContents(move(contents));
+    shared_span<> property_data(start_it, end_it);
+    node.setPropertyData(move(property_data));
     return {chunk_start+contents_count, fplus::maybe<TreeNode>(node)};
 }
 
@@ -173,13 +173,13 @@ fplus::maybe<size_t> can_decode_MaybeTreeNode(size_t start_chunk, chunkList enco
     }
     auto chunk_count_start = sizeof(payload_chunk_header) + last_chunk_size - 8 * 2;
     struct sixteen_bytes_t {
-        char contents[8*2];
+        char property_data[8*2];
     };
     sixteen_bytes_t contents_size_str = {0};
     last_chunk.at<sixteen_bytes_t>(contents_size_str, 
         {true, {chunk_count_start, 0}});
     // Use string_view to avoid null-termination issues
-    std::string_view contents_view(contents_size_str.contents, sizeof(contents_size_str.contents));
+    std::string_view contents_view(contents_size_str.property_data, sizeof(contents_size_str.property_data));
     std::stringstream iss;
     iss.write(contents_view.data(), contents_view.size());
     size_t contents_size;

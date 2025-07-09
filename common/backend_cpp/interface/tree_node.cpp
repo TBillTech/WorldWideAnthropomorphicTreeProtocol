@@ -3,20 +3,20 @@
 using namespace std;
 
 TreeNode::TreeNode()
-    : label_rule(""), description(""), literal_types({}), 
-      version(), child_names({}), contents(global_no_chunk_header, false),
+    : label_rule(""), description(""), property_infos({}), 
+      version(), child_names({}), property_data(global_no_chunk_header, false),
       query_how_to(fplus::maybe<string>()), qa_sequence(fplus::maybe<string>())
     {}
 
 TreeNode::TreeNode(const std::string& label_rule, const std::string& description, 
-        const std::vector<std::string>& literal_types,
+        const std::vector<std::string>& property_infos,
         const TreeNodeVersion& version,
         const std::vector<std::string>& child_names,
-        shared_span<>&& contents, 
+        shared_span<>&& property_data, 
         const fplus::maybe<std::string>& query_how_to,
         const fplus::maybe<std::string>& qa_sequence)
-    : label_rule(label_rule), description(description), literal_types(literal_types),
-      version(version), child_names(child_names), contents(move(contents)), 
+    : label_rule(label_rule), description(description), property_infos(property_infos),
+      version(version), child_names(child_names), property_data(move(property_data)), 
       query_how_to(query_how_to), qa_sequence(qa_sequence)
     {
         // label_rule cannot have whitespace
@@ -37,18 +37,18 @@ TreeNode::TreeNode(const std::string& label_rule, const std::string& description
         }
     }
 
-// The assignment operators are for the most part typical, except for the handling of the contents.
-// When doing move semantics, the contents need to use move semantics.
-// When doing copy semantics, the contents need to use the shared_span restrict method to get a reference counted view of the data.
+// The assignment operators are for the most part typical, except for the handling of the property_data.
+// When doing move semantics, the property_data need to use move semantics.
+// When doing copy semantics, the property_data need to use the shared_span restrict method to get a reference counted view of the data.
 TreeNode& TreeNode::operator=(const TreeNode& other) {
     if (this != &other) {
         label_rule = other.label_rule;
         description = other.description;
-        literal_types = other.literal_types;
+        property_infos = other.property_infos;
         version = other.version;
         child_names = other.child_names;
-        auto content_total_range = make_pair(0, other.contents.size());
-        contents = move(other.contents.restrict(content_total_range));
+        auto content_total_range = make_pair(0, other.property_data.size());
+        property_data = move(other.property_data.restrict(content_total_range));
         query_how_to = other.query_how_to;
         qa_sequence = other.qa_sequence;
     }
@@ -59,10 +59,10 @@ TreeNode& TreeNode::operator=(TreeNode&& other) noexcept {
     if (this != &other) {
         label_rule = std::move(other.label_rule);
         description = std::move(other.description);
-        literal_types = std::move(other.literal_types);
+        property_infos = std::move(other.property_infos);
         version = std::move(other.version);
         child_names = std::move(other.child_names);
-        contents = std::move(other.contents);
+        property_data = std::move(other.property_data);
         version = std::move(other.version);
         query_how_to = std::move(other.query_how_to);
         qa_sequence = std::move(other.qa_sequence);
@@ -72,15 +72,15 @@ TreeNode& TreeNode::operator=(TreeNode&& other) noexcept {
 
 TreeNode::TreeNode(TreeNode&& other) noexcept
     : label_rule(std::move(other.label_rule)), description(std::move(other.description)),
-      literal_types(std::move(other.literal_types)), version(std::move(other.version)),
-      child_names(std::move(other.child_names)), contents(std::move(other.contents)),
+      property_infos(std::move(other.property_infos)), version(std::move(other.version)),
+      child_names(std::move(other.child_names)), property_data(std::move(other.property_data)),
       query_how_to(std::move(other.query_how_to)), qa_sequence(std::move(other.qa_sequence))
       {}
 
 TreeNode::TreeNode(const TreeNode& other)
     : label_rule(other.label_rule), description(other.description),
-      literal_types(other.literal_types), version(other.version), 
-      child_names(other.child_names), contents(other.contents),
+      property_infos(other.property_infos), version(other.version), 
+      child_names(other.child_names), property_data(other.property_data),
       query_how_to(other.query_how_to), qa_sequence(other.qa_sequence)
       {}
 
@@ -124,12 +124,12 @@ void TreeNode::setQaSequence(const fplus::maybe<std::string>& qa_sequence) {
     }
 }
 
-const std::vector<std::string>& TreeNode::getLiteralTypes() const {
-    return literal_types;
+const std::vector<std::string>& TreeNode::getPropertyInfo() const {
+    return property_infos;
 }
 
-void TreeNode::setLiteralTypes(const std::vector<std::string>& literal_types) {
-    this->literal_types = literal_types;
+void TreeNode::setPropertyInfo(const std::vector<std::string>& property_infos) {
+    this->property_infos = property_infos;
 }
 
 const string& TreeNode::getPolicy() const {
@@ -156,12 +156,12 @@ void TreeNode::setChildNames(const std::vector<std::string>& child_names) {
     this->child_names = child_names;
 }
 
-const shared_span<>& TreeNode::getContents() const {
-    return contents;
+const shared_span<>& TreeNode::getPropertyData() const {
+    return property_data;
 }
 
-void TreeNode::setContents(shared_span<>&& contents) {
-    this->contents = move(contents);
+void TreeNode::setPropertyData(shared_span<>&& property_data) {
+    this->property_data = move(property_data);
 }
 
 const TreeNodeVersion& TreeNode::getVersion() const {
@@ -176,18 +176,18 @@ bool TreeNode::operator==(const TreeNode& other) const {
     bool properties_equal = true;
     properties_equal = label_rule == other.label_rule && properties_equal;
     properties_equal = description == other.description && properties_equal;
-    properties_equal = literal_types == other.literal_types && properties_equal;
+    properties_equal = property_infos == other.property_infos && properties_equal;
     properties_equal = version == other.version && properties_equal;
     properties_equal = child_names == other.child_names && properties_equal;
     auto query_how_to_value = query_how_to.get_with_default("");
     auto other_query_how_to_value = other.query_how_to.get_with_default("");
     properties_equal = query_how_to_value == other_query_how_to_value && properties_equal;
     properties_equal = qa_sequence == other.qa_sequence && properties_equal;
-    bool contents_equal = contents.size() == other.contents.size();
+    bool contents_equal = property_data.size() == other.property_data.size();
     if (contents_equal) {
-        auto this_it = contents.begin<uint8_t>();
-        auto other_it = other.contents.begin<uint8_t>();
-        for (size_t i = 0; i < contents.size(); ++i) {
+        auto this_it = property_data.begin<uint8_t>();
+        auto other_it = other.property_data.begin<uint8_t>();
+        for (size_t i = 0; i < property_data.size(); ++i) {
             if (*this_it != *other_it) {
                 contents_equal = false;
                 break;
@@ -200,7 +200,7 @@ bool TreeNode::operator==(const TreeNode& other) const {
 }
 
 // We need a string-length-value function in order to implement stream operators for long strings that contain arbitrary data.
-// In particular, the concern is that sometimes description might contain statements about literal_types or TreeNodes and so on.
+// In particular, the concern is that sometimes description might contain statements about property_infos or TreeNodes and so on.
 // So, this function accepts a label for the string, and writes out the length of the string, followed by the string itself.
 void write_length_string(std::ostream& os, const std::string& label, const std::string& str) {
     os << label << " " << str.size() << " :\n";
@@ -245,8 +245,8 @@ std::ostream& operator<<(std::ostream& os, const TreeNode& node)
     os << "TreeNode(\n";
     os << "label_rule: " << node.getLabelRule() << "\n";
     write_length_string(os, "description", node.getDescription());
-    os << "literal_types: [ ";
-    for (const auto& type : node.getLiteralTypes()) {
+    os << "property_infos: [ ";
+    for (const auto& type : node.getPropertyInfo()) {
         os << type << ", ";
     }
     os << "], ";
@@ -262,7 +262,7 @@ std::ostream& operator<<(std::ostream& os, const TreeNode& node)
     write_length_string(os, "qa_sequence", node.getQaSequence().get_with_default(""));
 
     if (hide_contents_flag(os) == 0) {
-        os << node.getContents();
+        os << node.getPropertyData();
     } else {
         shared_span<> empty(global_no_chunk_header, false);
         os << empty;
@@ -284,8 +284,8 @@ std::istream& operator>>(std::istream& is, TreeNode& node)
     auto description = read_length_string(is);
     node.setDescription(description.second);
 
-    std::vector<std::string> literal_types;
-    is >> label; // Consume "literal_types:"
+    std::vector<std::string> property_infos;
+    is >> label; // Consume "property_infos:"
     is >> label; // Consume " ["
     is.get(); // Consume the space after "["
     while (is.peek() != ']') {
@@ -297,10 +297,10 @@ std::istream& operator>>(std::istream& is, TreeNode& node)
         if (is.peek() == ' ') {
             is.get(); // Consume the space after the comma
         }
-        literal_types.push_back(type);
+        property_infos.push_back(type);
     }
     is >> label; // Consume "]"
-    node.setLiteralTypes(literal_types);
+    node.setPropertyInfo(property_infos);
 
     TreeNodeVersion version;
     is >> label >> version; // Read "version:" and the value
@@ -347,7 +347,7 @@ std::istream& operator>>(std::istream& is, TreeNode& node)
         throw std::runtime_error("Expected 'qa_sequence' label, got: " + qa_sequence_str.first);
     }
 
-    is >> node.contents; // Read the contents
+    is >> node.property_data; // Read the property_data
 
     is >> label; // Consume ")"
     is.get(); // Consume the newline after the closing parenthesis

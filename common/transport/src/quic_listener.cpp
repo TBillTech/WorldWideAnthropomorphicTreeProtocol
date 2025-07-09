@@ -619,7 +619,6 @@ int Stream::start_response(nghttp3_conn *httpconn)
     {
         return send_status_response(httpconn, 400);
     }
-    cout << "Stream Request is: " << get_request() << endl << flush;
 
     auto dyn_len = find_dyn_length(get_request());
 
@@ -630,7 +629,6 @@ int Stream::start_response(nghttp3_conn *httpconn)
     if (!get_request().isWWATP())
     {
         handler->server()->listener().prepareStaticHandler(handler->get_scid(),get_request());
-        cout << "Preparing static handler for request: " << get_request() << " At scid: " << handler->get_scid() << endl;
     }
 
     if ((!live_stream) && (dyn_len == -1))
@@ -4106,7 +4104,6 @@ stream_callback_fn global_noop_stream_callback = [](StreamIdentifier, chunks) { 
 
 uri_response_info QuicListener::prepareHandler(StreamIdentifier sid, const Request& req)
 {
-    cerr << "Preparing handler for request: " << req.path << " at sid: " << sid << endl << flush;
     assert(req.method != "");
     unique_lock<std::mutex> preparerlock(preparerStackMutex);
     for (auto &preparer : preparersStack) {

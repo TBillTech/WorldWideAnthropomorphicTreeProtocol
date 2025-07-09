@@ -81,28 +81,28 @@ vector<shared_span<>> readFileChunks(string const& file_path) {
 }
 
 void verifyStaticData(TreeNode const& withContents, chunks const& originalStaticData, bool allow_trailers) {
-    auto contents = withContents.getContents();
-    // We cannot directly compare contents chunks with originalStaticData chunks, since the chunk lengths may differ.
+    auto property_data = withContents.getPropertyData();
+    // We cannot directly compare property_data chunks with originalStaticData chunks, since the chunk lengths may differ.
     // So use the shared_span flattening to convert the originalStaticData to a shared_span,
     // and then use a uint8_t shared_span<> iterator to compare the individual bytes.
     shared_span<> originalSpan(originalStaticData.begin(), originalStaticData.end());
-    auto withContentsIterator = contents.begin<uint8_t>();
+    auto withContentsIterator = property_data.begin<uint8_t>();
     auto originalSpanIterator = originalSpan.begin<uint8_t>();
     size_t index = 0;
-    if (withContentsIterator == contents.end<uint8_t>() && originalSpanIterator != originalSpan.end<uint8_t>()) {
+    if (withContentsIterator == property_data.end<uint8_t>() && originalSpanIterator != originalSpan.end<uint8_t>()) {
         throw runtime_error("Static data content mismatch: original span has more data than withContents up to index " + to_string(index));
     }
-    if (originalSpanIterator == originalSpan.end<uint8_t>() && withContentsIterator != contents.end<uint8_t>()) {
+    if (originalSpanIterator == originalSpan.end<uint8_t>() && withContentsIterator != property_data.end<uint8_t>()) {
         throw runtime_error("Static data content mismatch: withContents has more data than original span up to index " + to_string(index));
     }
-    while (withContentsIterator != contents.end<uint8_t>() && originalSpanIterator != originalSpan.end<uint8_t>()) {
+    while (withContentsIterator != property_data.end<uint8_t>() && originalSpanIterator != originalSpan.end<uint8_t>()) {
         if (*withContentsIterator != *originalSpanIterator) {
             throw runtime_error("Static data content mismatch at index " + to_string(index));
         }
         ++withContentsIterator;
         ++originalSpanIterator;
         ++index;
-        if (withContentsIterator == contents.end<uint8_t>() && originalSpanIterator != originalSpan.end<uint8_t>()) {
+        if (withContentsIterator == property_data.end<uint8_t>() && originalSpanIterator != originalSpan.end<uint8_t>()) {
             throw runtime_error("Static data content mismatch: original span has more data than withContents up to index " + to_string(index));
         }
         if (allow_trailers && originalSpanIterator == originalSpan.end<uint8_t>())
@@ -110,7 +110,7 @@ void verifyStaticData(TreeNode const& withContents, chunks const& originalStatic
             // If trailers are allowed, we can stop here, since the original span may have trailing data.
             break;
         }
-        if (originalSpanIterator == originalSpan.end<uint8_t>() && withContentsIterator != contents.end<uint8_t>()) {
+        if (originalSpanIterator == originalSpan.end<uint8_t>() && withContentsIterator != property_data.end<uint8_t>()) {
             throw runtime_error("Static data content mismatch: withContents has more data than original span up to index " + to_string(index));
         }
     }
