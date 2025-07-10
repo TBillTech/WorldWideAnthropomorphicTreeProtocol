@@ -926,6 +926,12 @@ void FileBackend::onWatchCreateEvent(int wd, const std::string& notification_pat
                 FullWatchSpecifier next_full_watch_specifier(*next_watch_it, watch_chain_index);
                 wd_to_watchchain_[new_wd] = next_full_watch_specifier;
                 watchchain_to_wd_[next_full_watch_specifier] = new_wd;
+                if((next_watch_it->first & IN_MODIFY) == IN_MODIFY) {
+                    auto node = readNodeFromFiles(basePath_, next_watch_it->second);
+                    auto next_label_rule = getLabelRuleFromFileName(basePath_, next_watch_it->second);
+                    // If the next watch is for IN_MODIFY, we need to notify listeners immediately
+                    notifyListeners(next_label_rule, node);
+                }
             }
         }
     } else {
