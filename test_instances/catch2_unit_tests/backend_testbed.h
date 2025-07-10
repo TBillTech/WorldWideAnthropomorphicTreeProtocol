@@ -16,7 +16,7 @@ TreeNode createNoContentTreeNode(string label_rule, string description, vector<T
 
 TreeNode createAnimalNode(string animal, string description, vector<TreeNode::PropertyInfo> property_infos, 
     TreeNodeVersion version, vector<string> child_names, 
-    vector<pair<int, string>> property_data, string query_how_to, string qa_sequence);
+    vector<string> property_data, string query_how_to, string qa_sequence);
 
 vector<TreeNode> createAnimalDossiers(TreeNode &animal_node);
 vector<TreeNode> createLionNodes();
@@ -41,6 +41,7 @@ public:
     void stressTestConstructions(size_t count);
     void testAnimalNodesNoElephant(string label_prefix = "");
     void testBackendLogically(string label_prefix = "");
+    void testPeerNotification(Backend &to_be_modified, uint32_t notification_delay, string label_prefix = "");
 
 private:
     bool should_test_notifications_;

@@ -95,7 +95,7 @@ TEST_CASE("encode_MaybeTreeNode and decode_MaybeTreeNode roundtrip", "[http3_tre
     test_encode_decode(2, payload_chunk_header::SIGNAL_WWATP_DELETE_NODE_REQUEST, just_simple_animal);
 
     auto anAnimal = createAnimalNode("Seal", "A marine mammal", {{"txt", ""}, {"txt", ""}}, 
-        {1, 1}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
+        {1, 1}, {"pup_1", "pup_2"}, {"pup 1 dossier", "pup 2 dossier"}, 
         "How to query seal", "Seal QA sequence");
     fplus::maybe<TreeNode> just_animal(anAnimal);
     test_encode_decode(3, payload_chunk_header::SIGNAL_WWATP_QUERY_NODES_REQUEST, just_animal);
@@ -117,7 +117,7 @@ TEST_CASE("encode_SequentialNotification and decode_SequentialNotification round
 
     // More complex notification
     TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", {{"txt", ""}, {"txt", ""}}, 
-        {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
+        {2, 2}, {"pup_1", "pup_2"}, {"pup 1 dossier", "pup 2 dossier"}, 
         "How to query complex animal", "Complex Animal QA sequence");
     SequentialNotification complex_notification(13, Notification(complex_node.getLabelRule(), fplus::maybe<TreeNode>(complex_node)));
     test_encode_decode(2, payload_chunk_header::SIGNAL_WWATP_GET_JOURNAL_RESPONSE, complex_notification);
@@ -138,7 +138,7 @@ TEST_CASE("encode_VectorSequentialNotification and decode_VectorSequentialNotifi
 
     // More complex vector
     TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", {{"txt", ""}, {"txt", ""}}, 
-        {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
+        {2, 2}, {"pup_1", "pup_2"}, {"pup 1 dossier", "pup 2 dossier"}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");
@@ -160,7 +160,7 @@ TEST_CASE("encode_NewNodeVersion and decode_NewNodeVersion roundtrip", "[http3_t
             encode_NewNodeVersion, decode_NewNodeVersion, can_decode_NewNodeVersion);
     };
     TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", {{"txt", ""}, {"txt", ""}}, 
-        {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
+        {2, 2}, {"pup_1", "pup_2"}, {"pup 1 dossier", "pup 2 dossier"}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");
@@ -188,7 +188,7 @@ TEST_CASE("encode_SubTransaction and decode_SubTransaction", "[http3_tree_messag
     };
     TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", 
         {{"txt", "pup_1_dossier"}, {"txt", "pup_2_dossier"}}, 
-        {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
+        {2, 2}, {"pup_1", "pup_2"}, {"pup 1 dossier", "pup 2 dossier"}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");
@@ -223,7 +223,7 @@ TEST_CASE("encode_Transaction and decode_Transaction roundtrip", "[http3_tree_me
     };
     TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", 
         {{"txt", "pup_1_dossier"}, {"txt", "pup_2_dossier"}}, 
-        {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
+        {2, 2}, {"pup_1", "pup_2"}, {"pup 1 dossier", "pup 2 dossier"}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");
@@ -269,13 +269,13 @@ TEST_CASE("encode_VectorTreeNode and decode_VectorTreeNode roundtrip", "[http3_t
     test_encode_decode(42, payload_chunk_header::SIGNAL_WWATP_GET_NODE_REQUEST, empty_vector);
 
     encoded_type single_node_vector = { createAnimalNode("Lion", "A big cat", {{"txt", "dossier"}}, 
-        {1, 1}, {"cub_1"}, {{1, "cub 1 dossier"}}, "How to query lion", "Lion QA sequence") };
+        {1, 1}, {"cub_1"}, {"cub 1 dossier"}, "How to query lion", "Lion QA sequence") };
     test_encode_decode(1, payload_chunk_header::SIGNAL_WWATP_GET_FULL_TREE_REQUEST, single_node_vector);
 
     // More complex vector
     TreeNode complex_node = createAnimalNode("https://example.com/path/to/lion?query=param#fragment", "A complex animal", 
         {{"txt", "pup_1_dossier"}, {"txt", "pup_2_dossier"}}, 
-        {2, 2}, {"pup_1", "pup_2"}, {{1, "pup 1 dossier"}, {2, "pup 2 dossier"}}, 
+        {2, 2}, {"pup_1", "pup_2"}, {"pup 1 dossier", "pup 2 dossier"}, 
         "How to query complex animal", "Complex Animal QA sequence");
     TreeNode simpleAnimal = createAnimalNode("Sponge", "Bottom Feeder", {}, 
         {1, 1}, {}, {}, "", "");

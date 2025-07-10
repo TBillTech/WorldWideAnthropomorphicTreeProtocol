@@ -17,17 +17,47 @@ TreeNode createNoContentTreeNode(string label_rule, string description, vector<T
 
 TreeNode createAnimalNode(string animal, string description, vector<TreeNode::PropertyInfo> property_infos, 
     TreeNodeVersion version, vector<string> child_names, 
-    vector<pair<int, string>> property_data, string query_how_to, string qa_sequence) {
+    vector<string> property_data, string query_how_to, string qa_sequence) {
     payload_chunk_header header(0, payload_chunk_header::SIGNAL_WWATP_UPSERT_NODE_REQUEST, 0);
     shared_span<> animal_data(header, true);
     pair<bool, pair<size_t, size_t>> next = {false, {0, 0}};
+    uint16_t index = 0;
     for (auto& content : property_data) {
-        next = {true, animal_data.copy_type<int>(content.first, next)};
-        auto a_string = content.second;
-        next.second = animal_data.copy_type<int>(a_string.size(), next);
-        next.second = animal_data.copy_span<const char>(std::span<const char>(a_string.c_str(), a_string.size()), next);
+        auto info = property_infos[index];
+        if(info.first == "int") {
+            stringstream ss(content);
+            uint64_t value;
+            ss >> value;
+            next = {true, animal_data.copy_type<uint64_t>(value, next)};
+        }
+        if(info.first == "double") {
+            stringstream ss(content);
+            double value;
+            ss >> value;
+            next = {true, animal_data.copy_type<double>(value, next)};
+        }
+        if(info.first == "float") {
+            stringstream ss(content);
+            float value;
+            ss >> value;
+            next = {true, animal_data.copy_type<float>(value, next)};
+        
+        }
+        if(info.first == "bool") {
+            stringstream ss(content);
+            bool value;
+            ss >> std::boolalpha >> value;
+            next = {true, animal_data.copy_type<bool>(value, next)};
+        }
+        if (fixed_size_types.find(info.first) == fixed_size_types.end()) {
+            next.second = animal_data.copy_type<uint64_t>(content.size(), next);
+            next.second = animal_data.copy_span<const char>(std::span<const char>(content.c_str(), content.size()), next);
+        }
+        index++;
     }
     auto only_animal_data = animal_data.restrict_upto(next.second);
+    auto data_size = only_animal_data.size();
+    only_animal_data.get_signal<payload_chunk_header>().data_length = static_cast<uint16_t>(data_size);
     if (property_data.empty()) {
         only_animal_data = shared_span<>(global_no_chunk_header, false);
     }
@@ -75,7 +105,7 @@ vector<TreeNode> createLionNodes() {
         {{"int", "popularity"}, {"string", "diet"}},
         {1, 0, "public", maybe<string>(), maybe<string>("tester"), maybe<string>("tester"), maybe<int>(2)}, 
         {"Simba", "Nala"},
-        {{10, "carnivore"}},
+        {"10", "carnivore"},
         "url duh!", 
         "Zookeeper1: Lions are majestic.\nZookeeper2: Indeed, they are the kings of the jungle."
     );
@@ -91,7 +121,7 @@ vector<TreeNode> createElephantNodes() {
         {{"int", "popularity"}, {"string", "diet"}},
         {1, 0, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
         {"Dumbo", "Babar"}, 
-        {{8, "herbivore"}},
+        {"8", "herbivore"},
         "url duh!", 
         "Zookeeper1: Elephants are so strong.\nZookeeper2: And they have great memory!"
     );
@@ -111,7 +141,7 @@ vector<TreeNode> createParrotNodes() {
         {{"int", "popularity"}, {"string", "diet"}},
         {1, 0, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
         {"Polly", "Jerome"}, 
-        {{7, "omnivore"}},
+        {"7", "omnivore"},
         "url duh!", 
         "Zookeeper1: Parrots can mimic sounds.\nZookeeper2: Yes, they are very intelligent birds."
     );
@@ -351,4 +381,82 @@ void BackendTestbed::testBackendLogically(string label_prefix) {
     else {
         assert(!lion_node_deleted);
     }
+}
+
+void BackendTestbed::testPeerNotification(Backend &to_be_modified, uint32_t notification_delay, string label_prefix)
+{
+    if(!should_test_notifications_ || !should_test_changes_) {
+        return;
+    }
+    bool lion_node_created = false;
+    bool lion_node_deleted = false;
+    string lion_label = label_prefix + "lion";
+    auto backend_address = &backend_;
+    backend_.registerNodeListener("lion_listener", lion_label, false, 
+        [lion_label, &lion_node_created, &lion_node_deleted, backend_address](Backend& notified_backend, const string label_rule, const fplus::maybe<TreeNode> node) {
+        if (useCatch2) {
+            REQUIRE(lion_label == label_rule);
+            REQUIRE(backend_address == &notified_backend);
+        }
+        else {
+            assert(lion_label == label_rule);
+            assert(backend_address == &notified_backend);
+        }
+        if (node.is_just()) {
+            auto found_node = node.get_with_default(TreeNode());
+            if (found_node.getLabelRule() == lion_label) {
+                lion_node_created = true;
+            }
+        } else {
+            lion_node_deleted = true;
+        }
+    });
+    auto prefixed_lion_nodes = prefixNodeLabels(label_prefix, createLionNodes());
+    to_be_modified.upsertNode(prefixed_lion_nodes);
+    to_be_modified.processNotifications();
+    this_thread::sleep_for(chrono::milliseconds(notification_delay));
+    backend_.processNotifications();
+    if (useCatch2) {
+        REQUIRE(lion_node_created);
+    }
+    else {
+        assert(lion_node_created);
+    }
+    to_be_modified.deleteNode(lion_label);
+    to_be_modified.processNotifications();
+    this_thread::sleep_for(chrono::milliseconds(notification_delay));
+    backend_.processNotifications();
+    if (useCatch2) {
+        REQUIRE(lion_node_deleted);
+    }
+    else {
+        assert(lion_node_deleted);
+    }
+    backend_.deregisterNodeListener("lion_listener", lion_label);
+    to_be_modified.processNotifications();
+    this_thread::sleep_for(chrono::milliseconds(notification_delay));
+    backend_.processNotifications();
+    lion_node_created = false;
+    lion_node_deleted = false;
+    to_be_modified.upsertNode(prefixed_lion_nodes);
+    to_be_modified.processNotifications();
+    this_thread::sleep_for(chrono::milliseconds(notification_delay));
+    backend_.processNotifications();
+    if (useCatch2) {
+        REQUIRE(!lion_node_created);
+    }
+    else {
+        assert(!lion_node_created);
+    }
+    to_be_modified.deleteNode(lion_label);
+    to_be_modified.processNotifications();
+    this_thread::sleep_for(chrono::milliseconds(notification_delay));
+    backend_.processNotifications();
+    if (useCatch2) {
+        REQUIRE(!lion_node_deleted);
+    }
+    else {
+        assert(!lion_node_deleted);
+    }
+
 }

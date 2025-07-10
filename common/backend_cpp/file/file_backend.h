@@ -49,7 +49,7 @@ std::string getContentFileName(const std::string& base_path, const std::string& 
 std::vector<std::string> getContentFileNames(const std::string& base_path, const std::string& label_rule, const std::vector<std::string>& property_infos);
 std::string getLabelRuleFromFileName(const std::string& base_path, const std::string& file_name);
 vector<std::string> readContentFileNames(const std::string& base_path, const std::string& label_rule);
-vector<std::string> parseContentTypes(vector<std::string> content_file_names);
+vector<TreeNode::PropertyInfo> parsePropertyInfos(vector<std::string> content_file_names);
 shared_span<> readContentFiles(vector<std::string> content_file_names);
 fplus::maybe<TreeNode> readNodeFile(const std::string& base_path, const std::string& label_rule);
 
@@ -78,7 +78,15 @@ class FileBackend : public Backend {
                 throw std::runtime_error("Failed to initialize inotify");
             }
         };
-        ~FileBackend() override = default;
+        ~FileBackend() override
+        {
+            for (const auto& it : wd_to_watchchain_)
+            {
+                int wd = it.first;
+                inotify_rm_watch(inotify_fd_, wd);
+            }
+            close(inotify_fd_);
+        }
     
         // Retrieve a node by its label rule.
         fplus::maybe<TreeNode> getNode(const std::string& label_rule) const override;
@@ -112,9 +120,23 @@ class FileBackend : public Backend {
         // processNotifications will check on the inotify file descriptor for any events and process them accordingly, without a dedicated thread.
         void processNotifications() override;
 
+        using DesiredWatch = std::pair<uint32_t, std::string>; // (mask, path)
+        using WatchChain = std::list<DesiredWatch>; // List of desired watches (for an ultimate label rule), going up the directory heirarchy to the file path itself.
+        using WatchChainSpecifier = std::tuple<std::string, std::string, bool>; // (label_rule, listener_name, child_notify)
+        using WatchChainIndex = pair<WatchChainSpecifier, size_t>; // (watch_chain_specifier, index into watch chains vector of watch_chains_)
+        using FullWatchSpecifier = std::pair<DesiredWatch, WatchChainIndex>; // (desired_watch, watch_chain_index)
+
     private:
+        std::vector<TreeNode> queryNodesFromPath(const std::string& base_directory, const std::string& label_rule) const;
         bool canPerformSubTransaction(const SubTransaction& sub_transaction) const;
         bool performSubTransaction(const SubTransaction& sub_transaction);
+
+        // Create watch chains will create the creation chain, the delete chain, and the modify watch for a given label rule.
+        void setupWatch(WatchChainSpecifier watch_chain_specifier);
+        void teardownWatch(WatchChainSpecifier watch_chain_specifier);
+        void onWatchModifyEvent(int wd);
+        void onWatchCreateEvent(int wd, const std::string& notification_path);
+        void onWatchDeleteEvent(int wd, const std::string& notification_path);
 
         std::string basePath_;
 
@@ -122,8 +144,11 @@ class FileBackend : public Backend {
         char buffer_[4096]
             __attribute__ ((aligned(__alignof__(struct inotify_event))));        
         // A given label rule can have multiple watchers if it is associated with multiple directories or files.
-        std::map<int, std::string> wd_to_label_rule_; // Maps watch descriptors to paths (from which label rules can be derived)
+        std::map<FullWatchSpecifier, int> watchchain_to_wd_; // Maps (desired_watch, watch_chain_index) to the watch descriptor.
+        std::map<int, FullWatchSpecifier> wd_to_watchchain_; // Maps watch descriptor to (desired_watch, watch_chain_index).
         std::list<int> inotify_notifications; // List of wd that have pending notifications.
-        using ListenerInfo = std::tuple<std::string, bool, std::list<int>, NodeListenerCallback>;
+        std::map<WatchChainSpecifier, vector<WatchChain> > watch_chains_; // Maps (label_rule, listener_name, child_notify) to a watch chain.
+
+        using ListenerInfo = std::tuple<WatchChainSpecifier, NodeListenerCallback>;
         std::map<std::string, std::list<ListenerInfo> > node_listeners_;
 };

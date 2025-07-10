@@ -5,6 +5,7 @@
 #include <cstdint> // For uint8_t
 #include <fplus/fplus.hpp>
 #include "shared_chunk.h"
+#include <set>
 
 // operators for reading and writing a fplus::maybe<T> to a stream
 namespace fplus {
@@ -155,6 +156,9 @@ private:
     fplus::maybe<std::string> query_how_to;
     fplus::maybe<std::string> qa_sequence;
 };
+
+// Common set of fixed-size property types for TreeNode serialization
+inline const std::set<std::string> fixed_size_types = {"int", "double", "float", "bool"};
 
 // For tracking transactions on nodes, each tree node modification has a prior version sequence number
 // attached to the Node. 

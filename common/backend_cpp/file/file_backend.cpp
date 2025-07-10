@@ -104,6 +104,10 @@ std::string getLabelRuleFromFileName(const std::string& base_path, const std::st
     if (file_name.back() == '/') {
         // Remove the trailing slash
         std::string label_rule = file_name.substr(0, file_name.length() - 1);
+        if (file_name.length() <= base_path.length()) {
+            // If the file name is shorter than or equal to the base path, return an empty label rule
+            return "";
+        }
         // Remove the base path
         label_rule = label_rule.substr(base_path.length());
         return label_rule;
@@ -153,26 +157,36 @@ vector<std::string> readContentFileNames(const std::string& base_path, const std
     return content_file_names;
 }
 
-vector<std::string> parseContentTypes(vector<std::string> content_file_names)
+vector<TreeNode::PropertyInfo> parsePropertyInfos(vector<std::string> content_file_names)
 {
-    std::vector<std::string> content_types;
+    std::vector<TreeNode::PropertyInfo> property_infos;
     for (const auto& file_name : content_file_names) {
         // Extract the literal type from the file name
         size_t last_dot = file_name.find_last_of('.');
+        size_t last_slash = file_name.find_last_of('/');
+        size_t first_dot = file_name.find_first_of('.', last_slash + 1);
+        size_t second_dot = string::npos;
+        if (first_dot != std::string::npos) {
+            second_dot = file_name.find_first_of('.', first_dot + 1);
+        }
         if (last_dot != std::string::npos) {
-            std::string property_info = file_name.substr(last_dot + 1);
-            content_types.push_back(property_info);
+            std::string property_type = file_name.substr(last_dot + 1);
+            std::string property_name;
+            if ((second_dot != std::string::npos) && (second_dot > first_dot + 1)) {
+                // If there is a second dot, the property name is between the first and second dot
+                property_name = file_name.substr(second_dot + 1, last_dot - second_dot - 1);
+            }
+            property_infos.push_back({property_type, property_name});
         }
     }
-    return content_types;
+    return property_infos;
 }
 
 shared_span<> readContentFiles(vector<std::string> content_file_names)
 {
-    auto types = parseContentTypes(content_file_names);
-    // Some types are fixed size, known in advance, such as int, double, string, etc.
-    static set<std::string> fixed_size_types = {"int", "double", "float", "bool"};
-    // The rest of the types are variable size.
+    auto infos = parsePropertyInfos(content_file_names);
+    // Some infos are fixed size, known in advance, such as int, double, string, etc.
+    // The rest of the infos are variable size.
     //static set<std::string> variable_size_types = {"string", "text", "json", "yaml", "xml", "html", "css", "py"};
     std::vector<shared_span<>> data_spans;
     size_t order = 0;
@@ -187,7 +201,7 @@ shared_span<> readContentFiles(vector<std::string> content_file_names)
         // Read the file property_data into a buffer
         std::vector<uint8_t> buffer(std::istreambuf_iterator<char>(file), {});
         // if this is not a fixed size type, we need to add the size of the buffer in a span first:
-        if (fixed_size_types.find(types[order]) == fixed_size_types.end()) {
+        if (fixed_size_types.find(infos[order].first) == fixed_size_types.end()) {
             // First, add a chunk for the size of the data
             payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
             uint64_t buffer_size = buffer.size();
@@ -196,44 +210,42 @@ shared_span<> readContentFiles(vector<std::string> content_file_names)
             data_spans.emplace_back(data_header, std::span<uint8_t>(buffer));
         }
         else {
-            if (types[order] == "int") {
+            if (infos[order].first == "int") {
                 payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
                 uint64_t the_int = 0;
                 stringstream int_stream(std::string(reinterpret_cast<const char*>(buffer.data()), buffer.size()));
                 int_stream >> the_int;
-                data_spans.emplace_back(header, std::span<uint64_t>(&the_int, sizeof(the_int)));
+                data_spans.emplace_back(header, std::span<uint64_t>(&the_int, 1));
             }
-            if (types[order] == "double") {
+            if (infos[order].first == "double") {
                 payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
                 double the_double = 0.0;
                 stringstream double_stream(std::string(reinterpret_cast<const char*>(buffer.data()), buffer.size()));
                 double_stream >> the_double;
-                data_spans.emplace_back(header, std::span<double>(&the_double, sizeof(the_double)));
+                data_spans.emplace_back(header, std::span<double>(&the_double, 1));
             }
-            if (types[order] == "float") {
+            if (infos[order].first == "float") {
                 payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
                 float the_float = 0.0f;
                 stringstream float_stream(std::string(reinterpret_cast<const char*>(buffer.data()), buffer.size()));
                 float_stream >> the_float;
-                data_spans.emplace_back(header, std::span<float>(&the_float, sizeof(the_float)));
+                data_spans.emplace_back(header, std::span<float>(&the_float, 1));
             }
-            if (types[order] == "bool") {
+            if (infos[order].first == "bool") {
                 payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
                 bool the_bool = false;
                 stringstream bool_stream(std::string(reinterpret_cast<const char*>(buffer.data()), buffer.size()));
                 std::string bool_str;
                 bool_stream >> bool_str;
-                if (bool_str == "true" || bool_str == "1") {
+                if (bool_str == "TRUE" || bool_str == "True" || bool_str == "true" || bool_str == "1") {
                     the_bool = true;
-                } else if (bool_str == "false" || bool_str == "0") {
+                } else if (bool_str == "FALSE" || bool_str == "False" || bool_str == "false" || bool_str == "0" || bool_str == "") {
                     the_bool = false;
                 } else {
                     std::cerr << "Error parsing bool from file: " << file_name << std::endl;
                 }
-                data_spans.emplace_back(header, std::span<bool>(&the_bool, sizeof(the_bool)));
+                data_spans.emplace_back(header, std::span<bool>(&the_bool, 1));
             }
-            // For variable size types, we just add the buffer directly
-            data_spans.emplace_back(payload_chunk_header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, buffer.size()), std::span<uint8_t>(buffer));
         }
         order++;
         // Close the file
@@ -250,7 +262,6 @@ fplus::maybe<TreeNode> readNodeFile(const std::string& base_path, const std::str
     std::string node_file_name = getNodeFileName(base_path, label_rule);
     std::ifstream node_file(node_file_name, std::ios::binary);
     if (!node_file) {
-        std::cerr << "Error opening node file: " << node_file_name << std::endl;
         return maybe<TreeNode>(); // Return nothing if the file cannot be opened
     }
     
@@ -270,23 +281,28 @@ std::vector<TreeNode> readNodesRecursively(string basePath_, string relative_pat
 {
     std::vector<TreeNode> tree;
     string base_directory = basePath_ + relative_path;
+    vector<string> directories_to_read;
     // Open the base directory and read all files
     for (const auto& entry : std::filesystem::directory_iterator(base_directory)) {
-        if (entry.is_regular_file()) {
-            auto node_label = getLabelRuleFromFileName(basePath_, entry.path().filename().string());
+        // Every node must have a directory, so entries not directories are skipped.
+        if (entry.is_directory()) {
+            // also skip "." and ".." directories
+            if (entry.path().filename() == "." || entry.path().filename() == "..")
+                continue;
+            auto node_label = getLabelRuleFromFileName(basePath_, base_directory + entry.path().filename().string());
             auto node_directory = getNodeDirectoryPath(basePath_, node_label);
-            if (node_label == node_directory) {
-                // If the node label is the same as the directory, it means it's a node file.
-                // We can read the node from the file.
-                auto node = readNodeFile(basePath_, node_label);
-                if (node.is_just()) {
-                    tree.push_back(node.unsafe_get_just());
-                }
-                auto children = readNodesRecursively(basePath_, node_directory.substr(basePath_.length()));
-                tree.insert(tree.end(), children.begin(), children.end());
+            auto node = readNodeFromFiles(basePath_, node_label);
+            if (node.is_just()) {
+                tree.push_back(node.unsafe_get_just());
+                directories_to_read.push_back(node_directory);
             }
         }
     }
+    for (auto dir : directories_to_read) {
+        auto children = readNodesRecursively(basePath_, dir.substr(basePath_.length()));
+        tree.insert(tree.end(), children.begin(), children.end());
+    }
+
     return tree;
 }
 
@@ -321,17 +337,17 @@ void writeNodeFile(const std::string& base_path, const TreeNode& node)
     node_file << hide_contents << node;
     node_file.close();
 }
-void writeContentFiles(vector<std::string> content_types, vector<std::string> content_file_names, const shared_span<>& const_data)
+
+void writeContentFiles(vector<TreeNode::PropertyInfo> property_infos, vector<std::string> content_file_names, const shared_span<>& const_data)
 {
-    static set<std::string> fixed_size_types = {"int", "double", "float", "bool"};
     shared_span<> remaining_span(const_data);
-    for (size_t i = 0; i < content_types.size(); ++i) {
+    for (size_t i = 0; i < property_infos.size(); ++i) {
         std::ofstream content_file(content_file_names[i], std::ios::binary);
         if (!content_file) {
             throw std::runtime_error("Error opening content file for writing: " + content_file_names[i]);
         }
         // Check if the content type is fixed size or variable size
-        if (content_types[i] == "int") {
+        if (property_infos[i].first == "int") {
             uint64_t the_int = *remaining_span.begin<uint64_t>();
             stringstream int_stream;
             int_stream << the_int;
@@ -339,7 +355,7 @@ void writeContentFiles(vector<std::string> content_types, vector<std::string> co
             content_file.write(int_str.c_str(), int_str.size());
             remaining_span = remaining_span.restrict(pair(sizeof(uint64_t), remaining_span.size() - sizeof(uint64_t)));
         }
-        if (content_types[i] == "double") {
+        if (property_infos[i].first == "double") {
             double the_double = *remaining_span.begin<double>();
             stringstream double_stream;
             double_stream << the_double;
@@ -347,7 +363,7 @@ void writeContentFiles(vector<std::string> content_types, vector<std::string> co
             content_file.write(double_str.c_str(), double_str.size());
             remaining_span = remaining_span.restrict(pair(sizeof(double), remaining_span.size() - sizeof(double)));
         }
-        if (content_types[i] == "float") {
+        if (property_infos[i].first == "float") {
             float the_float = *remaining_span.begin<float>();
             stringstream float_stream;
             float_stream << the_float;
@@ -355,14 +371,14 @@ void writeContentFiles(vector<std::string> content_types, vector<std::string> co
             content_file.write(float_str.c_str(), float_str.size());
             remaining_span = remaining_span.restrict(pair(sizeof(float), remaining_span.size() - sizeof(float)));
         }
-        if (content_types[i] == "bool") {
+        if (property_infos[i].first == "bool") {
             bool the_bool = *remaining_span.begin<bool>();
             std::string bool_str = the_bool ? "true" : "false";
             content_file.write(bool_str.c_str(), bool_str.size());
             remaining_span = remaining_span.restrict(pair(sizeof(bool), remaining_span.size() - sizeof(bool)));
         }
-        // For variable size types, we need to write the size first, then the content
-        if (fixed_size_types.find(content_types[i]) == fixed_size_types.end()) {
+        // For variable size infos, we need to write the size first, then the content
+        if (fixed_size_types.find(property_infos[i].first) == fixed_size_types.end()) {
             uint64_t the_size = *remaining_span.begin<uint64_t>();
             shared_span<> content_span = remaining_span.restrict(pair(sizeof(uint64_t), the_size));
             for (auto byte : content_span.range<uint8_t>()) {
@@ -380,8 +396,8 @@ bool writeNodeToFiles(const std::string& base_path, const TreeNode& node)
         createNodeDirectory(base_path, node.getLabelRule());
         writeNodeFile(base_path, node);
         auto filenames = getContentFileNames(base_path, node.getLabelRule(), node.getPropertyInfo());
-        auto content_types = parseContentTypes(filenames);
-        writeContentFiles(content_types, filenames, node.getPropertyData());
+        auto property_infos = parsePropertyInfos(filenames);
+        writeContentFiles(property_infos, filenames, node.getPropertyData());
     } catch (const std::exception& e) {
         std::cerr << "Error writing node to files: " << e.what() << std::endl;
         return false;
@@ -396,8 +412,11 @@ fplus::maybe<TreeNode> readNodeFromFiles(const std::string& base_path, const std
         if (node.is_nothing()) {
             return node;
         }
-        auto content_files = getContentFileNames(base_path, label_rule, node.unsafe_get_just().getPropertyInfo());
+        auto content_files = readContentFileNames(base_path, label_rule);
+        auto property_infos = parsePropertyInfos(content_files);
         node.unsafe_get_just().setPropertyData(readContentFiles(content_files));
+        // Override the property_info with the parsed property_infos, because users will usually just modify the file names, not the .node file.
+        node.unsafe_get_just().setPropertyInfo(property_infos);
         return node;
     } catch (const std::exception& e) {
         std::cerr << "Error reading node from files: " << e.what() << std::endl;
@@ -572,19 +591,16 @@ std::vector<TreeNode> FileBackend::relativeGetPageTree(const TreeNode& node, con
     return getPageTree(full_label_rule);
 }
 
-// Query nodes matching a label rule.
-std::vector<TreeNode> FileBackend::queryNodes(const std::string& label_rule) const
+std::vector<TreeNode> FileBackend::queryNodesFromPath(const std::string& base_directory, const std::string& label_rule) const
 {    
-    // TODO:  This whole concept is currently half baked.  I'm waiting to see what the use cases are before designing it further.
-    // For now, just return all nodes that match the label rule.
-    // So recurse from the base path and find all directories that match the label rule.
     std::vector<TreeNode> result;
     set<std::string> label_rules_set; // To avoid duplicates
-    DIR* dir = opendir(basePath_.c_str());
+    DIR* dir = opendir(base_directory.c_str());
     if (!dir) {
         perror("opendir");
         return result; // Return empty vector on error
     }
+    std::vector<std::string> subdirs_to_recurse; // To store subdirectories for later recursion
     struct dirent* entry;
     while ((entry = readdir(dir))) {
         if (entry->d_type == DT_DIR) {
@@ -592,10 +608,10 @@ std::vector<TreeNode> FileBackend::queryNodes(const std::string& label_rule) con
             if (entry->d_name == std::string(".") || entry->d_name == std::string("..")) {
                 continue;
             }
+            std::string node_label = getLabelRuleFromFileName(basePath_, base_directory + entry->d_name);
             // Check if the directory name matches the label rule
-            if (std::string(entry->d_name).find(label_rule) != std::string::npos) {
+            if (node_label.find(label_rule) != std::string::npos) {
                 // If it matches, read the node from the file system
-                std::string node_label = getLabelRuleFromFileName(basePath_, entry->d_name);
                 // Avoid duplicates by checking if the label rule is already in the set
                 if (label_rules_set.find(node_label) == label_rules_set.end()) {
                     label_rules_set.insert(node_label);
@@ -605,10 +621,26 @@ std::vector<TreeNode> FileBackend::queryNodes(const std::string& label_rule) con
                     }
                 }
             }
+            // Add to subdirs_to_recurse for later recursion
+            subdirs_to_recurse.push_back(base_directory + entry->d_name + "/");
         }
     }
     closedir(dir);
+    // Now recurse into subdirectories after closing the current directory
+    for (const auto& subdir : subdirs_to_recurse) {
+        auto matching_children = queryNodesFromPath(subdir, label_rule);
+        result.insert(result.end(), matching_children.begin(), matching_children.end());
+    }
     return result;
+}
+
+// Query nodes matching a label rule.
+std::vector<TreeNode> FileBackend::queryNodes(const std::string& label_rule) const
+{    
+    // TODO:  This whole concept is currently half baked.  I'm waiting to see what the use cases are before designing it further.
+    // For now, just return all nodes that match the label rule.
+    // So recurse from the base path and find all directories that match the label rule.
+    return queryNodesFromPath(basePath_, label_rule);
 }
 
 std::vector<TreeNode> FileBackend::relativeQueryNodes(const TreeNode& node, const std::string& label_rule) const
@@ -755,44 +787,201 @@ std::vector<TreeNode> FileBackend::getFullTree() const
     return readNodesRecursively(basePath_, "");
 }
 
-vector<std::string> collect_watch_paths(const std::string& base_path, const std::string& label_rule, bool child_notify) {
-    vector<std::string> watch_paths;
-    // Always watch the node file itself
-    watch_paths.push_back(getNodeFileName(base_path, label_rule));
-    // And all content files
+vector<FileBackend::WatchChain> node_watch_chain(const std::string& base_path, const std::string& label_rule) {
+    vector<FileBackend::WatchChain> watch_chains;
+    FileBackend::WatchChain directory_watch_chain;
+    auto node_dir = getNodeParentPath(base_path, label_rule);
+    while(node_dir.length() > base_path.length()) {
+        // Add the directory to the watch chain
+        directory_watch_chain.push_front({IN_CREATE | IN_DELETE, node_dir});
+        // Move up to the parent directory
+        node_dir = getNodeParentPath(base_path, getLabelRuleFromFileName(base_path, node_dir));
+    }
+    watch_chains.push_back(directory_watch_chain);
+    watch_chains.back().push_back({IN_MODIFY | IN_IGNORED, getNodeFileName(base_path, label_rule)});
     auto content_files = readContentFileNames(base_path, label_rule);
-    watch_paths.insert(watch_paths.end(), content_files.begin(), content_files.end());
+    for (const auto& content_file : content_files) {
+        watch_chains.push_back(directory_watch_chain);
+        watch_chains.back().push_back({IN_MODIFY | IN_IGNORED, content_file});
+    }
+    return watch_chains;
+}
+
+vector<FileBackend::WatchChain> collect_watch_paths(const std::string& base_path, const std::string& label_rule, bool child_notify) {
+    vector<FileBackend::WatchChain> watchChains = node_watch_chain(base_path, label_rule);
     // If child_notify is true, also watch the directory for changes
     if (child_notify) {
         auto node_dir = getNodeDirectoryPath(base_path, label_rule);
         // For each directory in the node_dir, get the label_rule, and collect_watch_paths with child_notify = true on them
         for (const auto& entry : std::filesystem::directory_iterator(node_dir)) {
             if (entry.is_directory()) {
-                auto child_label_rule = getLabelRuleFromFileName(base_path, entry.path().filename().string());
+                auto child_label_rule = getLabelRuleFromFileName(base_path, node_dir + entry.path().filename().string());
                 auto child_watch_paths = collect_watch_paths(base_path, child_label_rule, true);
-                watch_paths.insert(watch_paths.end(), child_watch_paths.begin(), child_watch_paths.end());
+                watchChains.insert(watchChains.end(), child_watch_paths.begin(), child_watch_paths.end());
             }
         }
     }
-    return watch_paths;
+    return watchChains;
+}
+
+void FileBackend::setupWatch(WatchChainSpecifier watch_chain_specifier) 
+{
+    auto notification_rule = get<0>(watch_chain_specifier);
+    auto listener_name = get<1>(watch_chain_specifier);
+    auto child_notify = get<2>(watch_chain_specifier);
+    auto watch_chains = collect_watch_paths(basePath_, notification_rule, child_notify);
+    watch_chains_[watch_chain_specifier] = watch_chains;
+    list<int> wds;
+    int watch_chain_vector_index = 0;
+    for (const auto& chain : watch_chains) {
+        WatchChainIndex watch_chain_index(watch_chain_specifier, watch_chain_vector_index);
+        for (const auto& desired : chain) {
+            if (!std::filesystem::exists(desired.second)) {
+                continue; // Skip this path if it does not exist
+            }
+            int wd = inotify_add_watch(inotify_fd_, desired.second.c_str(), desired.first);
+            if (wd < 0) {
+                perror("inotify_add_watch");
+                throw std::runtime_error("Failed to add inotify watch for path: " + desired.second);
+            }
+            FullWatchSpecifier full_watch_specifier(desired, watch_chain_index);
+            wd_to_watchchain_[wd] = full_watch_specifier;
+            watchchain_to_wd_[full_watch_specifier] = wd;
+        }
+        watch_chain_vector_index++;
+    }
+}
+
+void FileBackend::teardownWatch(WatchChainSpecifier watch_chain_specifier)
+{
+    auto findit = watch_chains_.find(watch_chain_specifier);
+    if (findit != watch_chains_.end()) {
+        // Remove all watches for this watch chain specifier
+        for (const auto& chain : findit->second) {
+            for (const auto& desired : chain) {
+                auto full_watch_specifier = FullWatchSpecifier(desired, WatchChainIndex(watch_chain_specifier, 0));
+                auto wd_it = watchchain_to_wd_.find(full_watch_specifier);
+                if (wd_it != watchchain_to_wd_.end()) {
+                    int wd = wd_it->second;
+                    if (inotify_rm_watch(inotify_fd_, wd) < 0) {
+                        perror("inotify_rm_watch");
+                    }
+                    wd_to_watchchain_.erase(wd);
+                    watchchain_to_wd_.erase(full_watch_specifier);
+                }
+            }
+        }
+        watch_chains_.erase(findit);
+    }
+}
+
+void FileBackend::onWatchModifyEvent(int wd)
+{
+    auto findit = wd_to_watchchain_.find(wd);
+    if (findit != wd_to_watchchain_.end()) {
+        auto full_watch_specifier = findit->second;
+        auto watch_chain_index = full_watch_specifier.second;
+        auto watch_chain_specifier = watch_chain_index.first;
+        auto label_rule = get<0>(watch_chain_specifier);
+        // Notify listeners for this label rule
+        notifyListeners(label_rule, maybe<TreeNode>());
+    } else {
+        std::cerr << "[inotify] No watch found for wd: " << wd << std::endl;
+    }
+}
+
+void FileBackend::onWatchCreateEvent(int wd, const std::string& notification_path)
+{
+    // This only occurs for directories, so depending on the exact path that the watcher is watching, it
+    // will imply creating new watchers for the new directory and/or file.
+    auto findit = wd_to_watchchain_.find(wd);
+    if (findit != wd_to_watchchain_.end()) {
+        auto full_watch_specifier = findit->second;
+        auto desired_watch = full_watch_specifier.first;
+        auto watch_chain_index = full_watch_specifier.second;
+        auto watch_chain_specifier = watch_chain_index.first;
+        auto watch_chain_vector_index = watch_chain_index.second;
+        auto label_rule = get<0>(watch_chain_specifier);
+        // Find the NEXT desired_watch in the watch chain
+        auto watch_chain_it = watch_chains_.find(watch_chain_specifier);
+        if (watch_chain_it != watch_chains_.end() && watch_chain_it->second.size() > watch_chain_vector_index) {
+            // We have a valid watch chain, so we can add the next watch
+            WatchChain watch_chain = watch_chain_it->second[watch_chain_vector_index];
+            // Find the index of the desired_watch in the watch chain
+            auto cur_watch_it = std::find_if(watch_chain.begin(), watch_chain.end(),
+                [&desired_watch](const std::pair<uint32_t, std::string>& watch) {
+                    return watch.first == desired_watch.first && watch.second == desired_watch.second;
+                });
+            auto next_watch_it = std::next(cur_watch_it);
+            // If the next_watch matches the notification_path, we can add a new watch for it
+            if (next_watch_it != watch_chain.end() && next_watch_it->second == notification_path) {
+                // Add a new watch for the next desired path
+                int new_wd = inotify_add_watch(inotify_fd_, notification_path.c_str(), next_watch_it->first);
+                if (new_wd < 0) {
+                    int err = errno;
+                    std::cerr << "[inotify_add_watch] Failed to add inotify watch for path: " << notification_path
+                              << ", errno=" << err << ": " << strerror(err) << std::endl;
+                    return; // If we fail to add the watch, we just return
+                }
+                FullWatchSpecifier next_full_watch_specifier(*next_watch_it, watch_chain_index);
+                wd_to_watchchain_[new_wd] = next_full_watch_specifier;
+                watchchain_to_wd_[next_full_watch_specifier] = new_wd;
+            }
+        }
+    } else {
+        std::cerr << "[inotify] No watch found for wd: " << wd << std::endl;
+    }
+}
+
+void FileBackend::onWatchDeleteEvent(int wd, const std::string& notification_path) 
+{
+    // This closely echos the onWatchCreateEvent, but we need to remove the watch from the maps.
+    auto findit = wd_to_watchchain_.find(wd);
+    if (findit != wd_to_watchchain_.end()) {
+        auto full_watch_specifier = findit->second;
+        auto desired_watch = full_watch_specifier.first;
+        auto watch_chain_index = full_watch_specifier.second;
+        auto watch_chain_specifier = watch_chain_index.first;
+        size_t watch_chain_vector_index = watch_chain_index.second;
+        auto label_rule = get<0>(watch_chain_specifier);
+        // Find the NEXT desired_watch in the watch chain
+        auto watch_chain_it = watch_chains_.find(watch_chain_specifier);
+        if (watch_chain_it != watch_chains_.end() && watch_chain_it->second.size() > watch_chain_vector_index) {
+            WatchChain watch_chain = watch_chain_it->second[watch_chain_vector_index];
+            // Find the index of the desired_watch in the watch chain
+            auto cur_watch_it = std::find_if(watch_chain.begin(), watch_chain.end(),
+                [&desired_watch](const std::pair<uint32_t, std::string>& watch) {
+                    return watch.first == desired_watch.first && watch.second == desired_watch.second;
+                });
+            auto next_watch_it = std::next(cur_watch_it);
+            // If the next_watch matches the notification_path, we can add a new watch for it
+            if (next_watch_it != watch_chain.end() && next_watch_it->second == notification_path) {
+                while(next_watch_it != watch_chain.end()){
+                    FullWatchSpecifier next_full_watch_specifier(*next_watch_it, watch_chain_index);
+                    auto wd_it = watchchain_to_wd_.find(next_full_watch_specifier);
+                    if (wd_it != watchchain_to_wd_.end()) {
+                        // Remove the watch from the maps
+                        wd_to_watchchain_.erase(wd_it->second);
+                        watchchain_to_wd_.erase(full_watch_specifier);
+                        if (inotify_rm_watch(inotify_fd_, wd_it->second) < 0) {
+                            int err = errno;
+                            std::cerr << "[inotify_rm_watch] Failed to remove inotify watch for wd: " << wd
+                                    << ", errno=" << err << ": " << strerror(err) << std::endl;
+                            }
+                    }
+                }
+            }
+        }
+    }
 }
 
 void FileBackend::registerNodeListener(const std::string listener_name, const std::string notification_rule, bool child_notify, NodeListenerCallback callback) {
     deregisterNodeListener(listener_name, notification_rule);
 
-    auto watch_paths = collect_watch_paths(basePath_, notification_rule, child_notify);
-    list<int> wds;
-    for (const auto& path : watch_paths) {
-        int wd = inotify_add_watch(inotify_fd_, path.c_str(), IN_CREATE | IN_DELETE | IN_MODIFY);
-        if (wd < 0) {
-            perror("inotify_add_watch");
-            throw std::runtime_error("Failed to add inotify watch for path: " + path);
-        }
-        wds.push_back(wd);
-        wd_to_label_rule_[wd] = notification_rule;
-    }
+    WatchChainSpecifier wc_specifier(notification_rule, listener_name, child_notify);
+    setupWatch(wc_specifier);
     auto findit = node_listeners_.find(notification_rule);
-    ListenerInfo a_listener = {listener_name, child_notify, wds, callback};
+    ListenerInfo a_listener = {wc_specifier, callback};
     if (findit != node_listeners_.end()) {
         // If the label_rule already exists, add the listener to the existing list
         auto& listeners = findit->second;
@@ -810,19 +999,14 @@ void FileBackend::deregisterNodeListener(const std::string listener_name, const 
         auto& listeners = found->second;
         // First, clean up inotify watches for all listeners to be removed
         for (auto it = listeners.begin(); it != listeners.end(); ++it) {
-            if (std::get<0>(*it) == listener_name) {
-                auto& wds = std::get<2>(*it);
-                for (auto wd : wds) {
-                    if (inotify_rm_watch(inotify_fd_, wd) < 0) {
-                        perror("inotify_rm_watch");
-                        std::cerr << "Failed to remove inotify watch for wd: " << wd << std::endl;
-                    }
-                }
+            WatchChainSpecifier wc_specifier = std::get<0>(*it);
+            if (get<1>(wc_specifier) == listener_name) {
+                teardownWatch(wc_specifier); // Remove the watch for this listener
             }
         }
         // Now erase all matching listeners
         listeners.erase(std::remove_if(listeners.begin(), listeners.end(), [&](const ListenerInfo& listener) {
-            return std::get<0>(listener) == listener_name;
+            return std::get<1>(std::get<0>(listener)) == listener_name;
         }), listeners.end());
         // If the list of listeners is empty, remove the label rule from the map
         if (listeners.empty()) {
@@ -848,10 +1032,10 @@ void FileBackend::notifyListeners(const std::string& label_rule, const maybe<Tre
         for (auto listener : listeners) {
             if (found->first == label_rule) {
                 // The parent == label and callback is unconditionally met
-                std::get<3>(listener)(*this, label_rule, node);
+                std::get<1>(listener)(*this, label_rule, node);
             } else if (std::get<1>(listener) && checkLabelRuleOverlap(found->first, label_rule)) {
                 // The label_rule contains the listener's label_rule, and the callback matches children
-                std::get<3>(listener)(*this, label_rule, node);
+                std::get<1>(listener)(*this, label_rule, node);
             } // Otherwise, the label_rule contains the listener's label_rule, but the callback does not match children
         }
         if (found != node_listeners_.begin()) {
@@ -866,22 +1050,55 @@ void FileBackend::processNotifications()
 {
     ssize_t length = read(inotify_fd_, buffer_, sizeof(buffer_));
     if (length < 0) {
-        perror("read");
-        return; // Return if there was an error reading the inotify events
+        int err = errno;
+        if (err == EAGAIN) {
+            // No events available, not an error in non-blocking mode
+            return;
+        }
+        std::cerr << "[inotify] read() returned " << length << ", errno=" << err << ": " << strerror(err) << std::endl << flush;
+        return;
     }
 
+    map<string, bool> notifications_this_loop; // To avoid duplicate notifications for the same label_rule
     ssize_t offset = 0;
     while (offset < length) {
         struct inotify_event* event = reinterpret_cast<struct inotify_event*>(&buffer_[offset]);
         if (event->len > 0) {
-            std::string file_path = wd_to_label_rule_[event->wd];
-            auto label_rule = getLabelRuleFromFileName(basePath_, file_path);
-            maybe<TreeNode> node;
-            if (event->mask & IN_CREATE ||event->mask & IN_MODIFY || event->mask & IN_DELETE) {
-                // Read the node from the file system
-                node = readNodeFromFiles(basePath_, label_rule);
+            int wd = event->wd;
+            auto find_it = wd_to_watchchain_.find(wd);
+            if (find_it == wd_to_watchchain_.end()) {
+                std::cerr << "[inotify] No watch found for wd: " << wd << std::endl;
+                offset += sizeof(struct inotify_event) + event->len;
+                continue; // Skip this event if no watch is found
+            } else {
+                string inotify_path = event->name;
+                switch (event->mask) {
+                    case IN_CREATE:
+                        onWatchCreateEvent(wd, inotify_path);
+                        break;
+                    case IN_DELETE:
+                        onWatchDeleteEvent(wd, inotify_path);
+                        break;
+                    case IN_MODIFY:
+                        onWatchModifyEvent(wd);
+                        break;
+                    case IN_IGNORED:
+                        onWatchModifyEvent(wd);  // Supposedly IN_IGNORED is when the file is deleted, so we treat it like a modify event
+                        break;
+                    default:
+                        std::cerr << "[inotify] Unhandled event mask: " << event->mask << " for wd: " << wd << std::endl;
+                }
+                string label_rule = get<0>(find_it->second.second.first); // Get the label rule from the watch specifier
+                auto node = readNodeFromFiles(basePath_, label_rule);
+                auto previous_notification = notifications_this_loop.find(label_rule);
+                if (previous_notification == notifications_this_loop.end() || previous_notification->second == node.is_just()) {
+                    // If we have not notified this label_rule yet, or if the node is just, notify the listeners
+                    notifications_this_loop[label_rule] = node.is_just();
+                    notifyListeners(label_rule, node);
+                }
+                // We have already notified this label_rule, so skip notifying again
+                offset += sizeof(struct inotify_event) + event->len;
             }
-            notifyListeners(label_rule, node);
         }
         offset += sizeof(struct inotify_event) + event->len;
     }
