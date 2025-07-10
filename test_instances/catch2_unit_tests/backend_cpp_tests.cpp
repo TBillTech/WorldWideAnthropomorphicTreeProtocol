@@ -165,7 +165,7 @@ TEST_CASE("FileBackend test", "[FileBackend]") {
                 while (offset < length) {
                     struct inotify_event* event = reinterpret_cast<struct inotify_event*>(&buffer[offset]);
                     if (event->wd == wd && (event->mask & IN_MODIFY)) {
-                        std::cout << "Inotify notified of modification to lion.node" << std::endl;
+                        //std::cout << "Inotify notified of modification to lion.node" << std::endl;
                         notified = true;
                         break; // We found the event we were looking for
                     }
@@ -188,7 +188,13 @@ TEST_CASE("FileBackend test", "[FileBackend]") {
         FileBackend to_be_notified_backend(base_path);
         BackendTestbed tester(to_be_notified_backend);
         FileBackend to_be_modified_backend(base_path);
-        tester.testPeerNotification(to_be_modified_backend, 2500);
+        tester.testPeerNotification(to_be_modified_backend, 40);
+    }
+    {
+        FileBackend to_be_notified_backend(base_path);
+        BackendTestbed tester(to_be_notified_backend);
+        FileBackend to_be_modified_backend(base_path);
+        tester.testPeerNotification(to_be_modified_backend, 40, "zoo/Seattle/");
     }
     {
         FileBackend file_backend(base_path);

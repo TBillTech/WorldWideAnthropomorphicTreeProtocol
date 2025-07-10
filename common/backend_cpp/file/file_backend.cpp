@@ -126,6 +126,9 @@ vector<std::string> readContentFileNames(const std::string& base_path, const std
     // Open the directory
     DIR* dir = opendir(node_dir.c_str());
     if (!dir) {
+        if (errno == ENOENT) {
+            return content_file_names; // Return empty vector if the directory does not exist
+        }
         perror("opendir");
         return content_file_names; // Return empty vector on error
     }
@@ -260,6 +263,9 @@ shared_span<> readContentFiles(vector<std::string> content_file_names)
 fplus::maybe<TreeNode> readNodeFile(const std::string& base_path, const std::string& label_rule)
 {
     std::string node_file_name = getNodeFileName(base_path, label_rule);
+    if (!std::filesystem::exists(node_file_name)) {
+        return maybe<TreeNode>(); // Return nothing if the file does not exist
+    }
     std::ifstream node_file(node_file_name, std::ios::binary);
     if (!node_file) {
         return maybe<TreeNode>(); // Return nothing if the file cannot be opened
@@ -597,6 +603,9 @@ std::vector<TreeNode> FileBackend::queryNodesFromPath(const std::string& base_di
     set<std::string> label_rules_set; // To avoid duplicates
     DIR* dir = opendir(base_directory.c_str());
     if (!dir) {
+        if (errno == ENOENT) {
+            return result; // Return empty vector if the directory does not exist
+        }
         perror("opendir");
         return result; // Return empty vector on error
     }
@@ -791,9 +800,13 @@ vector<FileBackend::WatchChain> node_watch_chain(const std::string& base_path, c
     vector<FileBackend::WatchChain> watch_chains;
     FileBackend::WatchChain directory_watch_chain;
     auto node_dir = getNodeParentPath(base_path, label_rule);
-    while(node_dir.length() > base_path.length()) {
+    while(node_dir.length() >= base_path.length()) {
         // Add the directory to the watch chain
-        directory_watch_chain.push_front({IN_CREATE | IN_DELETE, node_dir});
+        directory_watch_chain.push_front({IN_CREATE | IN_DELETE | IN_IGNORED, node_dir});
+        if (node_dir == base_path) {
+            // If we reach the base path, we stop adding directories
+            break;
+        }
         // Move up to the parent directory
         node_dir = getNodeParentPath(base_path, getLabelRuleFromFileName(base_path, node_dir));
     }
@@ -845,7 +858,11 @@ void FileBackend::setupWatch(WatchChainSpecifier watch_chain_specifier)
                 throw std::runtime_error("Failed to add inotify watch for path: " + desired.second);
             }
             FullWatchSpecifier full_watch_specifier(desired, watch_chain_index);
-            wd_to_watchchain_[wd] = full_watch_specifier;
+            if (wd_to_watchchain_.find(wd) != wd_to_watchchain_.end()) {
+                wd_to_watchchain_[wd].insert(full_watch_specifier);
+            } else {
+                wd_to_watchchain_[wd] = {full_watch_specifier};
+            }
             watchchain_to_wd_[full_watch_specifier] = wd;
         }
         watch_chain_vector_index++;
@@ -875,18 +892,79 @@ void FileBackend::teardownWatch(WatchChainSpecifier watch_chain_specifier)
     }
 }
 
+void FileBackend::freeWatch(WatchChainSpecifier watch_chain_specifier)
+{
+    auto findit = watch_chains_.find(watch_chain_specifier);
+    if (findit != watch_chains_.end()) {
+        // Remove all watches for this watch chain specifier
+        for (const auto& chain : findit->second) {
+            for (const auto& desired : chain) {
+                for (size_t watch_chain_vector_index = 0; watch_chain_vector_index < findit->second.size(); ++watch_chain_vector_index) {
+                    auto watch_chain_index = WatchChainIndex(watch_chain_specifier, watch_chain_vector_index);
+                    auto full_watch_specifier = FullWatchSpecifier(desired, watch_chain_index);
+                    auto wd_it = watchchain_to_wd_.find(full_watch_specifier);
+                    if (wd_it != watchchain_to_wd_.end()) {
+                        int wd = wd_it->second;
+                        wd_to_watchchain_[wd].erase(full_watch_specifier);
+                        if (wd_to_watchchain_[wd].empty()) {
+                            if (inotify_rm_watch(inotify_fd_, wd) < 0) {
+                                perror("inotify_rm_watch");
+                            }
+                            wd_to_watchchain_.erase(wd);
+                        }
+                    }
+                    watchchain_to_wd_.erase(full_watch_specifier);
+                }
+            }
+        }
+        watch_chains_.erase(findit);
+    }
+}
+
 void FileBackend::onWatchModifyEvent(int wd)
 {
     auto findit = wd_to_watchchain_.find(wd);
     if (findit != wd_to_watchchain_.end()) {
-        auto full_watch_specifier = findit->second;
-        auto watch_chain_index = full_watch_specifier.second;
-        auto watch_chain_specifier = watch_chain_index.first;
-        auto label_rule = get<0>(watch_chain_specifier);
-        // Notify listeners for this label rule
-        notifyListeners(label_rule, maybe<TreeNode>());
+        auto full_watch_specifiers = findit->second;
+        for (auto full_watch_specifier : full_watch_specifiers) {
+            auto watch_chain_index = full_watch_specifier.second;
+            auto watch_chain_specifier = watch_chain_index.first;
+            auto label_rule = get<0>(watch_chain_specifier);
+            // Read the node from the files
+            auto node = readNodeFromFiles(basePath_, label_rule);
+            // Notify listeners for this label rule
+            notifyListeners(label_rule, node);
+        }
     } else {
-        std::cerr << "[inotify] No watch found for wd: " << wd << std::endl;
+        std::cerr << "[inotify] modify event: No watch found for wd: " << wd << std::endl;
+    }
+}
+
+void FileBackend::onWatchCloseEvent(int wd)
+{
+    throw std::runtime_error("Let me know if onWatchCloseEvent ever gets called?");
+    auto findit = wd_to_watchchain_.find(wd);
+    if (findit != wd_to_watchchain_.end()) {
+        auto full_watch_specifiers = findit->second;
+        for (auto full_watch_specifier : full_watch_specifiers) {
+            auto watch_chain_index = full_watch_specifier.second;
+            auto watch_chain_specifier = watch_chain_index.first;
+            auto watch_chain_vector_index = watch_chain_index.second;
+            auto label_rule = get<0>(watch_chain_specifier);
+            // Remove the watch from the maps
+            watchchain_to_wd_.erase(full_watch_specifier);
+            auto watch_chain_it = watch_chains_.find(watch_chain_specifier);
+            if (watch_chain_it != watch_chains_.end()) {
+                if (watch_chain_it->second.size() == watch_chain_vector_index+1)
+                {
+                    notifyListeners(label_rule, maybe<TreeNode>());
+                }
+            }
+            watchchain_to_wd_.erase(full_watch_specifier);
+        }
+        wd_to_watchchain_.erase(wd);
+    } else {
+        std::cerr << "[inotify] close event: No watch found for wd: " << wd << std::endl;
     }
 }
 
@@ -896,88 +974,168 @@ void FileBackend::onWatchCreateEvent(int wd, const std::string& notification_pat
     // will imply creating new watchers for the new directory and/or file.
     auto findit = wd_to_watchchain_.find(wd);
     if (findit != wd_to_watchchain_.end()) {
-        auto full_watch_specifier = findit->second;
-        auto desired_watch = full_watch_specifier.first;
-        auto watch_chain_index = full_watch_specifier.second;
-        auto watch_chain_specifier = watch_chain_index.first;
-        auto watch_chain_vector_index = watch_chain_index.second;
-        auto label_rule = get<0>(watch_chain_specifier);
-        // Find the NEXT desired_watch in the watch chain
-        auto watch_chain_it = watch_chains_.find(watch_chain_specifier);
-        if (watch_chain_it != watch_chains_.end() && watch_chain_it->second.size() > watch_chain_vector_index) {
-            // We have a valid watch chain, so we can add the next watch
-            WatchChain watch_chain = watch_chain_it->second[watch_chain_vector_index];
-            // Find the index of the desired_watch in the watch chain
-            auto cur_watch_it = std::find_if(watch_chain.begin(), watch_chain.end(),
-                [&desired_watch](const std::pair<uint32_t, std::string>& watch) {
-                    return watch.first == desired_watch.first && watch.second == desired_watch.second;
-                });
-            auto next_watch_it = std::next(cur_watch_it);
-            // If the next_watch matches the notification_path, we can add a new watch for it
-            if (next_watch_it != watch_chain.end() && next_watch_it->second == notification_path) {
-                // Add a new watch for the next desired path
-                int new_wd = inotify_add_watch(inotify_fd_, notification_path.c_str(), next_watch_it->first);
-                if (new_wd < 0) {
-                    int err = errno;
-                    std::cerr << "[inotify_add_watch] Failed to add inotify watch for path: " << notification_path
-                              << ", errno=" << err << ": " << strerror(err) << std::endl;
-                    return; // If we fail to add the watch, we just return
+        auto full_watch_specifiers = findit->second;
+        for (auto full_watch_specifier : full_watch_specifiers) {
+            auto desired_watch = full_watch_specifier.first;
+            auto watch_chain_index = full_watch_specifier.second;
+            auto watch_chain_specifier = watch_chain_index.first;
+            auto watch_chain_vector_index = watch_chain_index.second;
+            string createdPath = desired_watch.second + notification_path;
+            auto label_rule = get<0>(watch_chain_specifier);
+            // Either the notification_path has a '.' in it, and it is the ultimate watch being created,
+            // OR the notification_path is yet another directory in the watch chain.
+            if (notification_path.find('.') != std::string::npos) {
+                // Read the node from the files
+                auto node = readNodeFromFiles(basePath_, label_rule);
+                // Notify listeners for this label rule
+                notifyListeners(label_rule, node);
+                // And then completely rebuild the watches for this watch_chain_specifier
+                freeWatch(watch_chain_specifier);
+                setupWatch(watch_chain_specifier);
+            }
+            else
+            {
+                if (createdPath.back() != '/') {
+                    createdPath += '/'; // Ensure the path ends with a '/'
                 }
-                FullWatchSpecifier next_full_watch_specifier(*next_watch_it, watch_chain_index);
-                wd_to_watchchain_[new_wd] = next_full_watch_specifier;
-                watchchain_to_wd_[next_full_watch_specifier] = new_wd;
-                if((next_watch_it->first & IN_MODIFY) == IN_MODIFY) {
-                    auto node = readNodeFromFiles(basePath_, next_watch_it->second);
-                    auto next_label_rule = getLabelRuleFromFileName(basePath_, next_watch_it->second);
-                    // If the next watch is for IN_MODIFY, we need to notify listeners immediately
-                    notifyListeners(next_label_rule, node);
+                // Find the NEXT desired_watch in the watch chain
+                auto watch_chain_it = watch_chains_.find(watch_chain_specifier);
+                if (watch_chain_it != watch_chains_.end() && watch_chain_it->second.size() > watch_chain_vector_index) {
+                    // We have a valid watch chain, so we can add the next watch
+                    WatchChain watch_chain = watch_chain_it->second[watch_chain_vector_index];
+                    // Find the index of the desired_watch in the watch chain
+                    auto cur_watch_it = std::find(watch_chain.begin(), watch_chain.end(), desired_watch);
+                    auto next_watch_it = std::next(cur_watch_it);
+                    // If the next_watch matches the notification_path, we can add a new watch for it
+                    if (next_watch_it != watch_chain.end() && next_watch_it->second == createdPath) {
+                        while(next_watch_it != watch_chain.end()) {
+                            // Add a new watch for the next desired path
+                            int new_wd = inotify_add_watch(inotify_fd_, next_watch_it->second.c_str(), next_watch_it->first);
+                            if (new_wd < 0) {
+                                int err = errno;
+                                std::cerr << "[inotify_add_watch] Failed to add inotify watch for path: " << notification_path
+                                        << ", errno=" << err << ": " << strerror(err) << std::endl;
+                                break; // If we fail to add the watch, it is probably because the object hasn't been created yet, so this is the best we can do so far.
+                            }
+                            FullWatchSpecifier next_full_watch_specifier(*next_watch_it, watch_chain_index);
+                            if (wd_to_watchchain_.find(new_wd) != wd_to_watchchain_.end()) {
+                                wd_to_watchchain_[new_wd].insert(next_full_watch_specifier);
+                            } else {
+                                wd_to_watchchain_[new_wd] = {next_full_watch_specifier};
+                            }
+                            watchchain_to_wd_[next_full_watch_specifier] = new_wd;
+                            next_watch_it = std::next(next_watch_it);
+                            if (next_watch_it == watch_chain.end())
+                            {
+                                // Read the node from the files
+                                auto node = readNodeFromFiles(basePath_, label_rule);
+                                // Notify listeners for this label rule
+                                notifyListeners(label_rule, node);
+                                // And then completely rebuild the watches for this watch_chain_specifier
+                                freeWatch(watch_chain_specifier);
+                                setupWatch(watch_chain_specifier);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
     } else {
-        std::cerr << "[inotify] No watch found for wd: " << wd << std::endl;
+        //std::cerr << "[inotify] create event: No watch found for wd: " << wd << std::endl;
     }
 }
 
 void FileBackend::onWatchDeleteEvent(int wd, const std::string& notification_path) 
 {
     // This closely echos the onWatchCreateEvent, but we need to remove the watch from the maps.
+    // This only occurs for directories, so depending on the exact path that the watcher is watching, it
+    // will imply creating new watchers for the new directory and/or file.
     auto findit = wd_to_watchchain_.find(wd);
     if (findit != wd_to_watchchain_.end()) {
-        auto full_watch_specifier = findit->second;
-        auto desired_watch = full_watch_specifier.first;
-        auto watch_chain_index = full_watch_specifier.second;
-        auto watch_chain_specifier = watch_chain_index.first;
-        size_t watch_chain_vector_index = watch_chain_index.second;
-        auto label_rule = get<0>(watch_chain_specifier);
-        // Find the NEXT desired_watch in the watch chain
-        auto watch_chain_it = watch_chains_.find(watch_chain_specifier);
-        if (watch_chain_it != watch_chains_.end() && watch_chain_it->second.size() > watch_chain_vector_index) {
-            WatchChain watch_chain = watch_chain_it->second[watch_chain_vector_index];
-            // Find the index of the desired_watch in the watch chain
-            auto cur_watch_it = std::find_if(watch_chain.begin(), watch_chain.end(),
-                [&desired_watch](const std::pair<uint32_t, std::string>& watch) {
-                    return watch.first == desired_watch.first && watch.second == desired_watch.second;
-                });
-            auto next_watch_it = std::next(cur_watch_it);
-            // If the next_watch matches the notification_path, we can add a new watch for it
-            if (next_watch_it != watch_chain.end() && next_watch_it->second == notification_path) {
-                while(next_watch_it != watch_chain.end()){
-                    FullWatchSpecifier next_full_watch_specifier(*next_watch_it, watch_chain_index);
-                    auto wd_it = watchchain_to_wd_.find(next_full_watch_specifier);
-                    if (wd_it != watchchain_to_wd_.end()) {
-                        // Remove the watch from the maps
-                        wd_to_watchchain_.erase(wd_it->second);
-                        watchchain_to_wd_.erase(full_watch_specifier);
-                        if (inotify_rm_watch(inotify_fd_, wd_it->second) < 0) {
-                            int err = errno;
-                            std::cerr << "[inotify_rm_watch] Failed to remove inotify watch for wd: " << wd
-                                    << ", errno=" << err << ": " << strerror(err) << std::endl;
+        auto full_watch_specifiers = findit->second;
+        for (auto full_watch_specifier : full_watch_specifiers) {
+            auto desired_watch = full_watch_specifier.first;
+            auto watch_chain_index = full_watch_specifier.second;
+            auto watch_chain_specifier = watch_chain_index.first;
+            auto watch_chain_vector_index = watch_chain_index.second;
+            string createdPath = desired_watch.second + notification_path;
+            auto label_rule = get<0>(watch_chain_specifier);
+            // Either the notification_path has a '.' in it, and it is the ultimate watch being destroyed,
+            // OR the notification_path is yet another directory in the watch chain.
+            if (notification_path.find('.') != std::string::npos) {
+                // Need to delete an old watch for the last desired_watch in the chain
+                auto watch_chain_it = watch_chains_.find(watch_chain_specifier);
+                if (watch_chain_it != watch_chains_.end())
+                {
+                    auto file_watch = watch_chain_it->second[watch_chain_vector_index].back();
+                    if (file_watch.second == createdPath) {
+                        FullWatchSpecifier old_full_watch_specifier(file_watch, watch_chain_index);
+                        if (watchchain_to_wd_.find(old_full_watch_specifier) != watchchain_to_wd_.end()) {
+                            if (file_watch.second.substr(file_watch.second.size() - 5) == ".node")
+                            {
+                                auto node = maybe<TreeNode>();
+                                notifyListeners(label_rule, node); // Notify listeners that the file is deleted
                             }
+                            else {  // IF it is not the .node file, then it is considered a modification not a deletion from the backend point of view.
+                                auto node = readNodeFromFiles(basePath_, label_rule);
+                                if (node.is_just()) {  // The actual delete notification will be sent with the .node file notification.
+                                    notifyListeners(label_rule, node); // Notify listeners that the _node_ is modified
+                                }
+                            }
+                            int old_wd = watchchain_to_wd_[old_full_watch_specifier];
+                            watchchain_to_wd_.erase(old_full_watch_specifier);
+                            auto find_wd = wd_to_watchchain_.find(old_wd);
+                            if (find_wd != wd_to_watchchain_.end()) {
+                                // Remove the watch from the wd_to_watchchain map
+                                find_wd->second.erase(old_full_watch_specifier);
+                                // If the wd_to_watchchain entry is empty, remove it
+                                if (find_wd->second.empty()) {
+                                    wd_to_watchchain_.erase(find_wd); // Remove the watch descriptor if no more watches are associated with it
+                                    inotify_rm_watch(inotify_fd_, old_wd);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (createdPath.back() != '/') {
+                    createdPath += '/'; // Ensure the path ends with a '/'
+                }
+                // Find the NEXT desired_watch in the watch chain
+                auto watch_chain_it = watch_chains_.find(watch_chain_specifier);
+                if (watch_chain_it != watch_chains_.end() && watch_chain_it->second.size() > watch_chain_vector_index) {
+                    // We have a valid watch chain, so we can add the next watch
+                    WatchChain watch_chain = watch_chain_it->second[watch_chain_vector_index];
+                    // Find the index of the desired_watch in the watch chain
+                    auto cur_watch_it = std::find(watch_chain.begin(), watch_chain.end(), desired_watch);
+                    auto next_watch_it = std::next(cur_watch_it);
+                    // If the next_watch matches the notification_path, we should remove the old watch for it
+                    if (next_watch_it != watch_chain.end() && next_watch_it->second == createdPath) {
+                        auto dir_watch = *next_watch_it;
+                        FullWatchSpecifier next_full_watch_specifier(dir_watch, watch_chain_index);
+                        if (watchchain_to_wd_.find(next_full_watch_specifier) != watchchain_to_wd_.end()) {
+                            int old_wd = watchchain_to_wd_[next_full_watch_specifier];
+                            watchchain_to_wd_.erase(next_full_watch_specifier);
+                            auto find_wd = wd_to_watchchain_.find(old_wd);
+                            if (find_wd != wd_to_watchchain_.end()) {
+                                // Remove the watch from the wd_to_watchchain map
+                                find_wd->second.erase(next_full_watch_specifier);
+                                // If the wd_to_watchchain entry is empty, remove it
+                                if (find_wd->second.empty()) {
+                                    wd_to_watchchain_.erase(find_wd); // Remove the watch descriptor if no more watches are associated with it
+                                    inotify_rm_watch(inotify_fd_, old_wd);
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    } else {
+        std::cerr << "[inotify] delete event: No watch found for wd: " << wd << std::endl;
     }
 }
 
@@ -1065,45 +1223,24 @@ void FileBackend::processNotifications()
         return;
     }
 
-    map<string, bool> notifications_this_loop; // To avoid duplicate notifications for the same label_rule
     ssize_t offset = 0;
     while (offset < length) {
         struct inotify_event* event = reinterpret_cast<struct inotify_event*>(&buffer_[offset]);
         if (event->len > 0) {
             int wd = event->wd;
-            auto find_it = wd_to_watchchain_.find(wd);
-            if (find_it == wd_to_watchchain_.end()) {
-                std::cerr << "[inotify] No watch found for wd: " << wd << std::endl;
-                offset += sizeof(struct inotify_event) + event->len;
-                continue; // Skip this event if no watch is found
-            } else {
-                string inotify_path = event->name;
-                switch (event->mask) {
-                    case IN_CREATE:
-                        onWatchCreateEvent(wd, inotify_path);
-                        break;
-                    case IN_DELETE:
-                        onWatchDeleteEvent(wd, inotify_path);
-                        break;
-                    case IN_MODIFY:
-                        onWatchModifyEvent(wd);
-                        break;
-                    case IN_IGNORED:
-                        onWatchModifyEvent(wd);  // Supposedly IN_IGNORED is when the file is deleted, so we treat it like a modify event
-                        break;
-                    default:
-                        std::cerr << "[inotify] Unhandled event mask: " << event->mask << " for wd: " << wd << std::endl;
-                }
-                string label_rule = get<0>(find_it->second.second.first); // Get the label rule from the watch specifier
-                auto node = readNodeFromFiles(basePath_, label_rule);
-                auto previous_notification = notifications_this_loop.find(label_rule);
-                if (previous_notification == notifications_this_loop.end() || previous_notification->second == node.is_just()) {
-                    // If we have not notified this label_rule yet, or if the node is just, notify the listeners
-                    notifications_this_loop[label_rule] = node.is_just();
-                    notifyListeners(label_rule, node);
-                }
-                // We have already notified this label_rule, so skip notifying again
-                offset += sizeof(struct inotify_event) + event->len;
+            string inotify_path = event->name;
+            int prioritized_mask = event->mask;
+            if ((prioritized_mask & IN_MODIFY) == IN_MODIFY) {
+                onWatchModifyEvent(wd);
+            }
+            if ((prioritized_mask & IN_CREATE) == IN_CREATE) {
+                onWatchCreateEvent(wd, inotify_path);
+            }
+            if ((prioritized_mask & IN_DELETE) == IN_DELETE) {
+                onWatchDeleteEvent(wd, inotify_path);
+            }
+            if ((prioritized_mask & IN_IGNORED) == IN_IGNORED) {
+                onWatchCloseEvent(wd);
             }
         }
         offset += sizeof(struct inotify_event) + event->len;

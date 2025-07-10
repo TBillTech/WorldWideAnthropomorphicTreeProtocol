@@ -134,9 +134,11 @@ class FileBackend : public Backend {
         // Create watch chains will create the creation chain, the delete chain, and the modify watch for a given label rule.
         void setupWatch(WatchChainSpecifier watch_chain_specifier);
         void teardownWatch(WatchChainSpecifier watch_chain_specifier);
+        void freeWatch(WatchChainSpecifier watch_chain_specifier);
         void onWatchModifyEvent(int wd);
         void onWatchCreateEvent(int wd, const std::string& notification_path);
         void onWatchDeleteEvent(int wd, const std::string& notification_path);
+        void onWatchCloseEvent(int wd); // This is called when a watch is closed, such as when the file is deleted or the directory is removed.
 
         std::string basePath_;
 
@@ -145,7 +147,7 @@ class FileBackend : public Backend {
             __attribute__ ((aligned(__alignof__(struct inotify_event))));        
         // A given label rule can have multiple watchers if it is associated with multiple directories or files.
         std::map<FullWatchSpecifier, int> watchchain_to_wd_; // Maps (desired_watch, watch_chain_index) to the watch descriptor.
-        std::map<int, FullWatchSpecifier> wd_to_watchchain_; // Maps watch descriptor to (desired_watch, watch_chain_index).
+        std::map<int, std::set<FullWatchSpecifier> > wd_to_watchchain_; // Maps watch descriptor to (desired_watch, watch_chain_index).
         std::list<int> inotify_notifications; // List of wd that have pending notifications.
         std::map<WatchChainSpecifier, vector<WatchChain> > watch_chains_; // Maps (label_rule, listener_name, child_notify) to a watch chain.
 

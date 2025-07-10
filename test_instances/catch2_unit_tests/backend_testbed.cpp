@@ -391,6 +391,7 @@ void BackendTestbed::testPeerNotification(Backend &to_be_modified, uint32_t noti
     bool lion_node_created = false;
     bool lion_node_deleted = false;
     string lion_label = label_prefix + "lion";
+    to_be_modified.deleteNode(lion_label);
     auto backend_address = &backend_;
     backend_.registerNodeListener("lion_listener", lion_label, false, 
         [lion_label, &lion_node_created, &lion_node_deleted, backend_address](Backend& notified_backend, const string label_rule, const fplus::maybe<TreeNode> node) {
