@@ -68,6 +68,7 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/file
     ${PROJECT_SOURCE_DIR}/common/frontend/http3_server_cpp
     ${PROJECT_SOURCE_DIR}/common/frontend/backend_tester_cpp
+    ${PROJECT_SOURCE_DIR}/common/frontend/cloning_mediator_cpp
     ${PROJECT_SOURCE_DIR}/libraries/boringssl/include
     ${PROJECT_SOURCE_DIR}/test_instances/catch2_unit_tests
 )
@@ -102,11 +103,13 @@ set(COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/threadsafe_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/memory/src/transactional_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/structure/composite_backend.cpp
+    ${PROJECT_SOURCE_DIR}/common/backend_cpp/structure/redirected_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/http3_client/http3_client_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/interface/http3_tree_message.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/interface/http3_tree_message_helpers.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/file/file_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/frontend/http3_server_cpp/http3_server.cpp
+    ${PROJECT_SOURCE_DIR}/common/frontend/cloning_mediator_cpp/cloning_mediator.cpp
 )
 
 # Add test executables
@@ -124,6 +127,7 @@ add_executable(catch2_unit_tests
     test_instances/catch2_unit_tests/backend_cpp_tests.cpp
     test_instances/catch2_unit_tests/backend_testbed.cpp
     test_instances/catch2_unit_tests/http3_message_helper_tests.cpp
+    test_instances/catch2_unit_tests/frontend_cpp_tests.cpp
 )
 
 # Define preprocessor macros

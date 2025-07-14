@@ -3,6 +3,7 @@
 #include "threadsafe_backend.h"
 #include "transactional_backend.h"
 #include "composite_backend.h"
+#include "redirected_backend.h"
 #include "backend_testbed.h"
 #include "file_backend.h"
 #include <sstream>
@@ -87,6 +88,25 @@ TEST_CASE("CompositeBackend mountBackend test", "[CompositeBackend][mountBackend
     BackendTestbed tester(composite_backend);
     tester.testBackendLogically("zoo/");
     tester.testBackendLogically("museum/");
+}
+
+TEST_CASE("RedirectedBackend test", "[RedirectedBackend]") {
+    MemoryTree memory_tree;
+    SimpleBackend simple_backend(memory_tree);
+    MemoryTree zoo_memory_tree;
+    SimpleBackend zoo_backend(zoo_memory_tree);
+    CompositeBackend composite_backend(simple_backend);
+    composite_backend.mountBackend("zoo", zoo_backend);
+    {
+        BackendTestbed tester(zoo_backend);
+        tester.addAnimalsToBackend();
+        tester.addNotesPageTree();
+    }
+    {
+        RedirectedBackend redirected_backend(composite_backend, "zoo");
+        BackendTestbed tester(redirected_backend);
+        tester.testBackendLogically();
+    }
 }
 
 TEST_CASE("SimpleBackend stress test", "[SimpleBackend][stress]") {
@@ -203,3 +223,4 @@ TEST_CASE("FileBackend test", "[FileBackend]") {
         tester.addAnimalsToBackend();
     }
 }
+

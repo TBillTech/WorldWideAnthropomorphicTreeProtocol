@@ -82,13 +82,13 @@ vector<TreeNode> createAnimalDossiers(TreeNode &animal_node) {
     vector<TreeNode> animal_dossiers;
     for (const auto& child_name : animal_node.getChildNames()) {
         string child_label_rule = animal_node.getLabelRule() + "/" + child_name;
-        TreeNodeVersion child_version = {1, 0, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)};
+        TreeNodeVersion child_version = {1, 256, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)};
         TreeNode child_node = createNoContentTreeNode(child_label_rule, "Animal Dossier", {}, child_version, {}, maybe<string>(), maybe<string>());
         vector<string> note_names;
         for (int i = 0; i < 3; ++i) {
             string note_label_rule = child_label_rule + "/note" + std::to_string(i);
             note_names.push_back("note" + std::to_string(i));
-            TreeNodeVersion note_version = {1, 0, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)};
+            TreeNodeVersion note_version = {1, 256, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)};
             TreeNode note_node = createNoContentTreeNode(note_label_rule, child_name + " note " + std::to_string(i), {}, note_version, {}, maybe<string>(), maybe<string>());
             animal_dossiers.push_back(std::move(note_node));
         }
@@ -103,7 +103,7 @@ vector<TreeNode> createLionNodes() {
         "lion",
         "King of the jungle", 
         {{"int", "popularity"}, {"string", "diet"}},
-        {1, 0, "public", maybe<string>(), maybe<string>("tester"), maybe<string>("tester"), maybe<int>(2)}, 
+        {1, 256, "public", maybe<string>(), maybe<string>("tester"), maybe<string>("tester"), maybe<int>(2)}, 
         {"Simba", "Nala"},
         {"10", "carnivore"},
         "url duh!", 
@@ -119,7 +119,7 @@ vector<TreeNode> createElephantNodes() {
         "elephant", 
         "Largest land animal", 
         {{"int", "popularity"}, {"string", "diet"}},
-        {1, 0, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
+        {1, 256, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
         {"Dumbo", "Babar"}, 
         {"8", "herbivore"},
         "url duh!", 
@@ -139,7 +139,7 @@ vector<TreeNode> createParrotNodes() {
         "parrot", 
         "Colorful bird", 
         {{"int", "popularity"}, {"string", "diet"}},
-        {1, 0, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
+        {1, 256, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
         {"Polly", "Jerome"}, 
         {"7", "omnivore"},
         "url duh!", 
@@ -226,7 +226,7 @@ TreeNode createNotesPageTree() {
         note_labels.push_back(note.getLabelRule());
     }
     TreeNode notes_page_tree = createNoContentTreeNode("notes", "Animal Notes Page", {}, 
-        {1, 0, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
+        {1, 256, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
         note_labels, maybe<string>(), maybe<string>());
     return notes_page_tree;
 }

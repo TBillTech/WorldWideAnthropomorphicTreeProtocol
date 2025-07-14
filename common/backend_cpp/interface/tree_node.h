@@ -50,6 +50,11 @@ class TreeNodeVersion {
         fplus::maybe<std::string> readers;
         fplus::maybe<int> collision_depth;
 
+        TreeNodeVersion& operator++() {
+            assert(max_version_sequence > 0);
+            version_number = (version_number + 1) % max_version_sequence;
+            return *this; 
+        }
         bool operator==( const TreeNodeVersion& other ) const {
             return version_number == other.version_number &&
                 max_version_sequence == other.max_version_sequence &&
@@ -58,6 +63,18 @@ class TreeNodeVersion {
                 authors == other.authors &&
                 readers == other.readers &&
                 collision_depth == other.collision_depth;
+        }
+        bool operator<( const TreeNodeVersion& other ) const {
+            return version_number < other.version_number;
+        }
+        bool operator<=( const TreeNodeVersion& other ) const {
+            return version_number <= other.version_number;
+        }
+        bool operator>=( const TreeNodeVersion& other ) const {
+            return !(*this < other);
+        }
+        bool operator>( const TreeNodeVersion& other ) const {
+            return !(*this <= other);
         }
         friend std::ostream& operator<<(std::ostream& os, const TreeNodeVersion& version) {
             if (version.policy.empty()) {
@@ -99,6 +116,10 @@ public:
         const fplus::maybe<std::string>& qa_sequence);
 
     // Assignment operator
+    TreeNode& operator++() {
+        ++version;
+        return *this;
+    }
     TreeNode& operator=(const TreeNode& other);
     TreeNode& operator=(TreeNode&& other) noexcept;
     TreeNode(TreeNode&& other) noexcept;

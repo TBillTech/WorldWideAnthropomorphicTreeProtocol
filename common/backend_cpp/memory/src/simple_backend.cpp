@@ -186,7 +186,7 @@ void SimpleBackend::deregisterNodeListener(const std::string listener_name, cons
 }
 
 bool partialLabelRuleMatch(const std::string& label_rule, const std::string& notification_rule) {
-    // Strip the query parth from the label_rule
+    // Strip the query path from the label_rule
     auto stripQuery = [](const std::string& label_rule) {
         size_t query_pos = label_rule.find('?');
         return query_pos == std::string::npos ? label_rule : label_rule.substr(0, query_pos);
@@ -214,14 +214,16 @@ void SimpleBackend::notifyListeners(const std::string& label_rule, const maybe<T
     } else {
         return; // No elements to check
     }
-    while (partialLabelRuleMatch(found->first, label_rule)) {
+    // found->first will NEVER be longer than the label_rule, because upper_bound returns the first element that is greater than label_rule lexicographically
+    // then decremented once.
+    while (partialLabelRuleMatch(label_rule, found->first)) {
         auto listeners = found->second;
         // Notify all listeners for this label_rule
         for (auto listener : listeners) {
             if (found->first == label_rule) {
                 // The parent == label and callback is unconditionally met
                 listener.second.second(*this, label_rule, node);
-            } else if (listener.second.first && checkLabelRuleOverlap(found->first, label_rule)) {
+            } else if (listener.second.first && checkLabelRuleOverlap(label_rule, found->first)) {
                 // The label_rule contains the listener's label_rule, and the callback matches children
                 listener.second.second(*this, label_rule, node);
             } // Otherwise, the label_rule contains the listener's label_rule, but the callback does not match children
