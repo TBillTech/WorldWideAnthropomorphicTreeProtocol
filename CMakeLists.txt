@@ -16,6 +16,7 @@ if(POLICY CMP0167)
   cmake_policy(SET CMP0167 NEW)
 endif()
 find_package(Boost REQUIRED COMPONENTS system)
+find_package(yaml-cpp REQUIRED)
 
 # Checks for header files.
 include(CheckIncludeFile)
@@ -68,7 +69,7 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/file
     ${PROJECT_SOURCE_DIR}/common/frontend/http3_server_cpp
     ${PROJECT_SOURCE_DIR}/common/frontend/backend_tester_cpp
-    ${PROJECT_SOURCE_DIR}/common/frontend/cloning_mediator_cpp
+    ${PROJECT_SOURCE_DIR}/common/frontend/mediator_cpp
     ${PROJECT_SOURCE_DIR}/libraries/boringssl/include
     ${PROJECT_SOURCE_DIR}/test_instances/catch2_unit_tests
 )
@@ -109,7 +110,8 @@ set(COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/interface/http3_tree_message_helpers.cpp
     ${PROJECT_SOURCE_DIR}/common/backend_cpp/file/file_backend.cpp
     ${PROJECT_SOURCE_DIR}/common/frontend/http3_server_cpp/http3_server.cpp
-    ${PROJECT_SOURCE_DIR}/common/frontend/cloning_mediator_cpp/cloning_mediator.cpp
+    ${PROJECT_SOURCE_DIR}/common/frontend/mediator_cpp/cloning_mediator.cpp
+    ${PROJECT_SOURCE_DIR}/common/frontend/mediator_cpp/yaml_mediator.cpp
 )
 
 # Add test executables
@@ -233,10 +235,10 @@ add_dependencies(http3_client_backend_tester ngtcp2 nghttp3 boringssl Catch2)
 add_dependencies(catch2_unit_tests ngtcp2 nghttp3 boringssl Catch2)
 
 # Link libraries (if any)
-target_link_libraries(library_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus)
-target_link_libraries(memory_pool_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus)
-target_link_libraries(http3_client_backend_tester PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus Catch2::Catch2)
-target_link_libraries(catch2_unit_tests PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus Catch2::Catch2WithMain)
+target_link_libraries(library_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
+target_link_libraries(memory_pool_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
+target_link_libraries(http3_client_backend_tester PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus Catch2::Catch2 yaml-cpp)
+target_link_libraries(catch2_unit_tests PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus Catch2::Catch2WithMain yaml-cpp)
 
 target_compile_options(http3_client_backend_tester PRIVATE -g -O0 -fsanitize=address,undefined -Wall -Wextra -Wpedantic)
 target_link_options(http3_client_backend_tester PRIVATE -fsanitize=address,undefined)

@@ -6,6 +6,7 @@
 #include <fplus/fplus.hpp>
 #include "shared_chunk.h"
 #include <set>
+#include <yaml-cpp/yaml.h>
 
 // operators for reading and writing a fplus::maybe<T> to a stream
 namespace fplus {
@@ -65,10 +66,28 @@ class TreeNodeVersion {
                 collision_depth == other.collision_depth;
         }
         bool operator<( const TreeNodeVersion& other ) const {
-            return version_number < other.version_number;
+            if (*this == other) {
+                return false; // They are equal, so not less than
+            }
+            int32_t this_version = static_cast<int32_t>(version_number);
+            int32_t other_version = static_cast<int32_t>(other.version_number);
+            int32_t max_sequence = static_cast<int32_t>(max_version_sequence);
+            int32_t half_max_sequence = max_sequence / 2;
+            // This logic is maybe a little strange, but since the version can wrap, then if the two versions are closer than half the max version sequence apart, 
+            // then the one with the lower version number is considered less.  Otherwise, they are considered wrapped, so add the max version sequence to the other version number.
+            if (other_version - this_version > 0) {
+                if(other_version - this_version <= half_max_sequence) {
+                    return true;
+                }
+            } else {
+                if(this_version - other_version > half_max_sequence) {
+                    return true;
+                }
+            }
+            return false;
         }
         bool operator<=( const TreeNodeVersion& other ) const {
-            return version_number <= other.version_number;
+            return (*this < other) || (version_number == other.version_number);
         }
         bool operator>=( const TreeNodeVersion& other ) const {
             return !(*this < other);
@@ -98,7 +117,29 @@ class TreeNodeVersion {
             is.get(); // consume the space
             return is;
         }
+        YAML::Node asYAMLNode() const {
+            YAML::Node node;
+            node["version_number"] = version_number;
+            node["max_version_sequence"] = max_version_sequence;
+            node["policy"] = policy;
+            if (authorial_proof.is_just()) {
+                node["authorial_proof"] = authorial_proof.unsafe_get_just();
+            }
+            if (authors.is_just()) {
+                node["authors"] = authors.unsafe_get_just();
+            }
+            if (readers.is_just()) {
+                node["readers"] = readers.unsafe_get_just();
+            }
+            if (collision_depth.is_just()) {
+                node["collision_depth"] = collision_depth.unsafe_get_just();
+            }
+            return node;
+        }
 };
+
+TreeNodeVersion fromYAMLNode(const YAML::Node& node);
+class Backend;
 
 // Represents a node in the tree structure.
 class TreeNode {
@@ -130,6 +171,9 @@ public:
     const std::string& getLabelRule() const;
     void setLabelRule(const std::string& label_rule);
 
+    const std::string getNodeName() const;
+    const std::string getNodePath() const;
+
     const std::string& getDescription() const;
     void setDescription(const std::string& description);
 
@@ -152,6 +196,16 @@ public:
     const shared_span<>& getPropertyData() const;
     void setPropertyData(shared_span<>&& property_data);
 
+    template<typename T>
+    tuple<uint64_t, T, shared_span<>> getPropertyDataAs(const string& name) const;
+    tuple<uint64_t, shared_span<>, shared_span<>> getPropertyDataAsBytes(const string& name) const;
+    template<typename T>
+    void setPropertyDataAs(const string& name, const T& value);
+    void setPropertyDataAsBytes(const string& name, const shared_span<>&& data);
+    template<typename T>
+    void insertPropertyDataAs(size_t index, const string& name, const T& value);
+    void insertPropertyDataAsBytes(size_t index, const string& name, const string& type, const shared_span<>&& data);
+
     const TreeNodeVersion& getVersion() const;
     void setVersion(const TreeNodeVersion& version);
 
@@ -167,6 +221,9 @@ public:
     void prefixLabels(const std::string& prefix);
     void shortenLabels(const std::string& prefix);
 
+    YAML::Node asYAMLNode(Backend &backend, bool loadChildren) const;
+    YAML::Node& updateYAMLNode(YAML::Node& yaml) const;
+
 private:
     std::string label_rule;
     std::string description;
@@ -177,6 +234,8 @@ private:
     fplus::maybe<std::string> query_how_to;
     fplus::maybe<std::string> qa_sequence;
 };
+
+vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_prefix, const std::string& name, bool loadChildren);
 
 // Common set of fixed-size property types for TreeNode serialization
 inline const std::set<std::string> fixed_size_types = {"int", "double", "float", "bool"};

@@ -1,6 +1,39 @@
 #include "tree_node.h"
+#include "backend.h"
 
 using namespace std;
+
+TreeNodeVersion fromYAMLNode(const YAML::Node& node) {
+    TreeNodeVersion version;
+    if (!node["version_number"] || !node["max_version_sequence"] || !node["policy"]) {
+        throw std::runtime_error("YAML node does not contain required fields for TreeNodeVersion");
+    }
+    version.version_number = node["version_number"].as<uint16_t>();
+    version.max_version_sequence = node["max_version_sequence"].as<uint16_t>();
+    version.policy = node["policy"].as<std::string>();
+    if (node["authorial_proof"]) {
+        version.authorial_proof = fplus::just(node["authorial_proof"].as<std::string>());
+    } else {
+        version.authorial_proof = fplus::nothing<std::string>();
+    }
+    if (node["authors"]) {
+        version.authors = fplus::just(node["authors"].as<std::string>());
+    } else {
+        version.authors = fplus::nothing<std::string>();
+    }
+    if (node["readers"]) {
+        version.readers = fplus::just(node["readers"].as<std::string>());
+    } else {
+        version.readers = fplus::nothing<std::string>();
+    }
+    if (node["collision_depth"]) {
+        version.collision_depth = fplus::just(node["collision_depth"].as<int>());
+    } else {
+        version.collision_depth = fplus::nothing<int>();
+    }
+    return version;
+}
+
 
 TreeNode::TreeNode()
     : label_rule(""), description(""), property_infos({}), 
@@ -92,6 +125,22 @@ void TreeNode::setLabelRule(const std::string& label_rule) {
     this->label_rule = label_rule;
 }
 
+const std::string TreeNode::getNodeName() const {
+    auto pos = label_rule.find_last_of('/');
+    if (pos != std::string::npos) {
+        return label_rule.substr(pos + 1);
+    }
+    return label_rule;
+}
+
+const std::string TreeNode::getNodePath() const {
+    auto pos = label_rule.find_last_of('/');
+    if (pos != std::string::npos) {
+        return label_rule.substr(0, pos + 1);
+    }
+    return "";
+}
+
 const std::string& TreeNode::getDescription() const {
     return description;
 }
@@ -164,6 +213,314 @@ void TreeNode::setPropertyData(shared_span<>&& property_data) {
     this->property_data = move(property_data);
 }
 
+template<typename T>
+string typenameToString() {
+    if constexpr (std::is_same_v<T, int>) {
+        return "int";
+    } else if constexpr (std::is_same_v<T, float>) {
+        return "float";
+    } else if constexpr (std::is_same_v<T, double>) {
+        return "double";
+    } else if constexpr (std::is_same_v<T, bool>) {
+        return "bool";
+    } else {
+        throw std::invalid_argument("Unsupported type for propertyDataAs: " + std::string(typeid(T).name()));
+    }
+}
+
+template<typename T>
+tuple<uint64_t, T, shared_span<>> TreeNode::getPropertyDataAs(const string& name) const
+{
+    pair<string, string> property_info = {typenameToString<T>(), name};
+    auto it = std::find(property_infos.begin(), property_infos.end(), property_info);
+    if (it == property_infos.end()) {
+        throw std::invalid_argument("Property not found when calling GetPropertyDataAs: " + name);
+    }
+    auto property_data = getPropertyData();
+    shared_span<> remaining_data(property_data);
+    int order = 0;
+    size_t total_size = 0;
+    size_t cur_size = 0;
+    for (const auto& info : property_infos) {
+        if (info.first == "int")
+        {
+            cur_size = sizeof(uint64_t);
+        }
+        if (info.first == "float")
+        {
+            cur_size = sizeof(float);
+        }
+        if (info.first == "double")
+        {
+            cur_size = sizeof(double);
+        }
+        if (info.first == "bool")
+        {
+            cur_size = sizeof(bool);
+        }
+        if (fixed_size_types.find(info.first) == fixed_size_types.end()) {
+            cur_size = *remaining_data.begin<uint64_t>();
+            cur_size += sizeof(uint64_t);
+        }
+        if (info == property_info) {
+            break;            
+        }
+        total_size += cur_size;
+        remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
+        order++;
+    }
+    auto cur_span = remaining_data.restrict(pair(0, sizeof(T)));
+    return make_tuple(8, *remaining_data.begin<T>(), cur_span);
+}
+
+tuple<uint64_t, shared_span<>, shared_span<>> TreeNode::getPropertyDataAsBytes(const string& name) const
+{
+    auto it = std::find_if(property_infos.begin(), property_infos.end(), [&](const auto& info) {
+        return info.second == name;
+    });
+    if (it == property_infos.end()) {
+        throw std::invalid_argument("Property not found when calling GetPropertyDataAs: " + name);
+    }
+    auto property_info = *it;
+    auto property_data = getPropertyData();
+    shared_span<> remaining_data(property_data);
+    int order = 0;
+    size_t cur_size = 0;
+    for (const auto& info : property_infos) {
+        if (info.first == "int")
+        {
+            cur_size = sizeof(uint64_t);
+        }
+        if (info.first == "float")
+        {
+            cur_size = sizeof(float);
+        }
+        if (info.first == "double")
+        {
+            cur_size = sizeof(double);
+        }
+        if (info.first == "bool")
+        {
+            cur_size = sizeof(bool);
+        }
+        if (fixed_size_types.find(info.first) == fixed_size_types.end()) {
+            cur_size = *remaining_data.begin<uint64_t>();
+            cur_size += sizeof(uint64_t);
+        }
+        if (info == property_info) {
+            break;            
+        }
+        remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
+        order++;
+    }
+    auto size_span = remaining_data.restrict(pair(0, sizeof(uint64_t)));
+    auto just_yaml_text = remaining_data.restrict(pair(sizeof(uint64_t), cur_size - sizeof(uint64_t)));  
+    return make_tuple(cur_size, size_span, just_yaml_text);
+}
+
+template<typename T>
+void TreeNode::setPropertyDataAs(const string& name, const T& value)
+{
+    pair<string, string> property_info = {typenameToString<T>(), name};
+    auto it = std::find(property_infos.begin(), property_infos.end(), property_info);
+    if (it == property_infos.end()) {
+        throw std::invalid_argument("Property not found when calling SetPropertyDataAs: " + name);
+    }
+    auto property_data = getPropertyData();
+    shared_span<> remaining_data(property_data);
+    int order = 0;
+    size_t total_size = 0;
+    size_t cur_size = 0;
+    for (const auto& info : property_infos) {
+        if (info.first == "int")
+        {
+            cur_size = sizeof(uint64_t);
+        }
+        if (info.first == "float")
+        {
+            cur_size = sizeof(float);
+        }
+        if (info.first == "double")
+        {
+            cur_size = sizeof(double);
+        }
+        if (info.first == "bool")
+        {
+            cur_size = sizeof(bool);
+        }
+        if (fixed_size_types.find(info.first) == fixed_size_types.end()) {
+            cur_size = *remaining_data.begin<uint64_t>();
+            cur_size += sizeof(uint64_t);
+        }
+        if (info == property_info) {
+            break;            
+        }
+        total_size += cur_size;
+        remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
+        order++;
+    }
+    auto value_span = remaining_data.restrict(pair(0, sizeof(T)));
+    value_span.copy_type(value);
+}
+
+void TreeNode::setPropertyDataAsBytes(const string& name, const shared_span<>&& data)
+{
+    auto it = std::find_if(property_infos.begin(), property_infos.end(), [&](const auto& info) {
+        return info.second == name;
+    });
+    if (it == property_infos.end()) {
+        throw std::invalid_argument("Property not found when calling SetPropertyDataAsBytes: " + name);
+    }
+    auto property_info = *it;
+    auto property_data = getPropertyData();
+    shared_span<> remaining_data(property_data);
+    int order = 0;
+    size_t cur_size = 0;
+    size_t total_size = 0;
+    for (const auto& info : property_infos) {
+        if (info.first == "int")
+        {
+            cur_size = sizeof(uint64_t);
+        }
+        if (info.first == "float")
+        {
+            cur_size = sizeof(float);
+        }
+        if (info.first == "double")
+        {
+            cur_size = sizeof(double);
+        }
+        if (info.first == "bool")
+        {
+            cur_size = sizeof(bool);
+        }
+        if (fixed_size_types.find(info.first) == fixed_size_types.end()) {
+            cur_size = *remaining_data.begin<uint64_t>();
+            cur_size += sizeof(uint64_t);
+        }
+        if (info == property_info) {
+            break;            
+        }
+        total_size += cur_size;
+        remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
+        order++;
+    }
+    auto size_span = remaining_data.restrict(pair(0, sizeof(uint64_t)));
+    auto prior_span = property_data.restrict(pair(0, total_size + sizeof(uint64_t)));
+    *size_span.begin<uint64_t>() = data.size();
+    auto following_span = property_data.restrict(pair(total_size + cur_size, property_data.size() - total_size - cur_size));
+    vector<shared_span<>> spans({prior_span, move(data), following_span});
+    shared_span<> concatted(spans.begin(), spans.end());
+    property_data = move(concatted);
+}
+
+template<typename T>
+void TreeNode::insertPropertyDataAs(size_t index, const string& name, const T& value)
+{
+    if (index >= property_infos.size()) {
+        throw std::invalid_argument("Index too large when InsertPropertyDataAs: " + name + " at index " + std::to_string(index));
+    }
+    auto next_info = property_infos.size() ? property_infos[min(index, property_infos.size() - 1)] : pair<string, string>();
+    pair<string, string> property_info = {typenameToString<T>(), name};
+    auto next_it = std::find(property_infos.begin(), property_infos.end(), next_info);
+    auto property_data = getPropertyData();
+    shared_span<> remaining_data(property_data);
+    int order = 0;
+    size_t total_size = 0;
+    size_t cur_size = 0;
+    for (const auto& info : property_infos) {
+        if (info.first == "int")
+        {
+            cur_size = sizeof(uint64_t);
+        }
+        if (info.first == "float")
+        {
+            cur_size = sizeof(float);
+        }
+        if (info.first == "double")
+        {
+            cur_size = sizeof(double);
+        }
+        if (info.first == "bool")
+        {
+            cur_size = sizeof(bool);
+        }
+        if (fixed_size_types.find(info.first) == fixed_size_types.end()) {
+            cur_size = *remaining_data.begin<uint64_t>();
+            cur_size += sizeof(uint64_t);
+        }
+        if (info == next_info) {
+            break;            
+        }
+        total_size += cur_size;
+        remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
+        order++;
+    }
+    auto prior_span = property_data.restrict(pair(0, total_size));
+    vector<shared_span<>> data_spans(prior_span);
+    auto following_span = property_data.restrict(pair(total_size, property_data.size() - total_size));
+    payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, sizeof(T));
+    data_spans.emplace_back(header, std::span<T>(reinterpret_cast<T*>(&value), 1));
+    data_spans.push_back(following_span);
+    shared_span<> concatted(data_spans.begin(), data_spans.end());
+    property_data = move(concatted);
+    property_infos.insert(next_it, {typenameToString<T>(), name});
+}
+
+void TreeNode::insertPropertyDataAsBytes(size_t index, const string& name, const string& type, const shared_span<>&& data)
+{
+    if (index >= property_infos.size()) {
+        throw std::invalid_argument("Index too large when InsertPropertyDataAsBytes: " + name + " at index " + std::to_string(index));
+    }
+    auto next_info = property_infos.size() ? property_infos[min(index, property_infos.size() - 1)] : pair<string, string>();
+    auto next_it = std::find(property_infos.begin(), property_infos.end(), next_info);
+    auto property_data = getPropertyData();
+    shared_span<> remaining_data(property_data);
+    int order = 0;
+    size_t cur_size = 0;
+    size_t total_size = 0;
+    for (const auto& info : property_infos) {
+        if (info.first == "int")
+        {
+            cur_size = sizeof(uint64_t);
+        }
+        if (info.first == "float")
+        {
+            cur_size = sizeof(float);
+        }
+        if (info.first == "double")
+        {
+            cur_size = sizeof(double);
+        }
+        if (info.first == "bool")
+        {
+            cur_size = sizeof(bool);
+        }
+        if (fixed_size_types.find(info.first) == fixed_size_types.end()) {
+            cur_size = *remaining_data.begin<uint64_t>();
+            cur_size += sizeof(uint64_t);
+        }
+        if (info == next_info) {
+            break;            
+        }
+        total_size += cur_size;
+        remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
+        order++;
+    }
+    auto prior_span = property_data.restrict(pair(0, total_size));
+    vector<shared_span<>> data_spans({prior_span});
+    payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
+    uint64_t buffer_size = data.size();
+    data_spans.emplace_back(header, std::span<uint64_t>(reinterpret_cast<uint64_t*>(&buffer_size), 1));
+    payload_chunk_header data_header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, data.size());
+    data_spans.push_back(data);
+    data_spans.push_back(remaining_data.restrict(pair(total_size, property_data.size() - total_size - cur_size)));
+    shared_span<> concatted(data_spans.begin(), data_spans.end());
+    property_data = move(concatted);
+    property_infos.insert(next_it, {type, name});
+}
+
+
 const TreeNodeVersion& TreeNode::getVersion() const {
     return version;
 }
@@ -198,6 +555,224 @@ bool TreeNode::operator==(const TreeNode& other) const {
     }
     return properties_equal && contents_equal;
 }
+
+void writeContentsToYAML(std::vector<TreeNode::PropertyInfo> infos, const shared_span<>& property_data, YAML::Node& node) {
+    shared_span<> remaining_span(property_data);
+    for (const auto& info : infos) {
+        auto type = info.first; // Type of the property
+        auto name = info.second + "." + info.first; // Name of the property
+        if (type == "int") {
+            if (remaining_span.size() < sizeof(uint64_t)) {
+                throw std::runtime_error("Not enough data for int property: " + name);
+            }
+            int value = *remaining_span.begin<uint64_t>();
+            node[name] = value;
+            remaining_span = remaining_span.restrict(pair(sizeof(uint64_t), remaining_span.size() - sizeof(uint64_t)));
+        }
+        if (type == "double") {
+            if (remaining_span.size() < sizeof(double)) {
+                throw std::runtime_error("Not enough data for double property: " + name);
+            }
+            double value = *remaining_span.begin<double>();
+            node[name] = value;
+            remaining_span = remaining_span.restrict(pair(sizeof(double), remaining_span.size() - sizeof(double)));
+        }
+        if (type == "float") {
+            if (remaining_span.size() < sizeof(float)) {
+                throw std::runtime_error("Not enough data for float property: " + name);
+            }
+            float value = *remaining_span.begin<float>();
+            node[name] = value;
+            remaining_span = remaining_span.restrict(pair(sizeof(float), remaining_span.size() - sizeof(float)));
+        }
+        if (type == "bool") {
+            if (remaining_span.size() < sizeof(bool)) {
+                throw std::runtime_error("Not enough data for bool property: " + name);
+            }
+            bool value = *remaining_span.begin<bool>();
+            node[name] = value;
+            remaining_span = remaining_span.restrict(pair(sizeof(bool), remaining_span.size() - sizeof(bool)));
+        }
+        // For variable size infos, we need to read the size first, then the content
+        if (fixed_size_types.find(type) == fixed_size_types.end()) {
+            uint64_t the_size = *remaining_span.begin<uint64_t>();
+            shared_span<> content_span = remaining_span.restrict(pair(sizeof(uint64_t), the_size));
+            string content(content_span.begin<char>(), content_span.end<char>());
+            if (type == "yaml") {
+                // If the content is a YAML file, parse it
+                YAML::Node content_node = YAML::Load(content);
+                node[name] = content_node;
+            } else {
+                // Otherwise, just store the string
+                node[name] = content;
+            }
+            remaining_span = remaining_span.restrict(pair(sizeof(uint64_t) + the_size, remaining_span.size() - sizeof(uint64_t) - the_size));
+        }
+    }
+}
+
+YAML::Node TreeNode::asYAMLNode(Backend &backend, bool loadChildren) const
+{
+    YAML::Node node;
+    for (const auto& child_name : child_names) {
+        auto m_node = backend.getNode(child_name);
+        auto pos = child_name.find_last_of('/');
+        string name = child_name;
+        if(pos != std::string::npos) {
+            name = child_name.substr(pos + 1);
+        }
+        node["child_names"].push_back(name);
+        if (loadChildren){
+            // Load the child node's properties
+            auto child_node = m_node.lift_def(YAML::Node(), [&backend, loadChildren](const TreeNode& child) {
+                return child.asYAMLNode(backend, loadChildren);
+            });
+            node[name] = child_node;
+        }
+        else {
+            // Just store the child name
+            node[name] = YAML::Node();
+        }
+    }
+    return updateYAMLNode(node);
+}
+
+YAML::Node& TreeNode::updateYAMLNode(YAML::Node& yaml) const
+{
+    yaml["description"] = description;
+    yaml["version"] = version.asYAMLNode();
+    if (query_how_to.is_just()) {
+        yaml["query_how_to"] = query_how_to.unsafe_get_just();
+    }
+    if (qa_sequence.is_just()) {
+        yaml["qa_sequence"] = qa_sequence.unsafe_get_just();
+    }
+    writeContentsToYAML(property_infos, property_data, yaml);
+    return yaml;
+}
+
+
+vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_prefix, const std::string& name, bool loadChildren)
+{
+    if (!node.IsMap()) {
+        throw std::runtime_error("YAML node is not a map");
+    }
+
+    std::string label_rule = label_prefix + name;
+
+    std::string description = node["description"].as<std::string>("");
+
+    TreeNodeVersion version = fromYAMLNode(node["version"]);
+    std::set<std::string> children;
+    if (node["child_names"]) {
+        for (const auto& child_name : node["child_names"]) {
+            string child_name_str = child_name.as<std::string>();
+            children.insert(child_name_str);
+        }
+    }
+
+    fplus::maybe<std::string> query_how_to;
+    if (node["query_how_to"]) {
+        query_how_to = node["query_how_to"].as<std::string>();
+    }
+
+    fplus::maybe<std::string> qa_sequence;
+    if (node["qa_sequence"]) {
+        qa_sequence = node["qa_sequence"].as<std::string>();
+    }
+
+    std::vector<shared_span<>> data_spans;
+    size_t order = 0;
+    std::vector<TreeNode::PropertyInfo> infos;
+    std::vector<std::pair<YAML::Node, std::string>> child_nodes;
+    // All the other properties need to be stored in property_infos and contents, unless they match the child_names.
+    for (const auto& it : node) {
+        if (it.first.as<std::string>() == "label_rule" || it.first.as<std::string>() == "description" ||
+            it.first.as<std::string>() == "version" || it.first.as<std::string>() == "child_names" ||
+            it.first.as<std::string>() == "query_how_to" || it.first.as<std::string>() == "qa_sequence") {
+            continue; // Skip these keys
+        }
+        std::string full_name = it.first.as<std::string>();
+        if (children.find(full_name) != children.end()) {
+            child_nodes.push_back({it.second, full_name});
+            continue;
+        }
+        std::string name = it.first.as<std::string>();
+        std::string type;
+        if (name.find('.') != std::string::npos) {
+            // Split the full name into type and name
+            auto pos = name.find('.');
+            name = name.substr(0, pos);
+            type = name.substr(pos + 1);
+            if (name.empty()) {
+                throw std::runtime_error("Invalid property name: " + it.first.as<std::string>());
+            }
+        }
+        infos[order] = {type, name};
+        size_t value_size = it.second.size(); 
+
+        if (fixed_size_types.find(type) == fixed_size_types.end()) {
+            if (type == "yaml")
+            {
+                ostringstream yaml_stream;
+                yaml_stream << it.second;
+                string yaml_content = yaml_stream.str();
+                value_size = yaml_content.size();
+                // First, add a chunk for the size of the data
+                payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
+                data_spans.emplace_back(header, std::span<uint64_t>(reinterpret_cast<uint64_t*>(&value_size), 1));
+                payload_chunk_header data_header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, value_size);
+                data_spans.emplace_back(data_header, std::span<uint8_t>(reinterpret_cast<uint8_t*>(yaml_content.data()), value_size));
+            }
+            else {
+                // First, add a chunk for the size of the data
+                payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
+                data_spans.emplace_back(header, std::span<uint64_t>(reinterpret_cast<uint64_t*>(&value_size), 1));
+                payload_chunk_header data_header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, value_size);
+                data_spans.emplace_back(data_header, std::span<uint8_t>(it.second.as<std::vector<uint8_t>>().data(), value_size));
+            }
+        }
+        else {
+            if (type == "int") {
+                payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
+                uint64_t the_int = it.second.as<uint64_t>(0);
+                data_spans.emplace_back(header, std::span<uint64_t>(&the_int, 1));
+            }
+            if (type == "double") {
+                payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
+                double the_double = it.second.as<double>(0.0);
+                data_spans.emplace_back(header, std::span<double>(&the_double, 1));
+            }
+            if (type == "float") {
+                payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
+                float the_float = it.second.as<float>(0.0f);
+                data_spans.emplace_back(header, std::span<float>(&the_float, 1));
+            }
+            if (type == "bool") {
+                payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
+                bool the_bool = it.second.as<bool>(false);
+                data_spans.emplace_back(header, std::span<bool>(&the_bool, 1));
+            }
+        }
+        order++;
+    }
+
+    auto property_data = shared_span<>(data_spans.begin(), data_spans.end());
+    vector<string> child_names = vector<string>(children.begin(), children.end());
+    vector<TreeNode> nodes = {TreeNode(label_rule, description, infos, version, std::move(child_names), std::move(property_data), query_how_to, qa_sequence)};
+
+    if(loadChildren) {
+        // Load the child nodes recursively
+        for (const auto& child_node : child_nodes) {
+            auto child_label_prefix = label_rule + "/" + child_node.second;
+            auto child_nodes = fromYAMLNode(child_node.first, child_label_prefix, child_node.second, loadChildren);
+            nodes.insert(nodes.end(), child_nodes.begin(), child_nodes.end());
+        }
+    }
+
+    return nodes;
+}
+
 
 // We need a string-length-value function in order to implement stream operators for long strings that contain arbitrary data.
 // In particular, the concern is that sometimes description might contain statements about property_infos or TreeNodes and so on.
