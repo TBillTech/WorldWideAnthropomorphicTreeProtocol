@@ -171,7 +171,10 @@ public:
     const std::string& getLabelRule() const;
     void setLabelRule(const std::string& label_rule);
 
+    // The label rule can be composed from combining the getNodePath with the getNodeName.
+    // getNodeName separates the label rule into parts based on the '/' character, and returns the last part as the node name.
     const std::string getNodeName() const;
+    // getNodePath separates the label rule into parts based on the '/' character, and returns everthing up to the node name.
     const std::string getNodePath() const;
 
     const std::string& getDescription() const;
@@ -196,14 +199,40 @@ public:
     const shared_span<>& getPropertyData() const;
     void setPropertyData(shared_span<>&& property_data);
 
+    // The following methods deal with the property data by reading, writing, and inserting properties into the concatenated property_data block.
+    // This is to help the user work with the property data, which is stored as a concatenated block of data.
+    // Each pair of methods is split into two: one for the fixed-size types, and one for blocks of bytes stored in a shared_span<>.
+    // The fixed-size types are currently: int, double, float, bool.
+    // The blocks of bytes are text or especially yaml, but may be unencoded binary data too.
+    // The property_infos store the type and name of each property, so that the get and set methods do not need to 
+    // provide the type string explicitly (although, obviously, there may be cases where the compiler needs the template parameter).
+
+    // getPropertyDataAs retrieves the property data as a specific type T, it accepts the property name and returns:
+    //    the size of the property data, the value of the property, and the raw property value stored in a shared_span<>.
     template<typename T>
     tuple<uint64_t, T, shared_span<>> getPropertyDataAs(const string& name) const;
+    // getPropertyDataAsBytes retrieves the property data as a block of bytes, it accepts the property name and returns:
+    //    the size of the property data, and the raw property size stored in a shared_span<>, and the property value as a shared_span<>.
     tuple<uint64_t, shared_span<>, shared_span<>> getPropertyDataAsBytes(const string& name) const;
+    
+    // setPropertyDataAs sets the property data as a specific type T, it accepts the property name and value. 
+    // It MUST already exist in the properties, otherwise it will throw an exception.
     template<typename T>
     void setPropertyDataAs(const string& name, const T& value);
+    // setPropertyDataAsBytes sets the property data as a block of bytes, it accepts the property name and the raw property value stored in a shared_span<>.
+    // It MUST already exist in the properties, otherwise it will throw an exception.
+    // The property value stored in data IS allowed to be of a different size than the prior value (for flexibility).
     void setPropertyDataAsBytes(const string& name, const shared_span<>&& data);
+    
+    // insertPropertyDataAs inserts the property data as a specific type T at the specified index, it accepts the property name and value.
+    // It MUST NOT already exist in the properties, since this is used to insert new properties.
+    // index values are 0-based, but indexes beyond the current size of the property_infos vector induce append behavior.
     template<typename T>
     void insertPropertyDataAs(size_t index, const string& name, const T& value);
+    // insertPropertyDataAsBytes inserts the property data as a block of bytes at the specified index, it accepts the property name and type, and the raw property value stored in a shared_span<>.
+    // It MUST NOT already exist in the properties, since this is used to insert new properties.
+    // index values are 0-based, but indexes beyond the current size of the property_infos vector induce append behavior.
+    // Examples of types are "string", "text", "yaml", "png", etc.
     void insertPropertyDataAsBytes(size_t index, const string& name, const string& type, const shared_span<>&& data);
 
     const TreeNodeVersion& getVersion() const;
