@@ -24,7 +24,13 @@ TreeNode createAnimalNode(string animal, string description, vector<TreeNode::Pr
     uint16_t index = 0;
     for (auto& content : property_data) {
         auto info = property_infos[index];
-        if(info.first == "int") {
+        if(info.first == "int64") {
+            stringstream ss(content);
+            int64_t value;
+            ss >> value;
+            next = {true, animal_data.copy_type<int64_t>(value, next)};
+        }
+        if(info.first == "uint64") {
             stringstream ss(content);
             uint64_t value;
             ss >> value;
@@ -102,7 +108,7 @@ vector<TreeNode> createLionNodes() {
     TreeNode lion = createAnimalNode(
         "lion",
         "King of the jungle", 
-        {{"int", "popularity"}, {"string", "diet"}},
+        {{"uint64", "popularity"}, {"string", "diet"}},
         {1, 256, "public", maybe<string>(), maybe<string>("tester"), maybe<string>("tester"), maybe<int>(2)}, 
         {"Simba", "Nala"},
         {"10", "carnivore"},
@@ -118,7 +124,7 @@ vector<TreeNode> createElephantNodes() {
     TreeNode elephant = createAnimalNode(
         "elephant", 
         "Largest land animal", 
-        {{"int", "popularity"}, {"string", "diet"}},
+        {{"uint64", "popularity"}, {"string", "diet"}},
         {1, 256, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
         {"Dumbo", "Babar"}, 
         {"8", "herbivore"},
@@ -138,7 +144,7 @@ vector<TreeNode> createParrotNodes() {
     TreeNode parrot = createAnimalNode(
         "parrot", 
         "Colorful bird", 
-        {{"int", "popularity"}, {"string", "diet"}},
+        {{"uint64", "popularity"}, {"string", "diet"}},
         {1, 256, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
         {"Polly", "Jerome"}, 
         {"7", "omnivore"},

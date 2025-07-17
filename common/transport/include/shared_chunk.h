@@ -227,6 +227,14 @@ public:
     shared_span(const span<const uint8_t> data)
     : shared_span(move(create_from_data(data))) {}
 
+    void compress() {        
+        // Remove empty chunks
+        chunks.erase(remove_if(chunks.begin(), chunks.end(),
+            [](const auto& chunk) {
+                return chunk.second.second == 0;
+            }), chunks.end());
+    }
+
     static shared_span create_from_data(const span<const uint8_t> data) {
         uint8_t signal_type = data[0];
         switch (signal_type) {
@@ -340,6 +348,7 @@ public:
             restricted_start = 0;
             current_chunk++;
         }
+        assert(new_span.chunks.size() == 0 || new_span.chunks.back().second.second < ChunkType::chunk_size);
         // The loop ran out of chunks, and so the resulting span will be shorter than the requested range
         return move(new_span);
     }
@@ -622,7 +631,7 @@ public:
                         return;
                     }
                 }
-                span_index = chunks[0].second.first;
+                span_index = chunks[chunk_index].second.first;
             }
         }
         const_iterator(vector<pair<shared_ptr<ChunkType>, pair<size_t, size_t>>> const &chunks, size_t chunk_index, size_t span_index) : chunks(chunks), chunk_index(chunk_index), span_index(span_index) {
@@ -782,7 +791,7 @@ public:
                         return;
                     }
                 }
-                span_index = chunks[0].second.first;
+                span_index = chunks[chunk_index].second.first;
             }
         }
         iterator(vector<pair<shared_ptr<ChunkType>, pair<size_t, size_t>>> const &chunks, size_t chunk_index, size_t span_index) : chunks(chunks), chunk_index(chunk_index), span_index(span_index) {

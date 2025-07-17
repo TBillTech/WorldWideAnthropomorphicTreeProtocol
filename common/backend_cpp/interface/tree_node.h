@@ -207,33 +207,36 @@ public:
     // The property_infos store the type and name of each property, so that the get and set methods do not need to 
     // provide the type string explicitly (although, obviously, there may be cases where the compiler needs the template parameter).
 
-    // getPropertyDataAs retrieves the property data as a specific type T, it accepts the property name and returns:
+    // getPropertyValue retrieves the property data as a specific type T, it accepts the property name and returns:
     //    the size of the property data, the value of the property, and the raw property value stored in a shared_span<>.
     template<typename T>
-    tuple<uint64_t, T, shared_span<>> getPropertyDataAs(const string& name) const;
-    // getPropertyDataAsBytes retrieves the property data as a block of bytes, it accepts the property name and returns:
+    tuple<uint64_t, T, shared_span<>> getPropertyValue(const string& name) const;
+    // getPropertyValueSpan retrieves the property data as a block of bytes, it accepts the property name and returns:
     //    the size of the property data, and the raw property size stored in a shared_span<>, and the property value as a shared_span<>.
-    tuple<uint64_t, shared_span<>, shared_span<>> getPropertyDataAsBytes(const string& name) const;
+    tuple<uint64_t, shared_span<>, shared_span<>> getPropertyValueSpan(const string& name) const;
     
-    // setPropertyDataAs sets the property data as a specific type T, it accepts the property name and value. 
+    // setPropertyValue sets the property data as a specific type T, it accepts the property name and value. 
     // It MUST already exist in the properties, otherwise it will throw an exception.
     template<typename T>
-    void setPropertyDataAs(const string& name, const T& value);
-    // setPropertyDataAsBytes sets the property data as a block of bytes, it accepts the property name and the raw property value stored in a shared_span<>.
+    void setPropertyValue(const string& name, const T& value);
+    // setPropertyValueSpan sets the property data as a block of bytes, it accepts the property name and the raw property value stored in a shared_span<>.
     // It MUST already exist in the properties, otherwise it will throw an exception.
     // The property value stored in data IS allowed to be of a different size than the prior value (for flexibility).
-    void setPropertyDataAsBytes(const string& name, const shared_span<>&& data);
+    void setPropertyValueSpan(const string& name, const shared_span<>&& data);
     
-    // insertPropertyDataAs inserts the property data as a specific type T at the specified index, it accepts the property name and value.
+    // insertProperty inserts the property data as a specific type T at the specified index, it accepts the property name and value.
     // It MUST NOT already exist in the properties, since this is used to insert new properties.
     // index values are 0-based, but indexes beyond the current size of the property_infos vector induce append behavior.
     template<typename T>
-    void insertPropertyDataAs(size_t index, const string& name, const T& value);
-    // insertPropertyDataAsBytes inserts the property data as a block of bytes at the specified index, it accepts the property name and type, and the raw property value stored in a shared_span<>.
+    void insertProperty(size_t index, const string& name, const T& value);
+    // insertPropertySpan inserts the property data as a block of bytes at the specified index, it accepts the property name and type, and the raw property value stored in a shared_span<>.
     // It MUST NOT already exist in the properties, since this is used to insert new properties.
     // index values are 0-based, but indexes beyond the current size of the property_infos vector induce append behavior.
     // Examples of types are "string", "text", "yaml", "png", etc.
-    void insertPropertyDataAsBytes(size_t index, const string& name, const string& type, const shared_span<>&& data);
+    void insertPropertySpan(size_t index, const string& name, const string& type, const shared_span<>&& data);
+
+    // deletePropertyData deletes the property data given by the property name.
+    void deleteProperty(const string& name);
 
     const TreeNodeVersion& getVersion() const;
     void setVersion(const TreeNodeVersion& version);
@@ -267,7 +270,7 @@ private:
 vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_prefix, const std::string& name, bool loadChildren);
 
 // Common set of fixed-size property types for TreeNode serialization
-inline const std::set<std::string> fixed_size_types = {"int", "double", "float", "bool"};
+inline const std::set<std::string> fixed_size_types = {"int64", "uint64", "double", "float", "bool"};
 
 // For tracking transactions on nodes, each tree node modification has a prior version sequence number
 // attached to the Node. 
@@ -288,3 +291,4 @@ void shortenSubTransactionLabels(const std::string& prefix, SubTransaction& sub_
 
 void prefixNewNodeVersionLabels(const std::string& prefix, NewNodeVersion& new_node_version);
 void shortenNewNodeVersionLabels(const std::string& prefix, NewNodeVersion& new_node_version);
+

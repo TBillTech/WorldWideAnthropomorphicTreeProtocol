@@ -110,9 +110,9 @@ void toYAMLCallback(Backend& to, Backend& from, YAML::Node &yaml, PropertySpecif
         auto findit = find(property_infos.begin(), property_infos.end(), property_info);
         shared_span<> value_span = yaml_data[1];
         if (findit != property_infos.end()) {
-            toNode.setPropertyDataAsBytes(specifier.getPropertyName(), move(value_span));
+            toNode.setPropertyValueSpan(specifier.getPropertyName(), move(value_span));
         } else {
-            toNode.insertPropertyDataAsBytes(property_infos.size(), specifier.getPropertyName(), specifier.getPropertyType(), move(value_span));
+            toNode.insertPropertySpan(property_infos.size(), specifier.getPropertyName(), specifier.getPropertyType(), move(value_span));
             property_infos.push_back(property_info);
             toNode.setPropertyInfo(property_infos);
         }
@@ -122,7 +122,7 @@ void toYAMLCallback(Backend& to, Backend& from, YAML::Node &yaml, PropertySpecif
 }
 
 string getYAMLString(const TreeNode& node, const PropertySpecifier& specifier) {
-    auto property_data = node.getPropertyDataAsBytes(specifier.getPropertyName());
+    auto property_data = node.getPropertyValueSpan(specifier.getPropertyName());
     auto yaml_span = get<2>(property_data);
     string yaml(yaml_span.begin<char>(), yaml_span.end<char>());
     return yaml;

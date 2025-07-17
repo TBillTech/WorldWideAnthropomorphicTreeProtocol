@@ -215,8 +215,10 @@ void TreeNode::setPropertyData(shared_span<>&& property_data) {
 
 template<typename T>
 string typenameToString() {
-    if constexpr (std::is_same_v<T, int>) {
-        return "int";
+    if constexpr (std::is_same_v<T, int64_t>) {
+        return "int64";
+    } else if constexpr (std::is_same_v<T, uint64_t>) {
+        return "uint64";
     } else if constexpr (std::is_same_v<T, float>) {
         return "float";
     } else if constexpr (std::is_same_v<T, double>) {
@@ -229,20 +231,19 @@ string typenameToString() {
 }
 
 template<typename T>
-tuple<uint64_t, T, shared_span<>> TreeNode::getPropertyDataAs(const string& name) const
+tuple<uint64_t, T, shared_span<>> TreeNode::getPropertyValue(const string& name) const
 {
     pair<string, string> property_info = {typenameToString<T>(), name};
     auto it = std::find(property_infos.begin(), property_infos.end(), property_info);
     if (it == property_infos.end()) {
         throw std::invalid_argument("Property not found when calling GetPropertyDataAs: " + name);
     }
-    auto property_data = getPropertyData();
     shared_span<> remaining_data(property_data);
     int order = 0;
     size_t total_size = 0;
     size_t cur_size = 0;
     for (const auto& info : property_infos) {
-        if (info.first == "int")
+        if ((info.first == "int64") || (info.first == "uint64"))
         {
             cur_size = sizeof(uint64_t);
         }
@@ -270,10 +271,10 @@ tuple<uint64_t, T, shared_span<>> TreeNode::getPropertyDataAs(const string& name
         order++;
     }
     auto cur_span = remaining_data.restrict(pair(0, sizeof(T)));
-    return make_tuple(8, *remaining_data.begin<T>(), cur_span);
+    return make_tuple(cur_size, *remaining_data.begin<T>(), cur_span);
 }
 
-tuple<uint64_t, shared_span<>, shared_span<>> TreeNode::getPropertyDataAsBytes(const string& name) const
+tuple<uint64_t, shared_span<>, shared_span<>> TreeNode::getPropertyValueSpan(const string& name) const
 {
     auto it = std::find_if(property_infos.begin(), property_infos.end(), [&](const auto& info) {
         return info.second == name;
@@ -282,12 +283,11 @@ tuple<uint64_t, shared_span<>, shared_span<>> TreeNode::getPropertyDataAsBytes(c
         throw std::invalid_argument("Property not found when calling GetPropertyDataAs: " + name);
     }
     auto property_info = *it;
-    auto property_data = getPropertyData();
     shared_span<> remaining_data(property_data);
     int order = 0;
     size_t cur_size = 0;
     for (const auto& info : property_infos) {
-        if (info.first == "int")
+        if ((info.first == "int64") || (info.first == "uint64"))
         {
             cur_size = sizeof(uint64_t);
         }
@@ -310,29 +310,29 @@ tuple<uint64_t, shared_span<>, shared_span<>> TreeNode::getPropertyDataAsBytes(c
         if (info == property_info) {
             break;            
         }
+        assert(cur_size <= remaining_data.size());
         remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
         order++;
     }
     auto size_span = remaining_data.restrict(pair(0, sizeof(uint64_t)));
-    auto just_yaml_text = remaining_data.restrict(pair(sizeof(uint64_t), cur_size - sizeof(uint64_t)));  
-    return make_tuple(cur_size, size_span, just_yaml_text);
+    auto just_yaml_text = remaining_data.restrict(pair(sizeof(uint64_t), cur_size - sizeof(uint64_t)));
+    return make_tuple(cur_size - sizeof(uint64_t), size_span, just_yaml_text);
 }
 
 template<typename T>
-void TreeNode::setPropertyDataAs(const string& name, const T& value)
+void TreeNode::setPropertyValue(const string& name, const T& value)
 {
     pair<string, string> property_info = {typenameToString<T>(), name};
     auto it = std::find(property_infos.begin(), property_infos.end(), property_info);
     if (it == property_infos.end()) {
         throw std::invalid_argument("Property not found when calling SetPropertyDataAs: " + name);
     }
-    auto property_data = getPropertyData();
     shared_span<> remaining_data(property_data);
     int order = 0;
     size_t total_size = 0;
     size_t cur_size = 0;
     for (const auto& info : property_infos) {
-        if (info.first == "int")
+        if ((info.first == "int64") || (info.first == "uint64"))
         {
             cur_size = sizeof(uint64_t);
         }
@@ -363,7 +363,7 @@ void TreeNode::setPropertyDataAs(const string& name, const T& value)
     value_span.copy_type(value);
 }
 
-void TreeNode::setPropertyDataAsBytes(const string& name, const shared_span<>&& data)
+void TreeNode::setPropertyValueSpan(const string& name, const shared_span<>&& data)
 {
     auto it = std::find_if(property_infos.begin(), property_infos.end(), [&](const auto& info) {
         return info.second == name;
@@ -372,13 +372,12 @@ void TreeNode::setPropertyDataAsBytes(const string& name, const shared_span<>&& 
         throw std::invalid_argument("Property not found when calling SetPropertyDataAsBytes: " + name);
     }
     auto property_info = *it;
-    auto property_data = getPropertyData();
     shared_span<> remaining_data(property_data);
     int order = 0;
     size_t cur_size = 0;
     size_t total_size = 0;
     for (const auto& info : property_infos) {
-        if (info.first == "int")
+        if ((info.first == "int64") || (info.first == "uint64"))
         {
             cur_size = sizeof(uint64_t);
         }
@@ -412,24 +411,26 @@ void TreeNode::setPropertyDataAsBytes(const string& name, const shared_span<>&& 
     vector<shared_span<>> spans({prior_span, move(data), following_span});
     shared_span<> concatted(spans.begin(), spans.end());
     property_data = move(concatted);
+    property_data.compress();
 }
 
 template<typename T>
-void TreeNode::insertPropertyDataAs(size_t index, const string& name, const T& value)
+void TreeNode::insertProperty(size_t index, const string& name, const T& value)
 {
-    if (index >= property_infos.size()) {
-        throw std::invalid_argument("Index too large when InsertPropertyDataAs: " + name + " at index " + std::to_string(index));
+    auto find_it = std::find_if(property_infos.begin(), property_infos.end(),
+        [&name](const PropertyInfo& info) { return info.second == name; });
+    if (find_it != property_infos.end()) {
+        throw std::invalid_argument("Property already exists: " + name);
     }
     auto next_info = property_infos.size() ? property_infos[min(index, property_infos.size() - 1)] : pair<string, string>();
     pair<string, string> property_info = {typenameToString<T>(), name};
     auto next_it = std::find(property_infos.begin(), property_infos.end(), next_info);
-    auto property_data = getPropertyData();
     shared_span<> remaining_data(property_data);
     int order = 0;
     size_t total_size = 0;
     size_t cur_size = 0;
     for (const auto& info : property_infos) {
-        if (info.first == "int")
+        if ((info.first == "int64") || (info.first == "uint64"))
         {
             cur_size = sizeof(uint64_t);
         }
@@ -457,30 +458,32 @@ void TreeNode::insertPropertyDataAs(size_t index, const string& name, const T& v
         order++;
     }
     auto prior_span = property_data.restrict(pair(0, total_size));
-    vector<shared_span<>> data_spans(prior_span);
+    vector<shared_span<>> data_spans({prior_span});
     auto following_span = property_data.restrict(pair(total_size, property_data.size() - total_size));
     payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, sizeof(T));
-    data_spans.emplace_back(header, std::span<T>(reinterpret_cast<T*>(&value), 1));
+    data_spans.emplace_back(header, std::span<const T>(reinterpret_cast<const T*>(&value), 1));
     data_spans.push_back(following_span);
     shared_span<> concatted(data_spans.begin(), data_spans.end());
     property_data = move(concatted);
     property_infos.insert(next_it, {typenameToString<T>(), name});
+    property_data.compress();
 }
 
-void TreeNode::insertPropertyDataAsBytes(size_t index, const string& name, const string& type, const shared_span<>&& data)
+void TreeNode::insertPropertySpan(size_t index, const string& name, const string& type, const shared_span<>&& data)
 {
-    if (index >= property_infos.size()) {
-        throw std::invalid_argument("Index too large when InsertPropertyDataAsBytes: " + name + " at index " + std::to_string(index));
+    auto find_it = std::find_if(property_infos.begin(), property_infos.end(),
+        [&name](const PropertyInfo& info) { return info.second == name; });
+    if (find_it != property_infos.end()) {
+        throw std::invalid_argument("Property already exists: " + name);
     }
     auto next_info = property_infos.size() ? property_infos[min(index, property_infos.size() - 1)] : pair<string, string>();
     auto next_it = std::find(property_infos.begin(), property_infos.end(), next_info);
-    auto property_data = getPropertyData();
     shared_span<> remaining_data(property_data);
     int order = 0;
     size_t cur_size = 0;
     size_t total_size = 0;
     for (const auto& info : property_infos) {
-        if (info.first == "int")
+        if ((info.first == "int64") || (info.first == "uint64"))
         {
             cur_size = sizeof(uint64_t);
         }
@@ -514,12 +517,61 @@ void TreeNode::insertPropertyDataAsBytes(size_t index, const string& name, const
     data_spans.emplace_back(header, std::span<uint64_t>(reinterpret_cast<uint64_t*>(&buffer_size), 1));
     payload_chunk_header data_header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, data.size());
     data_spans.push_back(data);
-    data_spans.push_back(remaining_data.restrict(pair(total_size, property_data.size() - total_size - cur_size)));
+    data_spans.push_back(property_data.restrict(pair(total_size, property_data.size() - total_size)));
     shared_span<> concatted(data_spans.begin(), data_spans.end());
     property_data = move(concatted);
     property_infos.insert(next_it, {type, name});
+    property_data.compress();
 }
 
+void TreeNode::deleteProperty(const string& name)
+{
+    auto it = std::find_if(property_infos.begin(), property_infos.end(),
+        [&name](const PropertyInfo& info) { return info.second == name; });
+    if (it == property_infos.end()) {
+        return;
+    }
+    auto property_info = *it;
+    shared_span<> remaining_data(property_data);
+    int order = 0;
+    size_t total_size = 0;
+    size_t cur_size = 0;
+    for (const auto& info : property_infos) {
+        if ((info.first == "int64") || (info.first == "uint64"))
+        {
+            cur_size = sizeof(uint64_t);
+        }
+        if (info.first == "float")
+        {
+            cur_size = sizeof(float);
+        }
+        if (info.first == "double")
+        {
+            cur_size = sizeof(double);
+        }
+        if (info.first == "bool")
+        {
+            cur_size = sizeof(bool);
+        }
+        if (fixed_size_types.find(info.first) == fixed_size_types.end()) {
+            cur_size = *remaining_data.begin<uint64_t>();
+            cur_size += sizeof(uint64_t);
+        }
+        if (info == property_info) {
+            break;            
+        }
+        total_size += cur_size;
+        remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
+        order++;
+    }
+    auto prior_span = property_data.restrict(pair(0, total_size));
+    auto following_span = property_data.restrict(pair(total_size + cur_size, property_data.size() - total_size - cur_size));
+    vector<shared_span<>> data_spans({prior_span, following_span});
+    shared_span<> concatted(data_spans.begin(), data_spans.end());
+    property_data = move(concatted);
+    property_infos.erase(it);
+    property_data.compress();
+}
 
 const TreeNodeVersion& TreeNode::getVersion() const {
     return version;
@@ -561,11 +613,19 @@ void writeContentsToYAML(std::vector<TreeNode::PropertyInfo> infos, const shared
     for (const auto& info : infos) {
         auto type = info.first; // Type of the property
         auto name = info.second + "." + info.first; // Name of the property
-        if (type == "int") {
-            if (remaining_span.size() < sizeof(uint64_t)) {
-                throw std::runtime_error("Not enough data for int property: " + name);
+        if (type == "int64") {
+            if (remaining_span.size() < sizeof(int64_t)) {
+                throw std::runtime_error("Not enough data for int64 property: " + name);
             }
-            int value = *remaining_span.begin<uint64_t>();
+            int64_t value = *remaining_span.begin<int64_t>();
+            node[name] = value;
+            remaining_span = remaining_span.restrict(pair(sizeof(int64_t), remaining_span.size() - sizeof(int64_t)));
+        }
+        if (type == "uint64") {
+            if (remaining_span.size() < sizeof(uint64_t)) {
+                throw std::runtime_error("Not enough data for uint64 property: " + name);
+            }
+            uint64_t value = *remaining_span.begin<uint64_t>();
             node[name] = value;
             remaining_span = remaining_span.restrict(pair(sizeof(uint64_t), remaining_span.size() - sizeof(uint64_t)));
         }
@@ -733,7 +793,12 @@ vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_p
             }
         }
         else {
-            if (type == "int") {
+            if (type == "int64") {
+                payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
+                int64_t the_int = it.second.as<int64_t>(0);
+                data_spans.emplace_back(header, std::span<int64_t>(&the_int, 1));
+            }
+            if (type == "uint64") {
                 payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
                 uint64_t the_int = it.second.as<uint64_t>(0);
                 data_spans.emplace_back(header, std::span<uint64_t>(&the_int, 1));
@@ -1048,3 +1113,19 @@ void shortenNewNodeVersionLabels(const std::string& prefix, NewNodeVersion& new_
         new_node_version.second.second.unsafe_get_just().shortenLabels(prefix);
     }
 }
+
+template tuple<uint64_t, int64_t, shared_span<>> TreeNode::getPropertyValue<int64_t>(const string&) const;
+template void TreeNode::setPropertyValue<int64_t>(const string&, const int64_t&);
+template void TreeNode::insertProperty<int64_t>(size_t, const string&, const int64_t&);
+template tuple<uint64_t, uint64_t, shared_span<>> TreeNode::getPropertyValue<uint64_t>(const string&) const;
+template void TreeNode::setPropertyValue<uint64_t>(const string&, const uint64_t&);
+template void TreeNode::insertProperty<uint64_t>(size_t, const string&, const uint64_t&);
+template tuple<uint64_t, double, shared_span<>> TreeNode::getPropertyValue<double>(const string&) const;
+template void TreeNode::setPropertyValue<double>(const string&, const double&);
+template void TreeNode::insertProperty<double>(size_t, const string&, const double&);
+template tuple<uint64_t, float, shared_span<>> TreeNode::getPropertyValue<float>(const string&) const;
+template void TreeNode::setPropertyValue<float>(const string&, const float&);
+template void TreeNode::insertProperty<float>(size_t, const string&, const float&);
+template tuple<uint64_t, bool, shared_span<>> TreeNode::getPropertyValue<bool>(const string&) const;
+template void TreeNode::setPropertyValue<bool>(const string&, const bool&);
+template void TreeNode::insertProperty<bool>(size_t, const string&, const bool&);

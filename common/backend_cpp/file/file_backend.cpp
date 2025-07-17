@@ -213,7 +213,14 @@ shared_span<> readContentFiles(vector<std::string> content_file_names)
             data_spans.emplace_back(data_header, std::span<uint8_t>(buffer));
         }
         else {
-            if (infos[order].first == "int") {
+            if (infos[order].first == "int64") {
+                payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
+                int64_t the_int = 0;
+                stringstream int_stream(std::string(reinterpret_cast<const char*>(buffer.data()), buffer.size()));
+                int_stream >> the_int;
+                data_spans.emplace_back(header, std::span<int64_t>(&the_int, 1));
+            }
+            if (infos[order].first == "uint64") {
                 payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
                 uint64_t the_int = 0;
                 stringstream int_stream(std::string(reinterpret_cast<const char*>(buffer.data()), buffer.size()));
@@ -353,7 +360,15 @@ void writeContentFiles(vector<TreeNode::PropertyInfo> property_infos, vector<std
             throw std::runtime_error("Error opening content file for writing: " + content_file_names[i]);
         }
         // Check if the content type is fixed size or variable size
-        if (property_infos[i].first == "int") {
+        if (property_infos[i].first == "int64") {
+            int64_t the_int = *remaining_span.begin<int64_t>();
+            stringstream int_stream;
+            int_stream << the_int;
+            std::string int_str = int_stream.str();
+            content_file.write(int_str.c_str(), int_str.size());
+            remaining_span = remaining_span.restrict(pair(sizeof(int64_t), remaining_span.size() - sizeof(int64_t)));
+        }
+        if (property_infos[i].first == "uint64") {
             uint64_t the_int = *remaining_span.begin<uint64_t>();
             stringstream int_stream;
             int_stream << the_int;

@@ -36,7 +36,7 @@
 // Thus, there are some clear specifications for the parts of the file name:
 // <order> is a zero-padded integer, such as "0000", "0001", etc.  It is used to order the files in the property_data vector (and conveniently in file listings).
 // <fileformat> is a string that identifies the file format, such as:
-// "int", "string", "double", "py", "css", "html", "txt", "yaml", "json", and ought to be from a relatively small set of file formats that the framework supports.
+// "int64", "uint64", "string", "double", "py", "css", "html", "txt", "yaml", "json", and ought to be from a relatively small set of file formats that the framework supports.
 
 
 // These are helper functions to derive file path and names from TreeNode objects, producing the Directory path, the .node file name, and the content file names.
