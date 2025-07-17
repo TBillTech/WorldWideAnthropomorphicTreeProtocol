@@ -253,6 +253,9 @@ public:
     void prefixLabels(const std::string& prefix);
     void shortenLabels(const std::string& prefix);
 
+    // Convert the TreeNode to a YAML node for serialization
+    // If loadChildren is true, then the child nodes will be interogated on the backend, and loaded as well.
+    // However, if loadChildren is false, then the backend will not be used.
     YAML::Node asYAMLNode(Backend &backend, bool loadChildren) const;
     YAML::Node& updateYAMLNode(YAML::Node& yaml) const;
 

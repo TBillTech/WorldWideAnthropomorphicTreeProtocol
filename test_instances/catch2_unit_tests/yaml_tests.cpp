@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "tree_node.h"
+#include "backend_testbed.h"
 #include <yaml-cpp/yaml.h>
 #include <string>
 #include <vector>
@@ -62,3 +63,34 @@ TEST_CASE("fromYAMLNode handles missing optional fields", "[TreeNodeVersion][YAM
     REQUIRE(v.collision_depth.is_nothing());
 }
 
+TEST_CASE("TreeNode asYAMLNode no children tests", "[TreeNode][YAML]") {
+    vector<TreeNode> lion_nodes = createLionNodes();
+    MemoryTree memory_tree;
+    SimpleBackend simple_backend(memory_tree);
+    simple_backend.upsertNode(lion_nodes);
+
+    TreeNode lion_node = simple_backend.getNode("lion").unsafe_get_just();
+    YAML::Node yaml_node = lion_node.asYAMLNode(simple_backend, false);
+    vector<TreeNode> from_yaml_nodes = fromYAMLNode(yaml_node, "", "lion", false);
+
+    REQUIRE(from_yaml_nodes[0] == lion_node);
+}
+
+TEST_CASE("TreeNode asYAMLNode with children tests", "[TreeNode][YAML]") {
+    vector<TreeNode> lion_nodes = createLionNodes();
+    MemoryTree memory_tree;
+    SimpleBackend simple_backend(memory_tree);
+    simple_backend.upsertNode(lion_nodes);
+
+    TreeNode lion_node = simple_backend.getNode("lion").unsafe_get_just();
+    YAML::Node yaml_node = lion_node.asYAMLNode(simple_backend, true);
+    vector<TreeNode> from_yaml_nodes = fromYAMLNode(yaml_node, "", "lion", true);
+
+    for (const auto& tn : from_yaml_nodes) {
+        string label_rule = tn.getLabelRule();
+        fplus::maybe<TreeNode> maybe_node = simple_backend.getNode(label_rule);
+        REQUIRE(maybe_node.is_just());
+        REQUIRE(maybe_node.unsafe_get_just() == tn);
+    }
+    REQUIRE(lion_nodes.size() == from_yaml_nodes.size());
+}

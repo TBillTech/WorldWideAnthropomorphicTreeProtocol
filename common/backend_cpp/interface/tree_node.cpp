@@ -675,7 +675,8 @@ YAML::Node TreeNode::asYAMLNode(Backend &backend, bool loadChildren) const
 {
     YAML::Node node;
     for (const auto& child_name : child_names) {
-        auto m_node = backend.getNode(child_name);
+        auto child_label = label_rule + "/" + child_name;
+        auto m_node = backend.getNode(child_label);
         auto pos = child_name.find_last_of('/');
         string name = child_name;
         if(pos != std::string::npos) {
@@ -762,14 +763,13 @@ vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_p
         if (name.find('.') != std::string::npos) {
             // Split the full name into type and name
             auto pos = name.find('.');
-            name = name.substr(0, pos);
             type = name.substr(pos + 1);
+            name = name.substr(0, pos);
             if (name.empty()) {
                 throw std::runtime_error("Invalid property name: " + it.first.as<std::string>());
             }
         }
-        infos[order] = {type, name};
-        size_t value_size = it.second.size(); 
+        infos.push_back({type, name});
 
         if (fixed_size_types.find(type) == fixed_size_types.end()) {
             if (type == "yaml")
@@ -777,7 +777,7 @@ vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_p
                 ostringstream yaml_stream;
                 yaml_stream << it.second;
                 string yaml_content = yaml_stream.str();
-                value_size = yaml_content.size();
+                size_t value_size = yaml_content.size();
                 // First, add a chunk for the size of the data
                 payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
                 data_spans.emplace_back(header, std::span<uint64_t>(reinterpret_cast<uint64_t*>(&value_size), 1));
@@ -786,10 +786,12 @@ vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_p
             }
             else {
                 // First, add a chunk for the size of the data
+                string value_bytes = it.second.as<string>();
                 payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, 8);
+                uint64_t value_size = value_bytes.size();
                 data_spans.emplace_back(header, std::span<uint64_t>(reinterpret_cast<uint64_t*>(&value_size), 1));
                 payload_chunk_header data_header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, value_size);
-                data_spans.emplace_back(data_header, std::span<uint8_t>(it.second.as<std::vector<uint8_t>>().data(), value_size));
+                data_spans.emplace_back(data_header, std::span<const char>(reinterpret_cast<const char*>(value_bytes.data()), value_size));
             }
         }
         else {
@@ -823,13 +825,16 @@ vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_p
     }
 
     auto property_data = shared_span<>(data_spans.begin(), data_spans.end());
-    vector<string> child_names = vector<string>(children.begin(), children.end());
+    vector<string> child_names;
+    for (const auto& [__, childname] : child_nodes) {
+        child_names.push_back(childname);
+    };
     vector<TreeNode> nodes = {TreeNode(label_rule, description, infos, version, std::move(child_names), std::move(property_data), query_how_to, qa_sequence)};
 
     if(loadChildren) {
         // Load the child nodes recursively
         for (const auto& child_node : child_nodes) {
-            auto child_label_prefix = label_rule + "/" + child_node.second;
+            auto child_label_prefix = label_rule + "/";
             auto child_nodes = fromYAMLNode(child_node.first, child_label_prefix, child_node.second, loadChildren);
             nodes.insert(nodes.end(), child_nodes.begin(), child_nodes.end());
         }
