@@ -3,6 +3,7 @@
 #include "simple_backend.h"
 #include "backend_testbed.h"
 #include "cloning_mediator.h"
+#include "yaml_mediator.h"
 
 TEST_CASE("Cloning Mediator copy test", "[CloningMediator]") {
     MemoryTree memory_tree_A;
@@ -61,5 +62,47 @@ TEST_CASE("Cloning Mediator versioned test", "[CloningMediator][versioned]") {
         simple_backend_B.upsertNode({lion});
         auto other_lion_node = simple_backend_A.getNode("lion");
         REQUIRE(other_lion_node.get_with_default(TreeNode()) == lion);
+    }
+}
+
+TEST_CASE("YAMLMediator construction test", "[YAMLMediator]") {
+    MemoryTree memory_tree;
+    SimpleBackend nodeful_backend(memory_tree);
+    MemoryTree yaml_memory_tree;
+    SimpleBackend yaml_backend(yaml_memory_tree);
+    MemoryTree other_memory_tree;
+    SimpleBackend other_backend(other_memory_tree);
+    {
+        BackendTestbed tester(nodeful_backend);
+        tester.addAnimalsToBackend();
+        tester.addNotesPageTree();
+    }
+    {
+        // TreeNode yaml_node = createAnimalNode(
+        // "everything", 
+        // "Stores YAML", 
+        // {},
+        // {1, 256, "public", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>(2)}, 
+        // {"Dumbo", "Babar"}, 
+        // {},
+        // "url duh!", 
+        // "Zookeeper1: Elephants are so strong.\nZookeeper2: And they have great memory!"
+        // );
+
+        //nodeful_backend.upsertNode({yaml_node});
+    }
+    string label_rule = "universe/yaml";
+    string property_name = "zoo";
+    string property_type = "yaml";
+    PropertySpecifier specifier(label_rule, property_name, property_type);
+    {
+        YAMLMediator yaml_mediator(nodeful_backend, yaml_backend, specifier, false);
+    }
+    {
+        YAMLMediator yaml_mediator(other_backend, yaml_backend, specifier, true);
+    }
+    {
+        BackendTestbed tester(other_backend);
+        tester.testBackendLogically();
     }
 }
