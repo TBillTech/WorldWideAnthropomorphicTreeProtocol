@@ -18,38 +18,48 @@ vector<string> split(const string& s, char delimiter) {
     return tokens;
 }
 
-void updateYAMLFrom(YAML::Node yaml, string nodeLabel, const maybe<TreeNode>& m_from, Backend &from, bool loadChildren) {
+template<typename T>
+maybe<T> getChildNode(T& parentNode, const string& childName) {
+    for (auto it = parentNode.begin(); it != parentNode.end(); ++it) {
+        if (it->first.template as<string>() == childName) {
+            return maybe<T>(it->second);
+        }
+    }
+    return maybe<T>();
+}
+
+void updateYAMLFrom(YAML::Node yaml, string nodeLabel, const maybe<TreeNode>& m_modifiedNode, Backend &backend, bool loadChildren) {
     // Update the YAML node with the data from the TreeNode
     // First, get the chain of parent/child names from the label_rule by splitting it by the '/' character.
     vector<string> parts = nodeLabel.empty() ? vector<string>{} : split(nodeLabel, '/');
     // Since you can't have an empty label rule in a node, parts has to always contain at least one element.
     if (yaml.IsNull()) {
-        if (m_from.is_nothing()) {
-            return; // If the YAML node is null and m_from is nothing, do nothing
+        if (m_modifiedNode.is_nothing()) {
+            return; // If the YAML node is null and m_modifiedNode is nothing, do nothing
         }
         yaml = YAML::Node();
     }
-    YAML::Node curNode = yaml;
+    maybe<YAML::Node> curNode(yaml);
     for (size_t i = 0; i < parts.size(); ++i) {
-        YAML::Node parentNode = curNode;
-        curNode = parentNode[parts[i]];
+        YAML::Node parentNode = curNode.get_with_default(yaml);
+        curNode = getChildNode(parentNode, parts[i]);
         if (i == parts.size() - 1) 
         {   
-            if (m_from.is_just()) {
-                parentNode[parts[i]] = m_from.unsafe_get_just().asYAMLNode(from, loadChildren);
+            if (m_modifiedNode.is_just()) {
+                parentNode[parts[i]] = m_modifiedNode.unsafe_get_just().asYAMLNode(backend, loadChildren);
             } else {
-                if (!curNode.IsNull()) {
+                if (curNode.is_just()) {
                     // If the node does not exist, remove it from YAML
                     parentNode.remove(parts[i]);
                 }
             }
         }
         else {
-            if (curNode.IsNull()) {
-                if (m_from.is_nothing())
+            if (curNode.is_nothing()) {
+                if (m_modifiedNode.is_nothing())
                     break;
                 parentNode[parts[i]] = YAML::Node();
-                curNode = parentNode[parts[i]];
+                curNode = maybe<YAML::Node>(parentNode[parts[i]]);
             }
         }
     }
@@ -68,8 +78,8 @@ vector<shared_span<>> createSharedSpanFromYAML(const YAML::Node yaml) {
     return data_spans;
 }
 
-void toYAMLCallback(Backend& to, Backend& from, YAML::Node yaml, PropertySpecifier const& specifier, atomic<bool>& setProcessing, atomic<bool>& isProcessing, 
-        const string& label_rule, const maybe<TreeNode>& m_from) {
+void toYAMLCallback(Backend& yamlBackend, Backend& backend, YAML::Node yaml, PropertySpecifier const& specifier, atomic<bool>& setProcessing, atomic<bool>& isProcessing, 
+        const string& label_rule, const maybe<TreeNode>& m_modifiedNode) {
     // To YAML callback will do these steps:
     // 1. Update the YAML representation of the node by updating the value of the YAML according to the label rule.
     // 2. Update the YAML property at the PropertySpecifier.
@@ -77,11 +87,11 @@ void toYAMLCallback(Backend& to, Backend& from, YAML::Node yaml, PropertySpecifi
         return; // Ignore if already processing
     }
     setProcessing.store(true);
-    updateYAMLFrom(yaml, label_rule, m_from, from, true);
+    updateYAMLFrom(yaml, label_rule, m_modifiedNode, backend, true);
     
     vector<shared_span<>> yaml_data = createSharedSpanFromYAML(yaml);
     string node_label = specifier.getNodeLabel();
-    auto m_to = to.getNode(node_label);
+    auto m_to = yamlBackend.getNode(node_label);
     if (m_to.is_nothing()) {
         shared_span<> concatted(yaml_data.begin(), yaml_data.end());
         TreeNode yamlNode(node_label, 
@@ -93,7 +103,7 @@ void toYAMLCallback(Backend& to, Backend& from, YAML::Node yaml, PropertySpecifi
             maybe<string>(), // No query how-to for YAML nodes
             maybe<string>() // No QA sequence for YAML nodes
         );
-        to.upsertNode({yamlNode});
+        yamlBackend.upsertNode({yamlNode});
         setProcessing.store(false);
         return;
     } else {
@@ -109,7 +119,7 @@ void toYAMLCallback(Backend& to, Backend& from, YAML::Node yaml, PropertySpecifi
             property_infos.push_back(property_info);
             toNode.setPropertyInfo(property_infos);
         }
-        to.upsertNode({toNode});
+        yamlBackend.upsertNode({toNode});
     }
     setProcessing.store(false);
 }
@@ -171,20 +181,35 @@ bool isNodeModified(const TreeNode& node, const YAML::Node yaml) {
     return false;
 }
 
+set<string> walk_children(string prefix, const YAML::Node node) {
+    set<string> names;
+    maybe<const YAML::Node> childNames = getChildNode(node, "child_names");
+    if (childNames.is_just()) {
+        for (const auto& it : childNames.get_with_default(YAML::Node())) {
+            string name = prefix.empty() ? it.as<string>() : prefix + "/" + it.as<string>();
+            names.insert(name);
+            maybe<const YAML::Node> childNode = getChildNode(node, it.as<string>());
+            auto child_names = walk_children(name, childNode.get_with_default(YAML::Node()));
+            names.insert(child_names.begin(), child_names.end());
+        }
+    }
+    return names;
+}
+
 set<string> walk_names(string prefix, const YAML::Node node) {
     set<string> names;
     if (node.IsMap()) {
         for (const auto& it : node) {
             string name = prefix.empty() ? it.first.as<string>() : prefix + "/" + it.first.as<string>();
             names.insert(name);
-            auto child_names = walk_names(name, it.second);
+            auto child_names = walk_children(name, it.second);
             names.insert(child_names.begin(), child_names.end());
         }
     } else if (node.IsSequence()) {
         for (size_t i = 0; i < node.size(); ++i) {
             string name = prefix + "[" + to_string(i) + "]";
             names.insert(name);
-            auto child_names = walk_names(name, node[i]);
+            auto child_names = walk_children(name, node[i]);
             names.insert(child_names.begin(), child_names.end());
         }
     }
@@ -193,20 +218,24 @@ set<string> walk_names(string prefix, const YAML::Node node) {
 
 maybe<TreeNode> getNodeFromYAML(const string& label_rule, const YAML::Node yaml) {
     vector<string> parts = split(label_rule, '/');
-    YAML::Node curNode = yaml;
+    maybe<YAML::Node> curNode(yaml);
     for (const auto& part : parts) {
-        if (curNode.IsMap() && curNode[part]) {
-            curNode = curNode[part];
+        if (curNode.is_nothing()) {
+            return nothing<TreeNode>(); // If the current node is not found, return nothing
+        }
+        YAML::Node parent = curNode.get_with_default(YAML::Node());
+        if (parent.IsMap()) {
+            curNode = getChildNode(parent, part);
         } else {            
             return nothing<TreeNode>(); // If any part of the label rule is not found in YAML, return nothing
         }
     }
-    auto label_prefix = parts.size() > 1 ? label_rule.substr(0, label_rule.rfind('/')) : "";
-    return just(fromYAMLNode(curNode, label_prefix, parts.back(), false)[0]);
+    auto label_prefix = parts.size() > 1 ? label_rule.substr(0, label_rule.rfind('/') + 1) : "";
+    return just(fromYAMLNode(curNode.get_with_default(YAML::Node()), label_prefix, parts.back(), false)[0]);
 }
 
-void fromYAMLCallback(Backend& to, YAML::Node yaml, PropertySpecifier const& specifier, atomic<bool>& setProcessing, atomic<bool>& isProcessing, 
-        const string& label_rule, const maybe<TreeNode>& m_from) {
+void fromYAMLCallback(Backend& backend, YAML::Node yaml, PropertySpecifier const& specifier, atomic<bool>& setProcessing, atomic<bool>& isProcessing, 
+        const string& label_rule, const maybe<TreeNode>& m_modifiedYAMLNode) {
     // From YAML callback will do these steps:
     // 1. Reload the YAML representation of the node by using the YAML::Load function to parse the YAML string.
     // 2. Update the to backend based on any changes noticed between the new YAML representation and the old one.
@@ -215,11 +244,11 @@ void fromYAMLCallback(Backend& to, YAML::Node yaml, PropertySpecifier const& spe
         return; // Ignore if already processing
     }
     setProcessing.store(true);
-    if (m_from.is_nothing()) {
-        throw runtime_error("Cannot update YAML from a non-existing node: " + label_rule);
+    if (m_modifiedYAMLNode.is_nothing()) {
+        throw runtime_error("Cannot update backend without an existing YAML node: " + label_rule);
     }
-    TreeNode fromNode = m_from.unsafe_get_just();
-    vector<TreeNode> nodes = to.getFullTree();
+    TreeNode fromNode = m_modifiedYAMLNode.unsafe_get_just();
+    vector<TreeNode> nodes = backend.getFullTree();
     // Create a set of node_labels for detecting created nodes
     yaml = YAML::Load(getYAMLString(fromNode, specifier));
     auto walked_names = walk_names("", yaml);
@@ -247,10 +276,10 @@ void fromYAMLCallback(Backend& to, YAML::Node yaml, PropertySpecifier const& spe
         modifiedNodes.push_back(m_node.unsafe_get_just());
     }
     if (!modifiedNodes.empty()) {
-        to.upsertNode(modifiedNodes);
+        backend.upsertNode(modifiedNodes);
     }
     for (const auto& deleted_node : deletedNodes) {
-        to.deleteNode(deleted_node.getLabelRule());
+        backend.deleteNode(deleted_node.getLabelRule());
     }
     setProcessing.store(false);
 }
@@ -261,13 +290,13 @@ YAMLMediator::YAMLMediator(Backend& tree, Backend& yamlTree, const PropertySpeci
     yamlRepresentation_ = YAML::Node();
     if (initialize_tree) {
         // Initialize the backend tree with the YAML data source
-        auto m_node = backendTree_.getNode(specifier.getNodeLabel());
-        if (m_node.is_nothing()) {
+        auto m_yamlMode = yamlTree.getNode(specifier.getNodeLabel());
+        if (m_yamlMode.is_nothing()) {
             throw runtime_error("Node with label " + specifier.getNodeLabel() +
-                                     " does not exist in the backend tree.");
+                                     " does not exist in the YAML tree.");
         }
-        fromYAMLCallback(backendYAMLTree_, yamlRepresentation_, specifier_, processingTree_, processingYAMLTree_,
-            specifier.getNodeLabel(), m_node);
+        fromYAMLCallback(backendTree_, yamlRepresentation_, specifier_, processingYAMLTree_, processingTree_,
+            specifier.getNodeLabel(), m_yamlMode);
     } else {
         // Initialize the YAML data source with the information from the backend tree
         auto fullTree = backendTree_.getFullTree();
@@ -278,24 +307,22 @@ YAMLMediator::YAMLMediator(Backend& tree, Backend& yamlTree, const PropertySpeci
                 continue;
             } 
             updateYAMLFrom(yamlRepresentation_, node.getLabelRule(), just(node), global_null_backend, false);
-            cerr << "YAMLMediator: Updating YAML representation for node: " << node.getLabelRule() << endl;
-            cerr << yamlRepresentation_ << endl;
         }
         auto label_rule = m_node.lift_def("", [](const TreeNode& node) { return node.getLabelRule(); });
-        toYAMLCallback(backendTree_, backendYAMLTree_, yamlRepresentation_, specifier_, processingYAMLTree_, processingTree_,
+        toYAMLCallback(backendYAMLTree_, backendTree_, yamlRepresentation_, specifier_, processingTree_, processingYAMLTree_,
             label_rule, m_node); // Use the first node as a reference for the YAML representation
     }
     processingTree_.store(false);
     processingYAMLTree_.store(false);
     // Create a callback for the tree backend to listen for changes
     backendTree_.registerNodeListener("YAMLMediatorTree", specifier.getNodeLabel(), false, [this](Backend&, const string& label_rule, const maybe<TreeNode>& m_node) {
-        fromYAMLCallback(backendYAMLTree_, yamlRepresentation_, specifier_, processingTree_, processingYAMLTree_, label_rule, m_node);
+        fromYAMLCallback(backendTree_, yamlRepresentation_, specifier_, processingYAMLTree_, processingTree_, label_rule, m_node);
     });
 
     string root_node_label_rule = ""; 
     // Create a callback for the YAML tree backend to listen for changes
     backendYAMLTree_.registerNodeListener("YAMLMediatorYAMLTree", root_node_label_rule, true, [this](Backend&, const string& label_rule, const maybe<TreeNode>& m_node) {
-        toYAMLCallback(backendTree_, backendYAMLTree_, yamlRepresentation_, specifier_, processingYAMLTree_, processingTree_, label_rule, m_node);
+        toYAMLCallback(backendYAMLTree_, backendTree_, yamlRepresentation_, specifier_, processingTree_, processingYAMLTree_, label_rule, m_node);
     });
 }
 

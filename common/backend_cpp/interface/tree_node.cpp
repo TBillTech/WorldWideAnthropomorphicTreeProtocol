@@ -675,24 +675,19 @@ YAML::Node TreeNode::asYAMLNode(Backend &backend, bool loadChildren) const
 {
     YAML::Node node;
     for (const auto& child_name : child_names) {
-        auto child_label = label_rule + "/" + child_name;
+        auto child_label = child_name.find("/") != std::string::npos ? child_name : label_rule + "/" + child_name;
         auto m_node = backend.getNode(child_label);
-        auto pos = child_name.find_last_of('/');
-        string name = child_name;
-        if(pos != std::string::npos) {
-            name = child_name.substr(pos + 1);
-        }
-        node["child_names"].push_back(name);
+        node["child_names"].push_back(child_name);
         if (loadChildren){
             // Load the child node's properties
             auto child_node = m_node.lift_def(YAML::Node(), [&backend, loadChildren](const TreeNode& child) {
                 return child.asYAMLNode(backend, loadChildren);
             });
-            node[name] = child_node;
+            node[child_name] = child_node;
         }
         else {
             // Just store the child name
-            node[name] = YAML::Node();
+            node[child_name] = YAML::Node();
         }
     }
     return updateYAMLNode(node);
@@ -735,11 +730,17 @@ vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_p
     fplus::maybe<std::string> query_how_to;
     if (node["query_how_to"]) {
         query_how_to = node["query_how_to"].as<std::string>();
+        if (query_how_to.get_with_default("") == "") {
+            query_how_to = fplus::nothing<std::string>();
+        }
     }
 
     fplus::maybe<std::string> qa_sequence;
     if (node["qa_sequence"]) {
         qa_sequence = node["qa_sequence"].as<std::string>();
+        if (qa_sequence.get_with_default("") == "") {
+            qa_sequence = fplus::nothing<std::string>();
+        }
     }
 
     std::vector<shared_span<>> data_spans;
@@ -834,6 +835,9 @@ vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_p
     if(loadChildren) {
         // Load the child nodes recursively
         for (const auto& child_node : child_nodes) {
+            if (get<1>(child_node).find("/") != std::string::npos) {
+                continue; // Because the child will be loaded by the actual parent node not this node, which is detectable when there are slashes in the name.
+            }
             auto child_label_prefix = label_rule + "/";
             auto child_nodes = fromYAMLNode(child_node.first, child_label_prefix, child_node.second, loadChildren);
             nodes.insert(nodes.end(), child_nodes.begin(), child_nodes.end());
