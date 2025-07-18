@@ -106,3 +106,28 @@ TEST_CASE("YAMLMediator construction test", "[YAMLMediator]") {
         tester.testBackendLogically();
     }
 }
+
+TEST_CASE("YAMLMediator notification test", "[YAMLMediator][notification]") {
+    MemoryTree memory_tree;
+    SimpleBackend nodeful_backend(memory_tree);
+    MemoryTree yaml_memory_tree;
+    SimpleBackend yaml_backend(yaml_memory_tree);
+    MemoryTree other_memory_tree;
+    SimpleBackend other_backend(other_memory_tree);
+    {
+        BackendTestbed tester(nodeful_backend);
+        tester.addAnimalsToBackend();
+        tester.addNotesPageTree();
+    }
+    string label_rule = "universe/yaml";
+    string property_name = "zoo";
+    string property_type = "yaml";
+    PropertySpecifier specifier(label_rule, property_name, property_type);
+    {
+        YAMLMediator nodeful_mediator(nodeful_backend, yaml_backend, specifier, false);
+        BackendTestbed tester(nodeful_backend);
+        YAMLMediator other_mediator(other_backend, yaml_backend, specifier, true);
+        tester.testPeerNotification(other_backend, 100);
+    }
+}
+    

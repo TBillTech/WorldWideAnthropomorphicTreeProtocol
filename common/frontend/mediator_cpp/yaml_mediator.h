@@ -66,4 +66,6 @@ class YAMLMediator {
         atomic<bool> processingTree_;
         atomic<bool> processingYAMLTree_;
         YAML::Node yamlRepresentation_;
+        std::string yamlTreeListenerName_;
+        std::string treeListenerName_;
 };

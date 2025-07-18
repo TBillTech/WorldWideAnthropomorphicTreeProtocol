@@ -1,12 +1,19 @@
 #include "yaml_mediator.h"
+
+#include <atomic>
 #include "tree_node.h"
 #include "simple_backend.h"
 
 using namespace std;
 using namespace fplus;
 
+
 static MemoryTree global_empty_memory_tree;
 static SimpleBackend global_null_backend(global_empty_memory_tree); 
+
+namespace {
+    static std::atomic<size_t> yaml_mediator_instance_counter{0};
+}
 
 vector<string> split(const string& s, char delimiter) {
     vector<string> tokens;
@@ -287,6 +294,9 @@ void fromYAMLCallback(Backend& backend, YAML::Node yaml, PropertySpecifier const
 YAMLMediator::YAMLMediator(Backend& tree, Backend& yamlTree, const PropertySpecifier& specifier, bool initialize_tree)
     : backendTree_(tree), backendYAMLTree_(yamlTree), specifier_(specifier)
 {
+    size_t instance_id = yaml_mediator_instance_counter++;
+    treeListenerName_ = "YAMLMediatorTree_" + specifier.getNodeLabel() + "_" + std::to_string(instance_id);
+    yamlTreeListenerName_ = "YAMLMediatorYAMLTree_" + specifier.getNodeLabel() + "_" + std::to_string(instance_id);
     yamlRepresentation_ = YAML::Node();
     if (initialize_tree) {
         // Initialize the backend tree with the YAML data source
@@ -315,19 +325,19 @@ YAMLMediator::YAMLMediator(Backend& tree, Backend& yamlTree, const PropertySpeci
     processingTree_.store(false);
     processingYAMLTree_.store(false);
     // Create a callback for the tree backend to listen for changes
-    backendTree_.registerNodeListener("YAMLMediatorTree", specifier.getNodeLabel(), false, [this](Backend&, const string& label_rule, const maybe<TreeNode>& m_node) {
+    backendTree_.registerNodeListener(treeListenerName_, specifier.getNodeLabel(), false, [this](Backend&, const string& label_rule, const maybe<TreeNode>& m_node) {
         fromYAMLCallback(backendTree_, yamlRepresentation_, specifier_, processingYAMLTree_, processingTree_, label_rule, m_node);
     });
 
     string root_node_label_rule = ""; 
     // Create a callback for the YAML tree backend to listen for changes
-    backendYAMLTree_.registerNodeListener("YAMLMediatorYAMLTree", root_node_label_rule, true, [this](Backend&, const string& label_rule, const maybe<TreeNode>& m_node) {
+    backendYAMLTree_.registerNodeListener(yamlTreeListenerName_, root_node_label_rule, true, [this](Backend&, const string& label_rule, const maybe<TreeNode>& m_node) {
         toYAMLCallback(backendYAMLTree_, backendTree_, yamlRepresentation_, specifier_, processingTree_, processingYAMLTree_, label_rule, m_node);
     });
 }
 
 YAMLMediator::~YAMLMediator() {
     // Unregister the callbacks
-    backendTree_.deregisterNodeListener("YAMLMediatorTree", specifier_.getNodeLabel());
-    backendYAMLTree_.deregisterNodeListener("YAMLMediatorYAMLTree", "");
+    backendTree_.deregisterNodeListener(treeListenerName_, specifier_.getNodeLabel());
+    backendYAMLTree_.deregisterNodeListener(yamlTreeListenerName_, "");
 }
