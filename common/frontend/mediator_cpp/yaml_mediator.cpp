@@ -271,14 +271,14 @@ void fromYAMLCallback(Backend& backend, YAML::Node yaml, PropertySpecifier const
     setProcessing.store(false);
 }
 
-YAMLMediator::YAMLMediator(Backend& tree, Backend& yamlTree, const PropertySpecifier& specifier, bool initialize_tree)
+YAMLMediator::YAMLMediator(Backend& tree, Backend& yamlTree, const PropertySpecifier& specifier, bool initialize_from_yaml)
     : backendTree_(tree), backendYAMLTree_(yamlTree), specifier_(specifier)
 {
     size_t instance_id = yaml_mediator_instance_counter++;
     treeListenerName_ = "YAMLMediatorTree_" + specifier.getNodeLabel() + "_" + std::to_string(instance_id);
     yamlTreeListenerName_ = "YAMLMediatorYAMLTree_" + specifier.getNodeLabel() + "_" + std::to_string(instance_id);
     yamlRepresentation_ = YAML::Node();
-    if (initialize_tree) {
+    if (initialize_from_yaml) {
         // Initialize the backend tree with the YAML data source
         auto m_yamlMode = yamlTree.getNode(specifier.getNodeLabel());
         if (m_yamlMode.is_nothing()) {

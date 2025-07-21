@@ -56,7 +56,7 @@ private:
 
 class YAMLMediator {
     public:
-        YAMLMediator(Backend& tree, Backend& yamlTree, const PropertySpecifier& specifier, bool initialize_tree = true);
+        YAMLMediator(Backend& tree, Backend& yamlTree, const PropertySpecifier& specifier, bool initialize_from_yaml = true);
         ~YAMLMediator();
 
     private:

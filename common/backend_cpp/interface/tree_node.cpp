@@ -476,7 +476,7 @@ void TreeNode::insertPropertySpan(size_t index, const string& name, const string
     if (find_it != property_infos.end()) {
         throw std::invalid_argument("Property already exists: " + name);
     }
-    auto next_info = property_infos.size() ? property_infos[min(index, property_infos.size() - 1)] : pair<string, string>();
+    auto next_info = index <property_infos.size() ? property_infos[min(index, property_infos.size() - 1)] : pair<string, string>();
     auto next_it = std::find(property_infos.begin(), property_infos.end(), next_info);
     shared_span<> remaining_data(property_data);
     int order = 0;

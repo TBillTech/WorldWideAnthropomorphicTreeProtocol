@@ -556,6 +556,41 @@ bool FileBackend::upsertNode(const std::vector<TreeNode>& nodes)
 {
     // Iterate through each node and write it to the file system.
     for (const auto& node : nodes) {
+        string label_rule = node.getLabelRule();
+        auto m_old_node = getNode(label_rule);
+        if (m_old_node.is_just()) {
+            // If the old node exists, we need to look for properties that are now missing:
+            auto old_node = m_old_node.unsafe_get_just();
+            auto old_property_infos = old_node.getPropertyInfo();
+            auto new_property_infos = node.getPropertyInfo();
+            // Find properties that are in the old node but not in the new node
+            std::vector<pair<size_t, TreeNode::PropertyInfo>> missing_properties;
+            size_t order = 0;
+            for (const auto& old_property : old_property_infos) {
+                if (std::find(new_property_infos.begin(), new_property_infos.end(), old_property) == new_property_infos.end()) {
+                    missing_properties.push_back({order, old_property});
+                }
+                order++;
+            }
+            // If there are missing properties, we need to delete the corresponding content files
+            if (!missing_properties.empty()) {
+                for (const auto& missing_property : missing_properties) {
+                    std::string content_file_name = getContentFileName(basePath_, label_rule, missing_property.first, missing_property.second);
+                    if (content_file_name.substr(0, basePath_.length()) != basePath_) {
+                        std::cerr << "Refusing to delete content file outside of base path: " << content_file_name << std::endl;
+                        continue; // Skip files outside the base path
+                    }
+                    if (remove(content_file_name.c_str()) == -1) {
+                        if (errno != ENOENT) {
+                            perror("remove");
+                            std::cerr << "Failed to delete content file: " << content_file_name << std::endl;
+                            return false; // Return false if any file could not be deleted
+                        }
+                        // else if it fails because it is already deleted, we just ignore it.
+                    }
+                }
+            }
+        }
         if (!writeNodeToFiles(basePath_, node)) {
             std::cerr << "Failed to upsert node: " << node.getLabelRule() << std::endl;
             return false; // Return false if any node fails to write
@@ -955,34 +990,6 @@ void FileBackend::onWatchModifyEvent(int wd)
     }
 }
 
-void FileBackend::onWatchCloseEvent(int wd)
-{
-    throw std::runtime_error("Let me know if onWatchCloseEvent ever gets called?");
-    auto findit = wd_to_watchchain_.find(wd);
-    if (findit != wd_to_watchchain_.end()) {
-        auto full_watch_specifiers = findit->second;
-        for (auto full_watch_specifier : full_watch_specifiers) {
-            auto watch_chain_index = full_watch_specifier.second;
-            auto watch_chain_specifier = watch_chain_index.first;
-            auto watch_chain_vector_index = watch_chain_index.second;
-            auto label_rule = get<0>(watch_chain_specifier);
-            // Remove the watch from the maps
-            watchchain_to_wd_.erase(full_watch_specifier);
-            auto watch_chain_it = watch_chains_.find(watch_chain_specifier);
-            if (watch_chain_it != watch_chains_.end()) {
-                if (watch_chain_it->second.size() == watch_chain_vector_index+1)
-                {
-                    notifyListeners(label_rule, maybe<TreeNode>());
-                }
-            }
-            watchchain_to_wd_.erase(full_watch_specifier);
-        }
-        wd_to_watchchain_.erase(wd);
-    } else {
-        std::cerr << "[inotify] close event: No watch found for wd: " << wd << std::endl;
-    }
-}
-
 void FileBackend::onWatchCreateEvent(int wd, const std::string& notification_path)
 {
     // This only occurs for directories, so depending on the exact path that the watcher is watching, it
@@ -1241,21 +1248,18 @@ void FileBackend::processNotifications()
     ssize_t offset = 0;
     while (offset < length) {
         struct inotify_event* event = reinterpret_cast<struct inotify_event*>(&buffer_[offset]);
+        int wd = event->wd;
+        int mask = event->mask;
+        if ((mask & IN_MODIFY) == IN_MODIFY) {
+            onWatchModifyEvent(wd);
+        }
         if (event->len > 0) {
-            int wd = event->wd;
             string inotify_path = event->name;
-            int prioritized_mask = event->mask;
-            if ((prioritized_mask & IN_MODIFY) == IN_MODIFY) {
-                onWatchModifyEvent(wd);
-            }
-            if ((prioritized_mask & IN_CREATE) == IN_CREATE) {
+            if ((mask & IN_CREATE) == IN_CREATE) {
                 onWatchCreateEvent(wd, inotify_path);
             }
-            if ((prioritized_mask & IN_DELETE) == IN_DELETE) {
+            if ((mask & IN_DELETE) == IN_DELETE) {
                 onWatchDeleteEvent(wd, inotify_path);
-            }
-            if ((prioritized_mask & IN_IGNORED) == IN_IGNORED) {
-                onWatchCloseEvent(wd);
             }
         }
         offset += sizeof(struct inotify_event) + event->len;
