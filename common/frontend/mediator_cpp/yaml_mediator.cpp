@@ -25,10 +25,15 @@ vector<string> split(const string& s, char delimiter) {
     return tokens;
 }
 
+bool isMapNode(maybe<const YAML::Node>& node) {
+    return node.lift_def(false, [](auto& node) { return node.IsMap(); });
+}
+
 template<typename T>
 maybe<T> getChildNode(T& parentNode, const string& childName) {
     for (auto it = parentNode.begin(); it != parentNode.end(); ++it) {
-        if (it->first.template as<string>() == childName) {
+        auto name = it->first.template as<string>();
+        if (name == childName) {
             return maybe<T>(it->second);
         }
     }
@@ -142,50 +147,25 @@ bool isNodeModified(const TreeNode& node, const YAML::Node yaml) {
     // First, check if the node label is in yaml
     auto label_rule = node.getLabelRule();
     vector<string> parts = split(label_rule, '/');
-    YAML::Node curNode = yaml;
-    bool found = false;
+    maybe<const YAML::Node> m_curNode(yaml);
     for (const auto& part : parts) {
-        if (curNode.IsMap() && curNode[part]) {
-            curNode = curNode[part];
+        if (isMapNode(m_curNode)) {
+            m_curNode = getChildNode(m_curNode.unsafe_get_just(), part);
         } else {            
             return true; // If any part of the label rule is not found in YAML, the node is deleted and therefore modified
         }
-        if (part == parts.back()) {
-            found = true; // We found the node in YAML
-        }
     }
-    if (!found) {
+    if (m_curNode.is_nothing()) {
         return true; // If we didn't find the node in YAML, it is considered modified (deleted)
     }
+    auto curNode = m_curNode.unsafe_get_just();
     // Now check each of the properties in the node
-    YAML::Node compare_yaml = node.asYAMLNode(global_null_backend, false);
-    set<string> all_children;
-    for (const auto& item : compare_yaml["childnames"]) {
-        all_children.insert(item.first.as<string>());
+    vector<TreeNode> compare_nodes = fromYAMLNode(curNode, "", label_rule, false);
+    if (compare_nodes.empty()) {
+        return true; // If we couldn't parse the YAML node, it is considered modified (deleted)
     }
-    for (const auto& item : curNode["child_names"]) {
-        all_children.insert(item.first.as<string>());
-    }
-    set<string> all_names;
-    for (const auto& item : curNode) {
-        all_names.insert(item.first.as<string>());
-    }
-    for (const auto& item : compare_yaml) {
-        all_names.insert(item.first.as<string>());
-    }
-    for (const auto& name : all_names) {
-        if (all_children.find(name) != all_children.end()) {
-            // Check that the name can also be found in curNode
-            if (!curNode[name] || !compare_yaml[name]) {
-                return true;
-            }
-            continue;
-        }
-        if (curNode[name] != compare_yaml[name]) {
-            return true; // If any property is different, the node is modified
-        }
-    }
-    return false;
+    TreeNode& compare_node = compare_nodes[0];
+    return node != compare_node;
 }
 
 set<string> walk_children(string prefix, const YAML::Node node) {
@@ -225,20 +205,20 @@ set<string> walk_names(string prefix, const YAML::Node node) {
 
 maybe<TreeNode> getNodeFromYAML(const string& label_rule, const YAML::Node yaml) {
     vector<string> parts = split(label_rule, '/');
-    maybe<YAML::Node> curNode(yaml);
+    maybe<const YAML::Node> curNode(yaml);
     for (const auto& part : parts) {
-        if (curNode.is_nothing()) {
-            return nothing<TreeNode>(); // If the current node is not found, return nothing
-        }
-        YAML::Node parent = curNode.get_with_default(YAML::Node());
-        if (parent.IsMap()) {
-            curNode = getChildNode(parent, part);
-        } else {            
+        if (isMapNode(curNode)) {
+            curNode = getChildNode(curNode.unsafe_get_just(), part);
+        } else {
             return nothing<TreeNode>(); // If any part of the label rule is not found in YAML, return nothing
         }
     }
     auto label_prefix = parts.size() > 1 ? label_rule.substr(0, label_rule.rfind('/') + 1) : "";
-    return just(fromYAMLNode(curNode.get_with_default(YAML::Node()), label_prefix, parts.back(), false)[0]);
+    // Now we have the current node, we can convert it to a TreeNode
+    return curNode.lift_def(maybe<TreeNode>(), [label_prefix, parts](const YAML::Node& node) {
+        vector<TreeNode> result = fromYAMLNode(node, label_prefix, parts.back(), false);
+        return result.empty() ? nothing<TreeNode>() : just(result[0]);
+    });
 }
 
 void fromYAMLCallback(Backend& backend, YAML::Node yaml, PropertySpecifier const& specifier, atomic<bool>& setProcessing, atomic<bool>& isProcessing, 
@@ -325,19 +305,19 @@ YAMLMediator::YAMLMediator(Backend& tree, Backend& yamlTree, const PropertySpeci
     processingTree_.store(false);
     processingYAMLTree_.store(false);
     // Create a callback for the tree backend to listen for changes
-    backendTree_.registerNodeListener(treeListenerName_, specifier.getNodeLabel(), false, [this](Backend&, const string& label_rule, const maybe<TreeNode>& m_node) {
-        fromYAMLCallback(backendTree_, yamlRepresentation_, specifier_, processingYAMLTree_, processingTree_, label_rule, m_node);
+    string root_node_label_rule = ""; 
+    backendTree_.registerNodeListener(treeListenerName_, root_node_label_rule, true, [this](Backend&, const string& label_rule, const maybe<TreeNode>& m_node) {
+        toYAMLCallback(backendYAMLTree_, backendTree_, yamlRepresentation_, specifier_, processingTree_, processingYAMLTree_, label_rule, m_node);
     });
 
-    string root_node_label_rule = ""; 
     // Create a callback for the YAML tree backend to listen for changes
-    backendYAMLTree_.registerNodeListener(yamlTreeListenerName_, root_node_label_rule, true, [this](Backend&, const string& label_rule, const maybe<TreeNode>& m_node) {
-        toYAMLCallback(backendYAMLTree_, backendTree_, yamlRepresentation_, specifier_, processingTree_, processingYAMLTree_, label_rule, m_node);
+    backendYAMLTree_.registerNodeListener(yamlTreeListenerName_, specifier_.getNodeLabel(), false, [this](Backend&, const string& label_rule, const maybe<TreeNode>& m_node) {
+        fromYAMLCallback(backendTree_, yamlRepresentation_, specifier_, processingYAMLTree_, processingTree_, label_rule, m_node);
     });
 }
 
 YAMLMediator::~YAMLMediator() {
     // Unregister the callbacks
-    backendTree_.deregisterNodeListener(treeListenerName_, specifier_.getNodeLabel());
+    backendTree_.deregisterNodeListener(treeListenerName_, "");
     backendYAMLTree_.deregisterNodeListener(yamlTreeListenerName_, "");
 }

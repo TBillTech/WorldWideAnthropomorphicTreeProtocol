@@ -674,22 +674,24 @@ void writeContentsToYAML(std::vector<TreeNode::PropertyInfo> infos, const shared
 YAML::Node TreeNode::asYAMLNode(Backend &backend, bool loadChildren) const
 {
     YAML::Node node;
+    YAML::Node child_names_seq(YAML::NodeType::Sequence);
     for (const auto& child_name : child_names) {
         auto child_label = child_name.find("/") != std::string::npos ? child_name : label_rule + "/" + child_name;
         auto m_node = backend.getNode(child_label);
-        node["child_names"].push_back(child_name);
+        child_names_seq.push_back(child_name);
         if (loadChildren){
             // Load the child node's properties
-            auto child_node = m_node.lift_def(YAML::Node(), [&backend, loadChildren](const TreeNode& child) {
+            auto child_node = m_node.lift_def(YAML::Node(YAML::NodeType::Map), [&backend, loadChildren](const TreeNode& child) {
                 return child.asYAMLNode(backend, loadChildren);
             });
             node[child_name] = child_node;
         }
         else {
-            // Just store the child name
-            node[child_name] = YAML::Node();
+            // Just store the child name as an empty map
+            node[child_name] = YAML::Node(YAML::NodeType::Map);
         }
     }
+    node["child_names"] = child_names_seq;
     return updateYAMLNode(node);
 }
 
