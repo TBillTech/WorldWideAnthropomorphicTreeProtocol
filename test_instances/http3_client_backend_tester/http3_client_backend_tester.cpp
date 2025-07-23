@@ -373,7 +373,7 @@ int main() {
     }
 
     client_backend_updater.run(*client_communication, timesecs, 100);
-    theServer.run(*server_communication, 100);
+    theServer.start(*server_communication, 0, 100);
 
     {
         TreeNode const& readBlockingHtmlNode = static_blocking_html_client.getStaticNode().get_or_throw(runtime_error("Failed to get blocking HTML node"));

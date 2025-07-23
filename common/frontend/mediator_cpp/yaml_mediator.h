@@ -63,7 +63,7 @@ class YAMLMediator : public Frontend {
         // Frontend interface implementation
         std::string getName() const override { return name_; }
         std::string getType() const override { return "yaml_mediator"; }
-        void start() override { /* YAMLMediator starts automatically */ }
+        void start(Communication&, double, size_t) override { /* YAMLMediator starts automatically */ }
         void stop() override { /* YAMLMediator stops automatically */ }  
         bool isRunning() const override { return true; }
         

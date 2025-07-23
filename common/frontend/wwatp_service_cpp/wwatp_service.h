@@ -27,7 +27,7 @@
  * - Provide access to constructed backends by name
  * - Manage the lifecycle of all constructed components
  */
-class WWATPService {
+class WWATPService : public Frontend {
 public:
     /**
      * Constructor
@@ -84,12 +84,27 @@ public:
     std::string getName() const { return name_; }
     std::string getType() const { return "wwatp_service"; }
 
-    void start(Communication& connector, double time, size_t sleep_milli = 100) { 
+    void start(Communication& connector, double time, size_t sleep_milli = 100) override { 
         if (!initialized_) {
             throw std::runtime_error("WWATPService not initialized");
         }
         if (http3_client_updater_.size()) {
             http3_client_updater_.run(connector, time, sleep_milli);
+        }
+        for (const auto& frontend : frontends_) {
+            frontend.second->start(connector, time, sleep_milli);
+        }
+    }
+
+    void stop() override {
+        if (!initialized_) {
+            throw std::runtime_error("WWATPService not initialized");
+        }
+        if (http3_client_updater_.size()) {
+            http3_client_updater_.stop();
+        }
+        for (const auto& frontend : frontends_) {
+            frontend.second->stop();
         }
     }
 

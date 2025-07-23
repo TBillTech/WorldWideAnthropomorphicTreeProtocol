@@ -85,10 +85,6 @@ public:
     std::string getName() const override { return name_; }
     std::string getType() const override { return "http3_server"; }
     
-    void start() override {
-        stopFlag.store(false);
-    }
-
     void stop() override {
         stopFlag.store(true);
         if (serverThread_.joinable()) {
@@ -133,8 +129,8 @@ public:
     //    }
     // 2. As a daemon thread, using the below function, which will create new thread 
     //    and do the above work until the stop flag is set to true.
-    void run(Communication& connector, size_t sleep_milli = 100) {
-        start();
+    void start(Communication& connector, double, size_t sleep_milli = 100) override {
+        stopFlag.store(false);
         serverThread_ = thread([this, &connector, sleep_milli]() {
             while (!stopFlag.load()) {
                 connector.processResponseStream();

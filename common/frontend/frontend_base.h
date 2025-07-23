@@ -43,7 +43,7 @@ public:
      * Start the frontend (if applicable)
      * Some frontends may need explicit startup
      */
-    virtual void start() = 0;
+    virtual void start(Communication& connector, double time, size_t sleep_milli = 100) = 0;
 
     /**
      * Stop the frontend (if applicable)  

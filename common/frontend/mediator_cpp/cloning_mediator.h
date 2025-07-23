@@ -21,7 +21,7 @@ class CloningMediator : public Frontend {
         // Frontend interface implementation
         std::string getName() const override { return name_; }
         std::string getType() const override { return "cloning_mediator"; }
-        void start() override { /* CloningMediator starts automatically */ }
+        void start(Communication&, double, size_t) override { /* CloningMediator starts automatically */ }
         void stop() override { /* CloningMediator stops automatically */ }  
         bool isRunning() const override { return true; }
         
