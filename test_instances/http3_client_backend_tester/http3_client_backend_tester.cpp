@@ -233,13 +233,13 @@ int main() {
     cout << "In Main: Server should be started up" << endl;
 
     // Add a named_prepare_fn for theServerHandler to the server_communication
-    HTTP3Server theServer({});
+    HTTP3Server theServer("theServer", {});
     prepare_stream_callback_fn theServerHandlerWrapper = [&theServer](const Request &req) {
         return theServer.getResponseCallback(req);
     };
     server_communication->registerRequestHandler(make_pair("test", theServerHandlerWrapper));
 
-    MemoryTree init_memory_tree;
+    auto init_memory_tree = make_shared<MemoryTree>();
     SimpleBackend initialized_backend(init_memory_tree);
     {
         BackendTestbed initialized(initialized_backend);
@@ -247,10 +247,10 @@ int main() {
         initialized.addNotesPageTree();
     }
     theServer.addBackendRoute(initialized_backend, 1000, "/init/wwatp/");
-    MemoryTree uninitialized_memory_tree;
+    auto uninitialized_memory_tree = make_shared<MemoryTree>();
     SimpleBackend uninitialized_backend(uninitialized_memory_tree);
     theServer.addBackendRoute(uninitialized_backend, 1000, "/uninit/wwatp/");
-    MemoryTree blocking_test_memory_tree;
+    auto blocking_test_memory_tree = make_shared<MemoryTree>();
     SimpleBackend blocking_test_backend(blocking_test_memory_tree);
     theServer.addBackendRoute(blocking_test_backend, 1000, "/blocking/wwatp/");
     auto index_chunks = readFileChunks("../test_instances/data/libtest_index.html");
@@ -294,21 +294,21 @@ int main() {
         fplus::nothing<std::string>(),
         fplus::nothing<std::string>()
     );
-    MemoryTree static_tree;
+    auto static_tree = make_shared<MemoryTree>();
     SimpleBackend static_backend(static_tree);
 
     Request theReaderRequest{.scheme = "https", .authority = "localhost", .path = "/init/wwatp/", .method = "POST", .pri = {0, 0}};
-    MemoryTree local_reader_tree;
+    auto local_reader_tree = make_shared<MemoryTree>();
     SimpleBackend local_reader_backend(local_reader_tree);
 
     Request theWriterRequest{.scheme = "https", .authority = "localhost", .path = "/uninit/wwatp/", .method = "POST", .pri = {0, 0}};
-    MemoryTree local_writer_tree;
+    auto local_writer_tree = make_shared<MemoryTree>();
     SimpleBackend local_writer_backend(local_writer_tree);
-    MemoryTree reader_of_writer_tree;
+    auto reader_of_writer_tree = make_shared<MemoryTree>();
     SimpleBackend reader_of_writer_backend(reader_of_writer_tree);
 
     Request theBlockingRequest{.scheme = "https", .authority = "localhost", .path = "/blocking/wwatp/", .method = "POST", .pri = {0, 0}};
-    MemoryTree local_blocking_tree;
+    auto local_blocking_tree = make_shared<MemoryTree>();
     SimpleBackend local_blocking_backend(local_blocking_tree);
     ThreadsafeBackend local_blocking_backend_threadsafe(local_blocking_backend);
 

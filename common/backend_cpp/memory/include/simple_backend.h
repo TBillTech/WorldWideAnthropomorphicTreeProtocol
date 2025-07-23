@@ -10,7 +10,7 @@ bool partialLabelRuleMatch(const std::string& label_rule, const std::string& not
 // A simple in-memory implementation of the Backend interface.
 class SimpleBackend : public Backend {
 public:
-    SimpleBackend(MemoryTree & memory_tree) : memory_tree_(memory_tree) {};
+    SimpleBackend(shared_ptr<MemoryTree> memory_tree) : memory_tree_(memory_tree) {};
     ~SimpleBackend() override = default;
 
     // Retrieve a node by its label rule.
@@ -45,7 +45,7 @@ public:
     void processNotifications() override {};
 
 private:
-    MemoryTree &memory_tree_;
+    shared_ptr<MemoryTree> memory_tree_;
     using ListenerInfo = std::pair<std::string, std::pair<bool, NodeListenerCallback>>;
     std::map<std::string, std::vector<ListenerInfo> > node_listeners_;
 };

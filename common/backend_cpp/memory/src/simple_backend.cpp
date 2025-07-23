@@ -65,11 +65,11 @@ bool checkLabelRuleOverlap(const string& label_rule_1, const string& label_rule_
 }
 
 maybe<TreeNode> SimpleBackend::getNode(const std::string& label_rule) const {
-    return memory_tree_.getNode(label_rule);
+    return memory_tree_->getNode(label_rule);
 }
 
 bool SimpleBackend::upsertNode(const std::vector<TreeNode>& nodes) {
-    memory_tree_.upsertNode(nodes);
+    memory_tree_->upsertNode(nodes);
     // Notify listeners for each node
     for (const auto& node : nodes) {
         auto label_rule = node.getLabelRule();
@@ -79,7 +79,7 @@ bool SimpleBackend::upsertNode(const std::vector<TreeNode>& nodes) {
 }
 
 bool SimpleBackend::deleteNode(const std::string& label_rule) {
-    memory_tree_.deleteNode(label_rule);
+    memory_tree_->deleteNode(label_rule);
     // Notify listeners for each node
     notifyListeners(label_rule, maybe<TreeNode>());
     return true;
@@ -87,7 +87,7 @@ bool SimpleBackend::deleteNode(const std::string& label_rule) {
 
 std::vector<TreeNode> SimpleBackend::getPageTree(const std::string& page_node_label_rule) const {
     // Check if the page node exists
-    auto page_node = memory_tree_.getNode(page_node_label_rule);
+    auto page_node = memory_tree_->getNode(page_node_label_rule);
     if (page_node.is_nothing()) {
         return {};
     }
@@ -95,14 +95,14 @@ std::vector<TreeNode> SimpleBackend::getPageTree(const std::string& page_node_la
     auto children_label_rules = page_node.lift_def(std::vector<std::string>{}, [](const TreeNode& node) {
         return node.getChildNames();
     });
-    return memory_tree_.getNodes(children_label_rules);
+    return memory_tree_->getNodes(children_label_rules);
 }
 
 std::vector<TreeNode> SimpleBackend::relativeGetPageTree(const TreeNode& node, const std::string& page_node_label_rule) const {
     // concatenate the label rule of the node with the label rule of the page node
     std::string full_label_rule = node.getLabelRule() + "/" + page_node_label_rule;
     // Check if the page node exists
-    auto page_node = memory_tree_.getNode(full_label_rule);
+    auto page_node = memory_tree_->getNode(full_label_rule);
     if (page_node.is_nothing()) {
         throw std::runtime_error("Page node not found: " + full_label_rule);
     }
@@ -110,7 +110,7 @@ std::vector<TreeNode> SimpleBackend::relativeGetPageTree(const TreeNode& node, c
 }
 
 std::vector<TreeNode> SimpleBackend::queryNodes(const std::string& label_rule) const {
-    return memory_tree_.queryNodes(label_rule);
+    return memory_tree_->queryNodes(label_rule);
 }
 
 std::vector<TreeNode> SimpleBackend::relativeQueryNodes(const TreeNode& node, const std::string& label_rule) const {
@@ -132,7 +132,7 @@ bool SimpleBackend::closeTransactionLayers(void) {
 }
 
 bool SimpleBackend::applyTransaction(const Transaction& transaction) {
-    auto success = memory_tree_.applyTransaction(transaction);
+    auto success = memory_tree_->applyTransaction(transaction);
     if (success) {
         // Notify listeners for each operation in the transaction
         for (const auto& sub_transaction : transaction) {
@@ -149,7 +149,7 @@ bool SimpleBackend::applyTransaction(const Transaction& transaction) {
 }
 
 std::vector<TreeNode> SimpleBackend::getFullTree() const {
-    return memory_tree_.getFullTree();
+    return memory_tree_->getFullTree();
 }
 
 void SimpleBackend::registerNodeListener(const std::string listener_name, const std::string notification_rule, bool child_notify, NodeListenerCallback callback) {

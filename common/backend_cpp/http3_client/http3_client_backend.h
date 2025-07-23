@@ -234,6 +234,10 @@ class Http3ClientBackendUpdater {
             }
         }
 
+        size_t size() const {
+            return backends_.size();
+        }
+
     private:
         // Track the backends which will be updated by this class.  
         std::list<Http3ClientBackend> backends_;

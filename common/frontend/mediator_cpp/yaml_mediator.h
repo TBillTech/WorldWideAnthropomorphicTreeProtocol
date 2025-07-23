@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend.h"
+#include "frontend_base.h"
 #include <yaml-cpp/yaml.h>
 
 // The YAMLMediator class is responsible for establishing a connection between two backends, 
@@ -54,12 +55,24 @@ private:
     std::string propertyType_;
 };
 
-class YAMLMediator {
+class YAMLMediator : public Frontend {
     public:
-        YAMLMediator(Backend& tree, Backend& yamlTree, const PropertySpecifier& specifier, bool initialize_from_yaml = true);
+        YAMLMediator(const std::string& name, Backend& tree, Backend& yamlTree, const PropertySpecifier& specifier, bool initialize_from_yaml = true);
         ~YAMLMediator();
 
+        // Frontend interface implementation
+        std::string getName() const override { return name_; }
+        std::string getType() const override { return "yaml_mediator"; }
+        void start() override { /* YAMLMediator starts automatically */ }
+        void stop() override { /* YAMLMediator stops automatically */ }  
+        bool isRunning() const override { return true; }
+        
+        std::vector<Backend*> getBackends() const override {
+            return {&backendTree_, &backendYAMLTree_};
+        }
+
     private:
+        std::string name_;
         Backend& backendTree_;
         Backend& backendYAMLTree_;
         PropertySpecifier const specifier_;

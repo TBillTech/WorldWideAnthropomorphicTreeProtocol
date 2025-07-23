@@ -32,8 +32,8 @@ void mediatorCallback(Backend& to, bool versioned, atomic<bool>& setProcessing, 
     setProcessing.store(false);
 }
 
-CloningMediator::CloningMediator(Backend& a, Backend& b, bool versioned)
-    : backendA_(a), backendB_(b), versioned_(versioned)
+CloningMediator::CloningMediator(const std::string& name, Backend& a, Backend& b, bool versioned)
+    : name_(name), backendA_(a), backendB_(b), versioned_(versioned)
 {
     processingA_.store(false);
     processingB_.store(false);

@@ -3,6 +3,7 @@
 #include "backend.h"
 #include "quic_listener.h"
 #include "http3_tree_message.h"
+#include "frontend_base.h"
 
 // This HTTP3Server class does not need to perform authentication or authorization, because that job will be handled by the
 // HTTP3Authenticator service, which stands between clients and these HTTP3Server instances.  The job of the HTTP3Authenticator
@@ -57,6 +58,8 @@ public:
 
     HTTP3TreeMessage intializeResponseMessage(const StreamIdentifier& stream_id, chunks& request) const;
 
+    Backend& getBackend() const { return backend_; }
+
 private:
     Backend& backend_;
     std::map<StreamIdentifier, HTTP3TreeMessage> ongoingResponses_;
@@ -72,10 +75,38 @@ private:
     std::string mutablePageLabelRule_;
 };
 
-class HTTP3Server {
+class HTTP3Server : public Frontend {
 public:
-    HTTP3Server(std::map<std::string, chunks>&& staticAssets) : staticAssets_(std::move(staticAssets)) {};
+    HTTP3Server(const std::string& name, std::map<std::string, chunks>&& staticAssets) 
+        : name_(name), staticAssets_(std::move(staticAssets)) { };
     ~HTTP3Server() = default;
+
+    // Frontend interface implementation
+    std::string getName() const override { return name_; }
+    std::string getType() const override { return "http3_server"; }
+    
+    void start() override {
+        stopFlag.store(false);
+    }
+
+    void stop() override {
+        stopFlag.store(true);
+        if (serverThread_.joinable()) {
+            serverThread_.join();
+        }
+    }
+
+    bool isRunning() const override {
+        return !stopFlag.load();
+    }
+
+    std::vector<Backend*> getBackends() const override {
+        std::vector<Backend*> backends;
+        for (const auto& [url, route] : servers_) {
+            backends.push_back(&route.getBackend());
+        }
+        return backends;
+    }
 
     Http3ServerRoute& addBackendRoute(Backend& backend, size_t journal_size, std::string const& url) {
         auto emplaced = servers_.emplace(url, Http3ServerRoute(backend, journal_size, url, "MutableNodes"));
@@ -103,7 +134,7 @@ public:
     // 2. As a daemon thread, using the below function, which will create new thread 
     //    and do the above work until the stop flag is set to true.
     void run(Communication& connector, size_t sleep_milli = 100) {
-        stopFlag.store(false);
+        start();
         serverThread_ = thread([this, &connector, sleep_milli]() {
             while (!stopFlag.load()) {
                 connector.processResponseStream();
@@ -112,15 +143,10 @@ public:
             return EXIT_SUCCESS;
         });
     }
-    void stop() {
-        stopFlag.store(true);
-        if (serverThread_.joinable()) {
-            serverThread_.join();
-        }
-    }
 
 
 private:
+    std::string name_;
     std::map<std::string, Http3ServerRoute> servers_;
     std::map<std::string, chunks> staticAssets_;
     std::map<StreamIdentifier, std::string> requestRoutes_;

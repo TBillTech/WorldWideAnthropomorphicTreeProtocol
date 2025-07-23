@@ -16,8 +16,8 @@ TEST_CASE("SimpleBackend logical test", "[SimpleBackend]") {
     // set to pool size for the type UDPChunk to 4 GB
     memory_pool.setPoolSize<UDPChunk>(static_cast<uint64_t>(4) * 1024 * 1024 * 1024 / UDPChunk::chunk_size);
 
-    MemoryTree memory_tree;
-    SimpleBackend simple_backend(memory_tree);
+    auto memoryTree = make_shared<MemoryTree>();
+    SimpleBackend simple_backend(memoryTree);
     BackendTestbed tester(simple_backend);
     tester.addAnimalsToBackend();
     tester.addNotesPageTree();
@@ -25,8 +25,8 @@ TEST_CASE("SimpleBackend logical test", "[SimpleBackend]") {
 }
 
 TEST_CASE("ThreadsafeBackend logical test", "[ThreadsafeBackend]") {
-    MemoryTree memory_tree;
-    SimpleBackend simple_backend(memory_tree);
+    auto memoryTree = make_shared<MemoryTree>();
+    SimpleBackend simple_backend(memoryTree);
     ThreadsafeBackend threadsafe_backend(simple_backend);
     BackendTestbed tester(threadsafe_backend);
     tester.addAnimalsToBackend();
@@ -35,8 +35,8 @@ TEST_CASE("ThreadsafeBackend logical test", "[ThreadsafeBackend]") {
 }
 
 TEST_CASE("TransactionalBackend logical test", "[TransactionalBackend]") {
-    MemoryTree memory_tree;
-    SimpleBackend simple_backend(memory_tree);
+    auto memoryTree = make_shared<MemoryTree>();
+    SimpleBackend simple_backend(memoryTree);
     TransactionalBackend transactional_backend(simple_backend);
     BackendTestbed tester(transactional_backend);
     tester.addAnimalsToBackend();
@@ -45,23 +45,23 @@ TEST_CASE("TransactionalBackend logical test", "[TransactionalBackend]") {
 }
 
 TEST_CASE("MemoryTree IO test", "[MemoryTree][IO]") {
-    MemoryTree memory_tree;
-    SimpleBackend simple_backend(memory_tree);
+    auto memoryTree = make_shared<MemoryTree>();
+    SimpleBackend simple_backend(memoryTree);
     BackendTestbed tester(simple_backend);
     tester.addAnimalsToBackend();
     tester.addNotesPageTree();
     std::ostringstream oss;
-    oss << memory_tree;
+    oss << *memoryTree;
     string output = oss.str();
     std::istringstream iss(output);
     MemoryTree loaded_tree;
     iss >> loaded_tree;
-    REQUIRE(memory_tree == loaded_tree);
+    REQUIRE(*memoryTree == loaded_tree);
 }
 
 TEST_CASE("CompositeBackend basic test", "[CompositeBackend]") {
-    MemoryTree memory_tree;
-    SimpleBackend simple_backend(memory_tree);
+    auto memoryTree = make_shared<MemoryTree>();
+    SimpleBackend simple_backend(memoryTree);
     CompositeBackend composite_backend(simple_backend);
     BackendTestbed tester(composite_backend);
     tester.addAnimalsToBackend();
@@ -70,13 +70,13 @@ TEST_CASE("CompositeBackend basic test", "[CompositeBackend]") {
 }
 
 TEST_CASE("CompositeBackend mountBackend test", "[CompositeBackend][mountBackend]") {
-    MemoryTree memory_tree;
-    SimpleBackend simple_backend(memory_tree);
+    auto memoryTree = make_shared<MemoryTree>();
+    SimpleBackend simple_backend(memoryTree);
     CompositeBackend composite_backend(simple_backend);
-    MemoryTree zoo_memory_tree;
+    auto zoo_memory_tree = make_shared<MemoryTree>();
     SimpleBackend zoo_backend(zoo_memory_tree);
     composite_backend.mountBackend("zoo", zoo_backend);
-    MemoryTree museum_memory_tree;
+    auto museum_memory_tree = make_shared<MemoryTree>();
     SimpleBackend museum_backend(museum_memory_tree);
     composite_backend.mountBackend("museum", museum_backend);
     BackendTestbed zoo_tester(zoo_backend);
@@ -91,9 +91,9 @@ TEST_CASE("CompositeBackend mountBackend test", "[CompositeBackend][mountBackend
 }
 
 TEST_CASE("RedirectedBackend test", "[RedirectedBackend]") {
-    MemoryTree memory_tree;
-    SimpleBackend simple_backend(memory_tree);
-    MemoryTree zoo_memory_tree;
+    auto memoryTree = make_shared<MemoryTree>();
+    SimpleBackend simple_backend(memoryTree);
+    auto zoo_memory_tree = make_shared<MemoryTree>();
     SimpleBackend zoo_backend(zoo_memory_tree);
     CompositeBackend composite_backend(simple_backend);
     composite_backend.mountBackend("zoo", zoo_backend);
@@ -110,7 +110,7 @@ TEST_CASE("RedirectedBackend test", "[RedirectedBackend]") {
 }
 
 TEST_CASE("SimpleBackend stress test", "[SimpleBackend][stress]") {
-    MemoryTree memory_tree;
+    auto memory_tree = make_shared<MemoryTree>();
     SimpleBackend simple_backend(memory_tree);
     BackendTestbed tester(simple_backend);
     tester.stressTestConstructions(1000); // Stress test with 1000 constructions

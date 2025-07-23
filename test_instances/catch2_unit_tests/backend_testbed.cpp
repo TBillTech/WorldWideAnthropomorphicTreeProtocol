@@ -299,7 +299,7 @@ void BackendTestbed::testBackendLogically(string label_prefix) {
     }
 
     {
-        MemoryTree temp_tree;
+        auto temp_tree = make_shared<MemoryTree>();
         SimpleBackend temp_backend(temp_tree);
         auto full_tree = backend_.getFullTree();
         temp_backend.upsertNode(full_tree);

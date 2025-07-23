@@ -65,7 +65,7 @@ TEST_CASE("fromYAMLNode handles missing optional fields", "[TreeNodeVersion][YAM
 
 TEST_CASE("TreeNode asYAMLNode no children tests", "[TreeNode][YAML]") {
     vector<TreeNode> lion_nodes = createLionNodes();
-    MemoryTree memory_tree;
+    auto memory_tree = make_shared<MemoryTree>();
     SimpleBackend simple_backend(memory_tree);
     simple_backend.upsertNode(lion_nodes);
 
@@ -78,7 +78,7 @@ TEST_CASE("TreeNode asYAMLNode no children tests", "[TreeNode][YAML]") {
 
 TEST_CASE("TreeNode asYAMLNode with children tests", "[TreeNode][YAML]") {
     vector<TreeNode> lion_nodes = createLionNodes();
-    MemoryTree memory_tree;
+    auto memory_tree = make_shared<MemoryTree>();
     SimpleBackend simple_backend(memory_tree);
     simple_backend.upsertNode(lion_nodes);
 

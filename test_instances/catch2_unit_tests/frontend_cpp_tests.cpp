@@ -11,11 +11,11 @@
 #include <chrono>
 
 TEST_CASE("Cloning Mediator copy test", "[CloningMediator]") {
-    MemoryTree memory_tree_A;
+    auto memory_tree_A = make_shared<MemoryTree>();
     SimpleBackend simple_backend_A(memory_tree_A);
-    MemoryTree memory_tree_B;
+    auto memory_tree_B = make_shared<MemoryTree>();
     SimpleBackend simple_backend_B(memory_tree_B);
-    CloningMediator cloning_mediator(simple_backend_A, simple_backend_B, false);
+    CloningMediator cloning_mediator("cloning_mediator", simple_backend_A, simple_backend_B, false);
     {
         BackendTestbed tester_A(simple_backend_A);
         tester_A.addAnimalsToBackend();
@@ -28,9 +28,9 @@ TEST_CASE("Cloning Mediator copy test", "[CloningMediator]") {
 }
 
 TEST_CASE("Cloning Mediator versioned test", "[CloningMediator][versioned]") {
-    MemoryTree memory_tree_A;
+    auto memory_tree_A = make_shared<MemoryTree>();
     SimpleBackend simple_backend_A(memory_tree_A);
-    MemoryTree memory_tree_B;
+    auto memory_tree_B = make_shared<MemoryTree>();
     SimpleBackend simple_backend_B(memory_tree_B);
     {
         BackendTestbed tester_A(simple_backend_A);
@@ -42,7 +42,7 @@ TEST_CASE("Cloning Mediator versioned test", "[CloningMediator][versioned]") {
         tester_B.addAnimalsToBackend();
         tester_B.addNotesPageTree();
     }
-    CloningMediator cloning_mediator(simple_backend_A, simple_backend_B, true);
+    CloningMediator cloning_mediator("cloning_mediator", simple_backend_A, simple_backend_B, true);
     auto prior_node = simple_backend_A.getNode("lion");
     {   // Test that updating to a new version on A shows up on B
         auto lion_node = simple_backend_A.getNode("lion");
@@ -71,11 +71,11 @@ TEST_CASE("Cloning Mediator versioned test", "[CloningMediator][versioned]") {
 }
 
 TEST_CASE("YAMLMediator construction test", "[YAMLMediator]") {
-    MemoryTree memory_tree;
+    auto memory_tree = make_shared<MemoryTree>();
     SimpleBackend nodeful_backend(memory_tree);
-    MemoryTree yaml_memory_tree;
+    auto yaml_memory_tree = make_shared<MemoryTree>();
     SimpleBackend yaml_backend(yaml_memory_tree);
-    MemoryTree other_memory_tree;
+    auto other_memory_tree = make_shared<MemoryTree>();
     SimpleBackend other_backend(other_memory_tree);
     {
         BackendTestbed tester(nodeful_backend);
@@ -101,10 +101,10 @@ TEST_CASE("YAMLMediator construction test", "[YAMLMediator]") {
     string property_type = "yaml";
     PropertySpecifier specifier(label_rule, property_name, property_type);
     {
-        YAMLMediator yaml_mediator(nodeful_backend, yaml_backend, specifier, false);
+        YAMLMediator yaml_mediator("yaml_mediator", nodeful_backend, yaml_backend, specifier, false);
     }
     {
-        YAMLMediator yaml_mediator(other_backend, yaml_backend, specifier, true);
+        YAMLMediator yaml_mediator("yaml_mediator", other_backend, yaml_backend, specifier, true);
     }
     {
         BackendTestbed tester(other_backend);
@@ -113,11 +113,11 @@ TEST_CASE("YAMLMediator construction test", "[YAMLMediator]") {
 }
 
 TEST_CASE("YAMLMediator notification test", "[YAMLMediator][notification]") {
-    MemoryTree memory_tree;
+    auto memory_tree = make_shared<MemoryTree>();
     SimpleBackend nodeful_backend(memory_tree);
-    MemoryTree yaml_memory_tree;
+    auto yaml_memory_tree = make_shared<MemoryTree>();
     SimpleBackend yaml_backend(yaml_memory_tree);
-    MemoryTree other_memory_tree;
+    auto other_memory_tree = make_shared<MemoryTree>();
     SimpleBackend other_backend(other_memory_tree);
     {
         BackendTestbed tester(nodeful_backend);
@@ -129,9 +129,9 @@ TEST_CASE("YAMLMediator notification test", "[YAMLMediator][notification]") {
     string property_type = "yaml";
     PropertySpecifier specifier(label_rule, property_name, property_type);
     {
-        YAMLMediator nodeful_mediator(nodeful_backend, yaml_backend, specifier, false);
+        YAMLMediator nodeful_mediator("nodeful_mediator", nodeful_backend, yaml_backend, specifier, false);
         BackendTestbed tester(nodeful_backend);
-        YAMLMediator other_mediator(other_backend, yaml_backend, specifier, true);
+        YAMLMediator other_mediator("other_mediator", other_backend, yaml_backend, specifier, true);
         tester.testPeerNotification(other_backend, 100);
     }
 }
@@ -152,7 +152,7 @@ TEST_CASE("YAMLMediator SimpleBackend-FileBackend integration test", "[YAMLMedia
     REQUIRE(std::filesystem::exists(sandbox_path));
     
     // Create SimpleBackend with test data
-    MemoryTree memory_tree;
+    auto memory_tree = make_shared<MemoryTree>();
     SimpleBackend simple_backend(memory_tree);
     {
         BackendTestbed tester(simple_backend);
@@ -169,7 +169,7 @@ TEST_CASE("YAMLMediator SimpleBackend-FileBackend integration test", "[YAMLMedia
     string property_type = "yaml";
     PropertySpecifier specifier(label_rule, property_name, property_type);
     
-    YAMLMediator yaml_mediator(simple_backend, file_backend, specifier, false);
+    YAMLMediator yaml_mediator("yaml_mediator", simple_backend, file_backend, specifier, false);
     
     // Process any pending notifications to ensure initial sync
     std::this_thread::sleep_for(std::chrono::milliseconds(inotify_delay));

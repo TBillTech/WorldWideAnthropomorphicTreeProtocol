@@ -8,7 +8,7 @@ using namespace std;
 using namespace fplus;
 
 
-static MemoryTree global_empty_memory_tree;
+static shared_ptr<MemoryTree> global_empty_memory_tree = make_shared<MemoryTree>();
 static SimpleBackend global_null_backend(global_empty_memory_tree); 
 
 namespace {
@@ -271,8 +271,8 @@ void fromYAMLCallback(Backend& backend, YAML::Node yaml, PropertySpecifier const
     setProcessing.store(false);
 }
 
-YAMLMediator::YAMLMediator(Backend& tree, Backend& yamlTree, const PropertySpecifier& specifier, bool initialize_from_yaml)
-    : backendTree_(tree), backendYAMLTree_(yamlTree), specifier_(specifier)
+YAMLMediator::YAMLMediator(const std::string& name, Backend& tree, Backend& yamlTree, const PropertySpecifier& specifier, bool initialize_from_yaml)
+    : name_(name), backendTree_(tree), backendYAMLTree_(yamlTree), specifier_(specifier)
 {
     size_t instance_id = yaml_mediator_instance_counter++;
     treeListenerName_ = "YAMLMediatorTree_" + specifier.getNodeLabel() + "_" + std::to_string(instance_id);

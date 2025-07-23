@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-WWATP (World Wide Anthropomorphic Tree Protocol) is an agent communication layer built on top of QUIC/HTTP3. It implements a tree-based data structure where each endpoint maintains a growing tree that can be modified through branches, leaves, and mutations. The protocol is designed to be LLM-friendly with anthropomorphic capabilities where nodes can reference personality prompts for agents.
+WWATP (World Wide Anthropomorphic Tree Protocol) is an agent communication layer built on top of QUIC/HTTP3. It implements a tree-based data structure where each endpoint maintains a growing tree that can be modified through branches, leaves, and mutations. The protocol is designed to be LLM-friendly with anthropomorphic capabilities where nodes can reference personality prompts for agents. See Readme.md for more information.
 
 ## Build System & Commands
 

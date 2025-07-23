@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend.h"
+#include "frontend_base.h"
 
 // The CloningMediator class is responsible for establishing a connection between two backends, 
 // listening for changes in one backend and applying them to the other backend.
@@ -12,12 +13,24 @@
 
 // One should definitely use versioned flag true when the rate of changes is high.
 
-class CloningMediator {
+class CloningMediator : public Frontend {
     public:
-        CloningMediator(Backend& a, Backend& b, bool versioned = true);
+        CloningMediator(const std::string& name, Backend& a, Backend& b, bool versioned = true);
         ~CloningMediator();
 
+        // Frontend interface implementation
+        std::string getName() const override { return name_; }
+        std::string getType() const override { return "cloning_mediator"; }
+        void start() override { /* CloningMediator starts automatically */ }
+        void stop() override { /* CloningMediator stops automatically */ }  
+        bool isRunning() const override { return true; }
+        
+        std::vector<Backend*> getBackends() const override {
+            return {&backendA_, &backendB_};
+        }
+
     private:
+        std::string name_;
         Backend& backendA_;
         Backend& backendB_;
         bool versioned_ = true;

@@ -70,6 +70,8 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/common/frontend/http3_server_cpp
     ${PROJECT_SOURCE_DIR}/common/frontend/backend_tester_cpp
     ${PROJECT_SOURCE_DIR}/common/frontend/mediator_cpp
+    ${PROJECT_SOURCE_DIR}/common/frontend/wwatp_service_cpp
+    ${PROJECT_SOURCE_DIR}/common/frontend
     ${PROJECT_SOURCE_DIR}/libraries/boringssl/include
     ${PROJECT_SOURCE_DIR}/test_instances/catch2_unit_tests
 )
@@ -112,7 +114,11 @@ set(COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/common/frontend/http3_server_cpp/http3_server.cpp
     ${PROJECT_SOURCE_DIR}/common/frontend/mediator_cpp/cloning_mediator.cpp
     ${PROJECT_SOURCE_DIR}/common/frontend/mediator_cpp/yaml_mediator.cpp
+    ${PROJECT_SOURCE_DIR}/common/frontend/wwatp_service_cpp/wwatp_service.cpp
 )
+
+# Add server executable
+add_executable(wwatp_server ${COMMON_SOURCES} server/main.cpp)
 
 # Add test executables
 add_executable(library_tester ${COMMON_SOURCES} test_instances/library_tester/library_tester.cpp)
@@ -230,13 +236,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Catch2)
 
-# Ensure library_tester depends on quiche
+# Ensure executables depend on external libraries
+add_dependencies(wwatp_server ngtcp2 nghttp3 boringssl)
 add_dependencies(library_tester ngtcp2 nghttp3 boringssl)
 add_dependencies(memory_pool_tester ngtcp2 nghttp3 boringssl)
 add_dependencies(http3_client_backend_tester ngtcp2 nghttp3 boringssl Catch2)
 add_dependencies(catch2_unit_tests ngtcp2 nghttp3 boringssl Catch2)
 
 # Link libraries (if any)
+target_link_libraries(wwatp_server ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
 target_link_libraries(library_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
 target_link_libraries(memory_pool_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
 target_link_libraries(http3_client_backend_tester PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus Catch2::Catch2 yaml-cpp)
