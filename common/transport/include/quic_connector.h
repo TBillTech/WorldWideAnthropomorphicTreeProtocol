@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <set>
 #include <list>
+#include <yaml-cpp/yaml.h>
 
 using namespace std;
 
@@ -35,9 +36,17 @@ class Client;
 
 class QuicConnector : public Communication {
 public:
-    QuicConnector(boost::asio::io_context& io_context, string private_key_file, string cert_file)
-        : io_context(io_context), private_key_file(private_key_file), cert_file(cert_file),
+    QuicConnector(boost::asio::io_context& io_context, const YAML::Node& yaml_config)
+        : io_context(io_context), 
+          private_key_file(yaml_config["private_key_file"].as<string>("")), 
+          cert_file(yaml_config["cert_file"].as<string>("")),
           socket(io_context), timer(io_context) {
+        if (private_key_file.empty()) {
+            throw std::runtime_error("QuicConnector requires 'private_key_file' in yaml_config");
+        }
+        if (cert_file.empty()) {
+            throw std::runtime_error("QuicConnector requires 'cert_file' in yaml_config");
+        }
         loop = ev_loop_new(EVFLAG_AUTO);
         ev_async_init(&async_terminate, sigterminatehandler);
         ev_async_start(loop, &async_terminate);

@@ -18,16 +18,16 @@ class Server;
 
 class QuicListener : public Communication {
 public:
-    QuicListener(boost::asio::io_context& io_context, const YAML::Node& config)
+    QuicListener(boost::asio::io_context& io_context, const YAML::Node& yaml_config)
         : io_context(io_context), 
-          private_key_file(config["private_key_file"].as<string>("")), 
-          cert_file(config["cert_file"].as<string>("")),
+          private_key_file(yaml_config["private_key_file"].as<string>("")), 
+          cert_file(yaml_config["cert_file"].as<string>("")),
           socket(io_context), timer(io_context) {
         if (private_key_file.empty()) {
-            throw std::runtime_error("QuicListener requires 'private_key_file' in config");
+            throw std::runtime_error("QuicListener requires 'private_key_file' in yaml_config");
         }
         if (cert_file.empty()) {
-            throw std::runtime_error("QuicListener requires 'cert_file' in config");
+            throw std::runtime_error("QuicListener requires 'cert_file' in yaml_config");
         }
         loop = ev_loop_new(EVFLAG_AUTO);
         ev_async_init(&async_terminate, sigterminatehandler);
