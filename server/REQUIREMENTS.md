@@ -1,4 +1,4 @@
-# WWATP Server Requirements
+# WWATPService Requirements
 
 ## Current Status
 
@@ -22,8 +22,8 @@
    - The WWATPService class provides access to all constructed backends via the name of the backend in the config. (This allows the server or other application to access backends by name).
    - The config/ contains a child node called backends which has a child for each backend defined in the server process.  The properties of each child node of the backends will define how that backend is composed.  These properties should mirror the constructor arguments of the backend_cpp backends, _including_ the http3_client backend.  This allows for the construction of service oriented architectures.  Note that instead of providing an actual Backend reference for a constructor argument, it will be the name of another backend child node.
    - In order to properly handle the above, the WWATPService will have to construct a topological sort to make sure all backends are constructed in the proper order and relationship.
-   - The config/ also contains a child node called frontends which has a child for each frontend defined in the server process.  The properties of each child node of the frontends will define how that frontend is composed.  These properties should mirror the constructor arguments of the frontends.  The following list will be modified in the future as more frontends are constructed in the project:
-       - Frontends supported in the server config: http3_server, cloning_mediator, yaml_mediator, plugin_mediator, plugin_model
+   - The config/ also contains a child node called frontends which has a child for each frontend defined in the server process.  The properties of each child node of the frontends will define how that frontend is composed.  These properties should mirror the constructor arguments of the frontends.  
+   - Frontends supported in the server config: http3_server, cloning_mediator, yaml_mediator, plugin_mediator, plugin_model
    - The following breaks down how the http3_server config node is interpreted by the WWATPService.
 
 2. **The Server Config Node**

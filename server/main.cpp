@@ -3,6 +3,7 @@
 #include <string>
 #include <map>
 #include <boost/asio.hpp>
+#include <yaml-cpp/yaml.h>
 
 #include "util.h"
 #include "config_base.h"
@@ -38,7 +39,10 @@ int main() {
         // Create QUIC listener for network communication
         auto private_key_file = "../test_instances/data/private_key.pem";
         auto cert_file = "../test_instances/data/cert.pem";
-        auto listener = make_unique<QuicListener>(io_context, private_key_file, cert_file);
+        YAML::Node config;
+        config["private_key_file"] = private_key_file;
+        config["cert_file"] = cert_file;
+        auto listener = make_unique<QuicListener>(io_context, config);
 
         // Register server handler with the listener
         prepare_stream_callback_fn serverHandler = [&server](const Request &req) {

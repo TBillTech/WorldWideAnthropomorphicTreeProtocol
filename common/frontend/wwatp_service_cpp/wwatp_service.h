@@ -5,12 +5,20 @@
 #include <map>
 #include <vector>
 #include <functional>
+#include <boost/asio.hpp>
+
+// Forward declarations
+namespace YAML {
+    class Node;
+}
 
 #include "backend.h"
 #include "tree_node.h"
 #include "file_backend.h"
 #include "frontend_base.h"
 #include "http3_client_backend.h"
+#include "http3_server.h"
+#include "quic_listener.h"
 
 
 /**
@@ -69,6 +77,26 @@ public:
     bool hasBackend(const std::string& backend_name) const;
 
     /**
+     * Get a QuicListener by server name
+     * @param server_name Name of the server
+     * @return Reference to the QuicListener
+     */
+    QuicListener& getQuicListener(const std::string& server_name);
+
+    /**
+     * Get all available QuicListener server names
+     * @return Vector of server names
+     */
+    std::vector<std::string> getQuicListenerNames() const;
+
+    /**
+     * Check if a QuicListener exists for a server name
+     * @param server_name Name to check
+     * @return True if QuicListener exists
+     */
+    bool hasQuicListener(const std::string& server_name) const;
+
+    /**
      * Get the configuration backend used by this service
      * @return The configuration backend
      */
@@ -114,10 +142,14 @@ private:
     std::shared_ptr<Backend> config_backend_;
     std::string config_label_;
     bool initialized_ = false;
+    
+    // Network I/O context
+    boost::asio::io_context io_context_;
 
     // Constructed components
     std::map<std::string, std::shared_ptr<Backend>> backends_;
     std::map<std::string, std::shared_ptr<Frontend>> frontends_;
+    std::map<std::string, QuicListener> quic_listeners_;
 
     // The Http3ClientBackends need to be tracked by their updater
     Http3ClientBackendUpdater http3_client_updater_;
@@ -176,6 +208,14 @@ private:
      */
     std::shared_ptr<Frontend> createCloningMediator(const TreeNode& config);
     std::shared_ptr<Frontend> createYAMLMediator(const TreeNode& config);
+    std::shared_ptr<Frontend> createHTTP3Server(const TreeNode& config);
+    
+    /**
+     * Create a QuicListener from configuration
+     * @param server_name Name of the server for lookup
+     * @param config YAML configuration node
+     */
+    void createQuicListener(const std::string& server_name, const YAML::Node& config);
 
     /**
      * Helper to get a string property from a TreeNode

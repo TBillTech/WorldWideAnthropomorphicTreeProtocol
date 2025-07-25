@@ -5,6 +5,8 @@
 #include <queue>
 #include <stdexcept>
 #include <iostream>
+#include <tuple>
+#include <yaml-cpp/yaml.h>
 
 // Backend implementations
 #include "simple_backend.h"
@@ -76,6 +78,27 @@ bool WWATPService::hasBackend(const std::string& backend_name) const {
     return backends_.find(backend_name) != backends_.end();
 }
 
+QuicListener& WWATPService::getQuicListener(const std::string& server_name) {
+    auto it = quic_listeners_.find(server_name);
+    if (it == quic_listeners_.end()) {
+        throw std::runtime_error("QuicListener '" + server_name + "' not found");
+    }
+    return it->second;
+}
+
+std::vector<std::string> WWATPService::getQuicListenerNames() const {
+    std::vector<std::string> names;
+    names.reserve(quic_listeners_.size());
+    for (const auto& [name, listener] : quic_listeners_) {
+        names.push_back(name);
+    }
+    return names;
+}
+
+bool WWATPService::hasQuicListener(const std::string& server_name) const {
+    return quic_listeners_.find(server_name) != quic_listeners_.end();
+}
+
 void WWATPService::initializeFactories() {
     // Initialize backend factories
     backend_factories_["simple"] = [this](const TreeNode& config) {
@@ -113,6 +136,10 @@ void WWATPService::initializeFactories() {
     
     frontend_factories_["yaml_mediator"] = [this](const TreeNode& config) {
         return this->createYAMLMediator(config);
+    };
+    
+    frontend_factories_["http3_server"] = [this](const TreeNode& config) {
+        return this->createHTTP3Server(config);
     };
 }
 
@@ -499,3 +526,46 @@ std::shared_ptr<Frontend> WWATPService::createYAMLMediator(const TreeNode& confi
     
     return std::make_shared<YAMLMediator>(name, *tree_backend, *yaml_backend, specifier, initialize_from_yaml);
 }
+
+std::shared_ptr<Frontend> WWATPService::createHTTP3Server(const TreeNode& config) {
+    std::string name = getStringProperty(config, "name");
+    if (name.empty()) {
+        name = config.getNodeName();
+    }
+    
+    // The const TreeNode& config _IS_ the Server Config Node as described in server/REQUIREMENTS.md
+    // So first we need to get the <node>.0.config.yaml property:
+    auto config_property = config.getPropertyValueSpan("config");
+    auto yaml_span = get<2>(config_property);
+    if (yaml_span.size() == 0) {
+        throw std::runtime_error("HTTP3Server requires 'config' property");
+    }
+    string yaml_string(yaml_span.begin<const char>(), yaml_span.end<const char>());
+    // Load the YAML configuration from the yaml_string
+    auto yaml_config = YAML::Load(yaml_string);
+    // Next get the name and port from the yaml_config
+    std::string server_name = yaml_config["name"].as<std::string>(name);
+    int port = yaml_config["port"].as<int>(8443); // Default to 8443
+
+    // Create HTTP3Server with empty static assets
+    std::map<std::string, chunks> static_assets;
+    auto server = std::make_shared<HTTP3Server>(name, std::move(static_assets));
+    
+    
+    return server;
+}
+
+void WWATPService::createQuicListener(const std::string& server_name, const YAML::Node& config) {
+    // Store in the map - the QuicListener constructor now handles config validation
+    quic_listeners_.emplace(std::piecewise_construct,
+                           std::forward_as_tuple(server_name),
+                           std::forward_as_tuple(io_context_, config));
+    
+    // Extract configuration parameters for logging
+    std::string private_key_file = config["private_key_file"].as<std::string>("");
+    std::string cert_file = config["cert_file"].as<std::string>("");
+
+    std::cout << "Created QuicListener '" << server_name << "' with private_key: " << private_key_file
+              << ", cert: " << cert_file << std::endl;
+}
+

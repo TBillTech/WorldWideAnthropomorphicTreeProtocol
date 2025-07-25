@@ -8,6 +8,7 @@
 #include <ev.h>
 #include <set>
 #include <list>
+#include <yaml-cpp/yaml.h>
 
 using namespace std;
 
@@ -17,9 +18,17 @@ class Server;
 
 class QuicListener : public Communication {
 public:
-    QuicListener(boost::asio::io_context& io_context, string private_key_file, string cert_file)
-        : io_context(io_context), private_key_file(private_key_file), cert_file(cert_file),
+    QuicListener(boost::asio::io_context& io_context, const YAML::Node& config)
+        : io_context(io_context), 
+          private_key_file(config["private_key_file"].as<string>("")), 
+          cert_file(config["cert_file"].as<string>("")),
           socket(io_context), timer(io_context) {
+        if (private_key_file.empty()) {
+            throw std::runtime_error("QuicListener requires 'private_key_file' in config");
+        }
+        if (cert_file.empty()) {
+            throw std::runtime_error("QuicListener requires 'cert_file' in config");
+        }
         loop = ev_loop_new(EVFLAG_AUTO);
         ev_async_init(&async_terminate, sigterminatehandler);
         ev_async_start(loop, &async_terminate);

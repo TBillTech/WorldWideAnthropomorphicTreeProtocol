@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 #include <sys/mman.h>
+#include <yaml-cpp/yaml.h>
 
 #include "util.h"
 #include "config_base.h"
@@ -16,7 +17,10 @@ unique_ptr<Communication> createServerCommunication(const string& protocol, boos
     if (protocol == "QUIC") {
         auto private_key_file = "../test_instances/data/private_key.pem";
         auto cert_file = "../test_instances/data/cert.pem";
-        return make_unique<QuicListener>(io_context, private_key_file, cert_file);
+        YAML::Node config;
+        config["private_key_file"] = private_key_file;
+        config["cert_file"] = cert_file;
+        return make_unique<QuicListener>(io_context, config);
     } else if (protocol == "TCP") {
         return make_unique<TcpCommunication>(io_context);
     } else {
@@ -152,7 +156,7 @@ int main() {
             }
             size_t data_len = 1200 - sizeof(payload_chunk_header);
             for (int i = 0; i < 10; i++) {
-                response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, 0, data_len), span<const uint8_t>(data_block, data_len));
+                response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, payload_chunk_header::SIGNAL_WWATP_RESPONSE_CONTINUE, data_len), span<const uint8_t>(data_block, data_len));
             }
             send_states.server_sent_data = true;
             return move(response_chunks);
@@ -167,7 +171,7 @@ int main() {
                 cout << "Server got request in callback: " << chunk_str << endl;
                 if (chunk_str == "Hello Server!") {
                     static string goodbye_str = "Goodbye Client!";
-                    response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, 0, goodbye_str.size()), span<const char>(goodbye_str.c_str(), goodbye_str.size()));
+                    response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, payload_chunk_header::SIGNAL_WWATP_RESPONSE_CONTINUE, goodbye_str.size()), span<const char>(goodbye_str.c_str(), goodbye_str.size()));
                 }
             } else {
                 uint8_t data_block[1200];
@@ -234,7 +238,7 @@ int main() {
             }
             size_t data_len = 1200 - sizeof(payload_chunk_header);
             for (int i = 0; i < 10; i++) {
-                response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, 0, data_len), span<const uint8_t>(data_block, data_len));
+                response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, payload_chunk_header::SIGNAL_WWATP_REQUEST_CONTINUE, data_len), span<const uint8_t>(data_block, data_len));
             }
             send_states.client_sent_data = true;
             return move(response_chunks);
@@ -243,7 +247,7 @@ int main() {
             cout << "Client is idle, so sending Hello Server! message" << endl;
             static string hello_str = "Hello Server!";
             chunks response_chunks;
-            response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, 0, hello_str.size()), span<const char>(hello_str.c_str(), hello_str.size()));
+            response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, payload_chunk_header::SIGNAL_WWATP_REQUEST_CONTINUE, hello_str.size()), span<const char>(hello_str.c_str(), hello_str.size()));
             send_states.client_sent_greeting = true;
             return move(response_chunks);
         }

@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 #include <sys/mman.h>
+#include <yaml-cpp/yaml.h>
 
 #include "util.h"
 #include "config_base.h"
@@ -21,7 +22,10 @@ unique_ptr<Communication> createServerCommunication(const string& protocol, boos
     if (protocol == "QUIC") {
         auto private_key_file = "../test_instances/data/private_key.pem";
         auto cert_file = "../test_instances/data/cert.pem";
-        return make_unique<QuicListener>(io_context, private_key_file, cert_file);
+        YAML::Node config;
+        config["private_key_file"] = private_key_file;
+        config["cert_file"] = cert_file;
+        return make_unique<QuicListener>(io_context, config);
     } else if (protocol == "TCP") {
         return make_unique<TcpCommunication>(io_context);
     } else {
