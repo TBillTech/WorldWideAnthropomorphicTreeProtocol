@@ -25,10 +25,17 @@
 #pragma once
 
 #include <openssl/ssl.h>
+#include <string>
+
+struct TLSClientConfig {
+  std::string session_file;
+  std::string groups;
+  std::string_view sni;
+};
 
 class TLSClientContext {
 public:
-  TLSClientContext();
+  TLSClientContext(const TLSClientConfig& config);
   ~TLSClientContext();
 
   int init(const char *private_key_file, const char *cert_file);
@@ -36,7 +43,10 @@ public:
   SSL_CTX *get_native_handle() const;
 
   void enable_keylog();
+  
+  const TLSClientConfig& getConfig() const { return config_; }
 
 private:
   SSL_CTX *ssl_ctx_;
+  TLSClientConfig config_;
 };

@@ -38,7 +38,7 @@
 
 extern Config config;
 
-TLSClientContext::TLSClientContext() : ssl_ctx_{nullptr} {}
+TLSClientContext::TLSClientContext(const TLSClientConfig& config) : ssl_ctx_{nullptr}, config_(config) {}
 
 TLSClientContext::~TLSClientContext() {
   if (ssl_ctx_) {
@@ -55,9 +55,13 @@ int new_session_cb(SSL *ssl, SSL_SESSION *session) {
 
   c->ticket_received();
 
-  auto f = BIO_new_file(config.session_file.c_str(), "w");
+  // Get the context from the SSL connection to access the config
+  auto tls_ctx = static_cast<TLSClientContext*>(SSL_CTX_get_ex_data(SSL_get_SSL_CTX(ssl), 0));
+  const auto& client_config = tls_ctx->getConfig();
+  
+  auto f = BIO_new_file(client_config.session_file.c_str(), "w");
   if (f == nullptr) {
-    std::cerr << "Could not write TLS session in " << config.session_file
+    std::cerr << "Could not write TLS session in " << client_config.session_file
               << std::endl;
     return 0;
   }
@@ -89,7 +93,7 @@ int TLSClientContext::init(const char *private_key_file,
 
   SSL_CTX_set_default_verify_paths(ssl_ctx_);
 
-  if (SSL_CTX_set1_groups_list(ssl_ctx_, config.groups.c_str()) != 1) {
+  if (SSL_CTX_set1_groups_list(ssl_ctx_, config_.groups.c_str()) != 1) {
     std::cerr << "SSL_CTX_set1_groups_list failed" << std::endl;
     return -1;
   }
@@ -109,10 +113,13 @@ int TLSClientContext::init(const char *private_key_file,
     }
   }
 
-  if (config.session_file.c_str()) {
+  if (!config_.session_file.empty()) {
     SSL_CTX_set_session_cache_mode(ssl_ctx_, SSL_SESS_CACHE_CLIENT |
                                                SSL_SESS_CACHE_NO_INTERNAL);
     SSL_CTX_sess_set_new_cb(ssl_ctx_, new_session_cb);
+    
+    // Store a pointer to this context in the SSL_CTX for callback access
+    SSL_CTX_set_ex_data(ssl_ctx_, 0, this);
   }
 
 #ifdef HAVE_LIBBROTLI

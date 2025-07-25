@@ -25,14 +25,27 @@
 #pragma once
 
 #include <openssl/ssl.h>
+#include <string>
 
 #include "shared.h"
 
 using namespace ngtcp2;
 
+struct TLSServerConfig {
+  std::string groups;
+  bool quiet;
+  bool verify_client;
+  uint64_t max_streams_bidi;
+  uint64_t max_streams_uni;
+  uint64_t max_stream_data_bidi_local;
+  uint64_t max_stream_data_bidi_remote;
+  uint64_t max_stream_data_uni;
+  uint64_t max_data;
+};
+
 class TLSServerContext {
 public:
-  TLSServerContext();
+  TLSServerContext(const TLSServerConfig& config);
   ~TLSServerContext();
 
   int init(const char *private_key_file, const char *cert_file,
@@ -41,7 +54,10 @@ public:
   SSL_CTX *get_native_handle() const;
 
   void enable_keylog();
+  
+  const TLSServerConfig& getConfig() const { return config_; }
 
 private:
   SSL_CTX *ssl_ctx_;
+  TLSServerConfig config_;
 };

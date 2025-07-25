@@ -2859,7 +2859,12 @@ void QuicConnector::connect(const string &peer_name, const string& peer_ip_addr,
             config.nstreams = config.requests.size();
             }
 
-        TLSClientContext tls_ctx;
+        TLSClientConfig tls_config{
+            .session_file = config.session_file,
+            .groups = config.groups,
+            .sni = config.sni
+        };
+        TLSClientContext tls_ctx(tls_config);
         if (tls_ctx.init(private_key_file.c_str(), cert_file.c_str()) != 0) {
             exit(EXIT_FAILURE);
         }
@@ -2990,4 +2995,90 @@ void QuicConnector::clearStaticRequest(Request &req)
             outgoingChunks.erase(it); // Remove the entry if empty
         }
     }    
+}
+
+void QuicConnector::initializeConfig() {
+    using namespace std::literals;
+    
+    // Initialize paths similar to library_tester.cpp
+    auto sandbox_path = realpath("../test_instances/sandbox/", nullptr);
+    std::string keylog_filename, session_filename, tp_filename;
+    if (sandbox_path) {
+        keylog_filename = std::string(sandbox_path) + "/keylog_connector";
+        session_filename = std::string(sandbox_path) + "/session_log_connector";
+        tp_filename = std::string(sandbox_path) + "/tp_log_connector";
+        free(sandbox_path);
+    } else {
+        keylog_filename = "keylog_connector";
+        session_filename = "session_log_connector";
+        tp_filename = "tp_log_connector";
+    }
+    
+    config = ClientConfig{
+        .preferred_ipv4_addr = {}, // TODO: Default added from Config struct initializers
+        .preferred_ipv6_addr = {}, // TODO: Default added from Config struct initializers
+        .dcid = {}, // TODO: Default added from Config struct initializers
+        .scid = {}, // TODO: Default added from Config struct initializers
+        .scid_present = false, // TODO: Default added from Config struct initializers
+        .tx_loss_prob = 0.,
+        .rx_loss_prob = 0.,
+        .fd = -1,
+        .ciphers = ngtcp2::util::crypto_default_ciphers(),
+        .groups = ngtcp2::util::crypto_default_groups(),
+        .htdocs = ""s,
+        .mime_types_file = "/etc/mime.types"s,
+        .mime_types = {}, // TODO: Default added from Config struct initializers
+        .port = 0, // TODO: Default added from Config struct initializers
+        .nstreams = 0, // TODO: Default added from Config struct initializers
+        .data = nullptr, // TODO: Default added from Config struct initializers
+        .datalen = 0, // TODO: Default added from Config struct initializers
+        .version = NGTCP2_PROTO_VER_V1,
+        .quiet = true,
+        .timeout = 30 * NGTCP2_SECONDS,
+        .show_secret = false, // TODO: Default added from Config struct initializers
+        .validate_addr = false, // TODO: Default added from Config struct initializers
+        .early_response = false,
+        .verify_client = false, // TODO: Default added from Config struct initializers
+        .session_file = session_filename,
+        .tp_file = tp_filename,
+        .keylog_filename = keylog_filename,
+        .change_local_addr = 0, // TODO: Default added from Config struct initializers
+        .key_update = 0, // TODO: Default added from Config struct initializers
+        .delay_stream = 0, // TODO: Default added from Config struct initializers
+        .nat_rebinding = false, // TODO: Default added from Config struct initializers
+        .no_preferred_addr = false, // TODO: Default added from Config struct initializers
+        .download = "", // TODO: Default added from Config struct initializers
+        .requests = {}, // TODO: Default added from Config struct initializers
+        .qlog_file = "", // TODO: Default added from Config struct initializers
+        .qlog_dir = "", // TODO: Default added from Config struct initializers
+        .no_quic_dump = false, // TODO: Default added from Config struct initializers
+        .no_http_dump = false, // TODO: Default added from Config struct initializers
+        .max_data = 24_m,
+        .max_stream_data_bidi_local = 16_m,
+        .max_stream_data_bidi_remote = 256_k,
+        .max_stream_data_uni = 256_k,
+        .max_streams_bidi = 100,
+        .max_streams_uni = 100,
+        .max_window = 6_m,
+        .max_stream_window = 6_m,
+        .max_dyn_length = 20_m,
+        .exit_on_first_stream_close = false, // TODO: Default added from Config struct initializers
+        .exit_on_all_streams_close = false, // TODO: Default added from Config struct initializers
+        .disable_early_data = false, // TODO: Default added from Config struct initializers
+        .static_secret = {}, // TODO: Default added from Config struct initializers
+        .cc_algo = NGTCP2_CC_ALGO_CUBIC,
+        .token_file = "", // TODO: Default added from Config struct initializers
+        .sni = "", // TODO: Default added from Config struct initializers
+        .initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT,
+        .max_udp_payload_size = 0, // TODO: Default added from Config struct initializers
+        .send_trailers = false,
+        .handshake_timeout = UINT64_MAX,
+        .preferred_versions = {}, // TODO: Default added from Config struct initializers
+        .available_versions = {}, // TODO: Default added from Config struct initializers
+        .no_pmtud = false, // TODO: Default added from Config struct initializers
+        .ack_thresh = 2,
+        .wait_for_ticket = false, // TODO: Default added from Config struct initializers
+        .initial_pkt_num = UINT32_MAX,
+        .pmtud_probes = {}, // TODO: Default added from Config struct initializers
+    };
 }

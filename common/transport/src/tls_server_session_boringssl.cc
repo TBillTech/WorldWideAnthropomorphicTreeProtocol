@@ -54,15 +54,17 @@ int TLSServerSession::init(const TLSServerContext &tls_ctx,
   SSL_set_early_data_enabled(ssl_, 1);
 
   std::array<uint8_t, 128> quic_early_data_ctx;
+  const auto& server_config = tls_ctx.getConfig();
+  
   ngtcp2_transport_params params;
   ngtcp2_transport_params_default(&params);
-  params.initial_max_streams_bidi = config.max_streams_bidi;
-  params.initial_max_streams_uni = config.max_streams_uni;
-  params.initial_max_stream_data_bidi_local = config.max_stream_data_bidi_local;
+  params.initial_max_streams_bidi = server_config.max_streams_bidi;
+  params.initial_max_streams_uni = server_config.max_streams_uni;
+  params.initial_max_stream_data_bidi_local = server_config.max_stream_data_bidi_local;
   params.initial_max_stream_data_bidi_remote =
-    config.max_stream_data_bidi_remote;
-  params.initial_max_stream_data_uni = config.max_stream_data_uni;
-  params.initial_max_data = config.max_data;
+    server_config.max_stream_data_bidi_remote;
+  params.initial_max_stream_data_uni = server_config.max_stream_data_uni;
+  params.initial_max_data = server_config.max_data;
 
   auto quic_early_data_ctxlen = ngtcp2_transport_params_encode(
     quic_early_data_ctx.data(), quic_early_data_ctx.size(), &params);

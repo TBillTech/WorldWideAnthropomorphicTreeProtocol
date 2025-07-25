@@ -38,7 +38,7 @@
 
 extern Config config;
 
-TLSServerContext::TLSServerContext() : ssl_ctx_{nullptr} {}
+TLSServerContext::TLSServerContext(const TLSServerConfig& config) : ssl_ctx_{nullptr}, config_(config) {}
 
 TLSServerContext::~TLSServerContext() {
   if (ssl_ctx_) {
@@ -67,7 +67,11 @@ int alpn_select_proto_h3_cb(SSL *ssl, const unsigned char **out,
     alpnlen = str_size(H3_ALPN_V1);
     break;
   default:
-    if (!config.quiet) {
+    // Get the context from the SSL connection to access the config
+    auto tls_ctx = static_cast<TLSServerContext*>(SSL_CTX_get_ex_data(SSL_get_SSL_CTX(ssl), 0));
+    const auto& server_config = tls_ctx->getConfig();
+    
+    if (!server_config.quiet) {
       std::cerr << "Unexpected quic protocol version: " << std::hex << "0x"
                 << version << std::dec << std::endl;
     }
@@ -82,7 +86,11 @@ int alpn_select_proto_h3_cb(SSL *ssl, const unsigned char **out,
     }
   }
 
-  if (!config.quiet) {
+  // Get the context from the SSL connection to access the config
+  auto tls_ctx = static_cast<TLSServerContext*>(SSL_CTX_get_ex_data(SSL_get_SSL_CTX(ssl), 0));
+  const auto& server_config = tls_ctx->getConfig();
+  
+  if (!server_config.quiet) {
     std::cerr << "Client did not present ALPN " << &alpn[1] << std::endl;
   }
 
@@ -109,7 +117,11 @@ int alpn_select_proto_hq_cb(SSL *ssl, const unsigned char **out,
     alpnlen = str_size(HQ_ALPN_V1);
     break;
   default:
-    if (!config.quiet) {
+    // Get the context from the SSL connection to access the config
+    auto tls_ctx = static_cast<TLSServerContext*>(SSL_CTX_get_ex_data(SSL_get_SSL_CTX(ssl), 0));
+    const auto& server_config = tls_ctx->getConfig();
+    
+    if (!server_config.quiet) {
       std::cerr << "Unexpected quic protocol version: " << std::hex << "0x"
                 << version << std::dec << std::endl;
     }
@@ -124,7 +136,11 @@ int alpn_select_proto_hq_cb(SSL *ssl, const unsigned char **out,
     }
   }
 
-  if (!config.quiet) {
+  // Get the context from the SSL connection to access the config
+  auto tls_ctx = static_cast<TLSServerContext*>(SSL_CTX_get_ex_data(SSL_get_SSL_CTX(ssl), 0));
+  const auto& server_config = tls_ctx->getConfig();
+  
+  if (!server_config.quiet) {
     std::cerr << "Client did not present ALPN " << &alpn[1] << std::endl;
   }
 
@@ -157,7 +173,7 @@ int TLSServerContext::init(const char *private_key_file, const char *cert_file,
 
   SSL_CTX_set_options(ssl_ctx_, ssl_opts);
 
-  if (SSL_CTX_set1_groups_list(ssl_ctx_, config.groups.c_str()) != 1) {
+  if (SSL_CTX_set1_groups_list(ssl_ctx_, config_.groups.c_str()) != 1) {
     std::cerr << "SSL_CTX_set1_groups_list failed" << std::endl;
     return -1;
   }
@@ -202,12 +218,15 @@ int TLSServerContext::init(const char *private_key_file, const char *cert_file,
 
   SSL_CTX_set_session_id_context(ssl_ctx_, sid_ctx, sizeof(sid_ctx) - 1);
 
-  if (config.verify_client) {
+  if (config_.verify_client) {
     SSL_CTX_set_verify(ssl_ctx_,
                        SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE |
                          SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
                        verify_cb);
   }
+
+  // Store a pointer to this context in the SSL_CTX for callback access
+  SSL_CTX_set_ex_data(ssl_ctx_, 0, this);
 
 #ifdef HAVE_LIBBROTLI
   if (!SSL_CTX_add_cert_compression_alg(

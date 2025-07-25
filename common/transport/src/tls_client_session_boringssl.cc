@@ -65,8 +65,10 @@ int TLSClientSession::init(bool &early_data_enabled,
     break;
   }
 
-  if (!config.sni.empty()) {
-    SSL_set_tlsext_host_name(ssl_, config.sni.data());
+  const auto& client_config = tls_ctx.getConfig();
+  
+  if (!client_config.sni.empty()) {
+    SSL_set_tlsext_host_name(ssl_, client_config.sni.data());
   } else if (util::numeric_host(remote_addr)) {
     // If remote host is numeric address, just send "localhost" as SNI
     // for now.
@@ -75,16 +77,16 @@ int TLSClientSession::init(bool &early_data_enabled,
     SSL_set_tlsext_host_name(ssl_, remote_addr);
   }
 
-  if (!config.session_file.empty()) {
-    auto f = BIO_new_file(config.session_file.c_str(), "r");
+  if (!client_config.session_file.empty()) {
+    auto f = BIO_new_file(client_config.session_file.c_str(), "r");
     if (f == nullptr) {
-      std::cerr << "Could not read TLS session file " << config.session_file
+      std::cerr << "Could not read TLS session file " << client_config.session_file
                 << std::endl;
     } else {
       auto session = PEM_read_bio_SSL_SESSION(f, nullptr, 0, nullptr);
       BIO_free(f);
       if (session == nullptr) {
-        std::cerr << "Could not read TLS session file " << config.session_file
+        std::cerr << "Could not read TLS session file " << client_config.session_file
                   << std::endl;
       } else {
         if (!SSL_set_session(ssl_, session)) {
