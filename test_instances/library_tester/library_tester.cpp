@@ -13,6 +13,8 @@
 
 using namespace std;
 
+bool send_trailers = false;
+
 unique_ptr<Communication> createServerCommunication(const string& protocol, boost::asio::io_context& io_context) {
     if (protocol == "QUIC") {
         auto private_key_file = "../test_instances/data/private_key.pem";
@@ -20,6 +22,9 @@ unique_ptr<Communication> createServerCommunication(const string& protocol, boos
         YAML::Node config;
         config["private_key_file"] = private_key_file;
         config["cert_file"] = cert_file;
+        config["quiet"] = false;
+        config["send_trailers"] = send_trailers;
+        config["log_path"] = "../test_instances/sandbox/"; // Ensure sandbox path is set
         return make_unique<QuicListener>(io_context, config);
     } else if (protocol == "TCP") {
         return make_unique<TcpCommunication>(io_context);
@@ -35,6 +40,9 @@ unique_ptr<Communication> createClientCommunication(const string& protocol, boos
         YAML::Node config;
         config["private_key_file"] = private_key_file;
         config["cert_file"] = cert_file;
+        config["quiet"] = false;
+        config["send_trailers"] = send_trailers;
+        config["log_path"] = "../test_instances/sandbox/"; // Ensure sandbox path is set
         return make_unique<QuicConnector>(io_context, config);
     } else if (protocol == "TCP") {
         return make_unique<TcpCommunication>(io_context);
@@ -70,67 +78,27 @@ int main() {
         if (fd == -1) {
             std::cerr << "data: Could not open file " << client_data_path << ": "
                       << strerror(errno) << std::endl;
-            config.fd = -1;
-            config.datalen = 0;
         } else {
             struct stat st;
             if (fstat(fd, &st) != 0) {
                 std::cerr << "data: Could not stat file " << client_data_path << ": "
                           << strerror(errno) << std::endl;
                 close(fd);
-                config.fd = -1;
-                config.datalen = 0;
             } else {
-                config.fd = fd;
-                config.datalen = st.st_size;
-                if (config.datalen) {
-                    auto addr = mmap(nullptr, config.datalen, PROT_READ, MAP_SHARED, fd, 0);
+                auto datalen = st.st_size;
+                if (datalen) {
+                    auto addr = mmap(nullptr, datalen, PROT_READ, MAP_SHARED, fd, 0);
                     if (addr == MAP_FAILED) {
                         std::cerr << "data: Could not mmap file " << client_data_path << ": "
                                   << strerror(errno) << std::endl;
                         close(fd);
-                        config.fd = -1;
-                        config.datalen = 0;
                     } else {
-                        config.data = static_cast<uint8_t *>(addr);
-                        memset(config.data, 0, config.datalen);
+                        auto data = static_cast<uint8_t *>(addr);
+                        memset(data, 0, datalen);
                     }
                 }
             }
         }
-
-        // config.fd and config.datalen are for data that should be streamed to the server
-        // if and only if the client_data_path has a valid data file.
-
-        config = Config{
-            .tx_loss_prob = 0.,
-            .rx_loss_prob = 0.,
-            .fd = -1,
-            .ciphers = ngtcp2::util::crypto_default_ciphers(),
-            .groups = ngtcp2::util::crypto_default_groups(),
-            .htdocs = move(htdocs),
-            .mime_types_file = "/etc/mime.types",
-            .version = NGTCP2_PROTO_VER_V1,
-            .timeout = 30 * NGTCP2_SECONDS,
-            .early_response = false,
-            .session_file = move(session_filename),
-            .tp_file = move(tp_filename),
-            .keylog_filename = move(keylog_filename),
-            .max_data = 24_m,
-            .max_stream_data_bidi_local = 16_m,
-            .max_stream_data_bidi_remote = 256_k,
-            .max_stream_data_uni = 256_k,
-            .max_streams_bidi = 100,
-            .max_streams_uni = 100,
-            .max_window = 6_m,
-            .max_stream_window = 6_m,
-            .max_dyn_length = 20_m,
-            .cc_algo = NGTCP2_CC_ALGO_CUBIC,
-            .initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT,
-            .handshake_timeout = UINT64_MAX,
-            .ack_thresh = 2,
-            .initial_pkt_num = UINT32_MAX,
-          };
     
     }
     boost::asio::io_context io_context;

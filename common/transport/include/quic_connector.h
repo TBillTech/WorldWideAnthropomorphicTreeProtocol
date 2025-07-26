@@ -27,8 +27,6 @@ struct ClientConfig {
   // rx_loss_prob is probability of losing incoming packet.
   double rx_loss_prob;
   // ciphers is the list of enabled ciphers.
-  int fd;
-  // ciphers is the list of enabled ciphers.
   std::string ciphers;
   // groups is the list of supported groups.
   std::string groups;
@@ -211,8 +209,8 @@ class Client;
 
 class QuicConnector : public Communication {
 public:
-    void initializeConfig();
-    
+    void initializeConfig(const YAML::Node& yaml_config);
+
     QuicConnector(boost::asio::io_context& io_context, const YAML::Node& yaml_config)
         : io_context(io_context), 
           private_key_file(yaml_config["private_key_file"].as<string>("")), 
@@ -224,7 +222,7 @@ public:
         if (cert_file.empty()) {
             throw std::runtime_error("QuicConnector requires 'cert_file' in yaml_config");
         }
-        initializeConfig();
+        initializeConfig(yaml_config);
         loop = ev_loop_new(EVFLAG_AUTO);
         ev_async_init(&async_terminate, sigterminatehandler);
         ev_async_start(loop, &async_terminate);
@@ -370,6 +368,8 @@ public:
     bool hasOutstandingRequest();
     Request getOutstandingRequest();
     void clearStaticRequest(Request &req);
+    
+    const ClientConfig& getConfig() const { return config; }
 
 private:
     void terminate() {

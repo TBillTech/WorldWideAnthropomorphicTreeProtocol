@@ -177,6 +177,8 @@ public:
   }
 
   ngtcp2_cid const &get_dcid() const;
+  
+  QuicConnector& getQuicConnector() { return quic_connector_; }
 
 private:
   std::vector<Endpoint> endpoints_;

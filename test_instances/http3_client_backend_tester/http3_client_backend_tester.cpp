@@ -18,6 +18,8 @@
 
 using namespace std;
 
+bool send_trailers = false;
+
 unique_ptr<Communication> createServerCommunication(const string& protocol, boost::asio::io_context& io_context) {
     if (protocol == "QUIC") {
         auto private_key_file = "../test_instances/data/private_key.pem";
@@ -25,6 +27,9 @@ unique_ptr<Communication> createServerCommunication(const string& protocol, boos
         YAML::Node config;
         config["private_key_file"] = private_key_file;
         config["cert_file"] = cert_file;
+        config["quiet"] = true;
+        config["send_trailers"] = send_trailers;
+        config["log_path"] = "../test_instances/sandbox/"; // Ensure sandbox path is set
         return make_unique<QuicListener>(io_context, config);
     } else if (protocol == "TCP") {
         return make_unique<TcpCommunication>(io_context);
@@ -40,6 +45,9 @@ unique_ptr<Communication> createClientCommunication(const string& protocol, boos
         YAML::Node config;
         config["private_key_file"] = private_key_file;
         config["cert_file"] = cert_file;
+        config["quiet"] = true;
+        config["send_trailers"] = send_trailers;
+        config["log_path"] = "../test_instances/sandbox/"; // Ensure sandbox path is set
         return make_unique<QuicConnector>(io_context, config);
     } else if (protocol == "TCP") {
         return make_unique<TcpCommunication>(io_context);
@@ -180,56 +188,6 @@ int main() {
     double timesecs = 1.0;
 
     string protocol = "QUIC";
-    if(protocol == "QUIC")
-    {
-        auto data_path = realpath("../test_instances/data/", nullptr);
-        assert(data_path);
-        auto htdocs = std::string(data_path);
-        free(data_path);
-      
-        auto sandbox_path = realpath("../test_instances/sandbox/", nullptr);
-        assert(sandbox_path);
-        auto keylog_filename = std::string(sandbox_path) + "/keylog";
-        auto session_filename = std::string(sandbox_path) + "/session_log";
-        auto tp_filename = std::string(sandbox_path) + "/tp_log";
-        auto client_data_path = std::string(sandbox_path) + "/data.client";
-        free(sandbox_path);
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-        config = Config{
-            .tx_loss_prob = 0.,
-            .rx_loss_prob = 0.,
-            .fd = -1,
-            .ciphers = ngtcp2::util::crypto_default_ciphers(),
-            .groups = ngtcp2::util::crypto_default_groups(),
-            .htdocs = move(htdocs),
-            .mime_types_file = "/etc/mime.types",
-            .version = NGTCP2_PROTO_VER_V1,
-            .quiet = true,
-            .timeout = 30 * NGTCP2_SECONDS,
-            .early_response = false,
-            .session_file = move(session_filename),
-            .tp_file = move(tp_filename),
-            .keylog_filename = move(keylog_filename),
-            .max_data = 24_m,
-            .max_stream_data_bidi_local = 16_m,
-            .max_stream_data_bidi_remote = 256_k,
-            .max_stream_data_uni = 256_k,
-            .max_streams_bidi = 100,
-            .max_streams_uni = 100,
-            .max_window = 6_m,
-            .max_stream_window = 6_m,
-            .max_dyn_length = 20_m,
-            .cc_algo = NGTCP2_CC_ALGO_CUBIC,
-            .initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT,
-            .send_trailers = false,
-            .handshake_timeout = UINT64_MAX,
-            .ack_thresh = 2,
-            .initial_pkt_num = UINT32_MAX,
-          };
-#pragma GCC diagnostic pop    
-    }
     boost::asio::io_context io_context;
 
     auto server_communication = createServerCommunication(protocol, io_context);
@@ -354,9 +312,9 @@ int main() {
 
     response_cycle("static requests and reader_tester requestFullTreeSync");
     TreeNode const& readStaticHtmlNode = static_html_client.getStaticNode().get_or_throw(runtime_error("Failed to get static HTML node"));
-    verifyStaticData(readStaticHtmlNode, index_chunks, config.send_trailers);
+    verifyStaticData(readStaticHtmlNode, index_chunks, send_trailers);
     TreeNode const& readRandomBytesNode = random_bytes_client.getStaticNode().get_or_throw(runtime_error("Failed to get random bytes node"));
-    verifyStaticData(readRandomBytesNode, random_chunks, config.send_trailers);
+    verifyStaticData(readRandomBytesNode, random_chunks, send_trailers);
     {
         BackendTestbed reader_tester(reader_client, false, false);
         reader_tester.testBackendLogically();
@@ -384,7 +342,7 @@ int main() {
 
     {
         TreeNode const& readBlockingHtmlNode = static_blocking_html_client.getStaticNode().get_or_throw(runtime_error("Failed to get blocking HTML node"));
-        verifyStaticData(readBlockingHtmlNode, index_chunks, config.send_trailers);
+        verifyStaticData(readBlockingHtmlNode, index_chunks, send_trailers);
         test_static_with_curl(staticBlockingHtmlRequest, 12345, "../test_instances/sandbox/temporary_index.html",
             "../test_instances/data/libtest_index.html", "../test_instances/data/");
         blocking_client.requestFullTreeSync();

@@ -36,7 +36,6 @@ TLSClientSession::TLSClientSession() {}
 
 TLSClientSession::~TLSClientSession() {}
 
-extern Config config;
 
 int TLSClientSession::init(bool &early_data_enabled,
                            const TLSClientContext &tls_ctx,
@@ -91,7 +90,7 @@ int TLSClientSession::init(bool &early_data_enabled,
       } else {
         if (!SSL_set_session(ssl_, session)) {
           std::cerr << "Could not set session" << std::endl;
-        } else if (!config.disable_early_data &&
+        } else if (!client_config.disable_early_data &&
                    SSL_SESSION_early_data_capable(session)) {
           early_data_enabled = true;
           SSL_set_early_data_enabled(ssl_, 1);

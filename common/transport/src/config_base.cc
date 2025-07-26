@@ -4,4 +4,3 @@
 
 std::ofstream keylog_file;
 
-Config config{};

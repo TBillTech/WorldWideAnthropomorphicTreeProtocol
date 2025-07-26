@@ -26,8 +26,6 @@ struct ServerConfig {
   // rx_loss_prob is probability of losing incoming packet.
   double rx_loss_prob;
   // ciphers is the list of enabled ciphers.
-  int fd;
-  // ciphers is the list of enabled ciphers.
   std::string ciphers;
   // groups is the list of supported groups.
   std::string groups;
@@ -193,7 +191,7 @@ class Server;
 
 class QuicListener : public Communication {
 public:
-    void initializeConfig();
+    void initializeConfig(const YAML::Node& yaml_config);
     
     QuicListener(boost::asio::io_context& io_context, const YAML::Node& yaml_config)
         : io_context(io_context), 
@@ -206,7 +204,7 @@ public:
         if (cert_file.empty()) {
             throw std::runtime_error("QuicListener requires 'cert_file' in yaml_config");
         }
-        initializeConfig();
+        initializeConfig(yaml_config);
         loop = ev_loop_new(EVFLAG_AUTO);
         ev_async_init(&async_terminate, sigterminatehandler);
         ev_async_start(loop, &async_terminate);
@@ -355,6 +353,8 @@ public:
             incoming->second.emplace_back(move(chunk));
         }
     }
+    
+    const ServerConfig& getConfig() const { return config; }
 
 private:
     uint16_t getNextStaticLogicalId() {

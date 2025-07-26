@@ -31,6 +31,7 @@ struct TLSClientConfig {
   std::string session_file;
   std::string groups;
   std::string_view sni;
+  bool disable_early_data;
 };
 
 class TLSClientContext {

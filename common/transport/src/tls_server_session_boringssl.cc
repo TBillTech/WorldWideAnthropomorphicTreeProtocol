@@ -32,7 +32,6 @@
 #include "tls_server_context_boringssl.h"
 #include "server_base.h"
 
-extern Config config;
 
 TLSServerSession::TLSServerSession() {}
 

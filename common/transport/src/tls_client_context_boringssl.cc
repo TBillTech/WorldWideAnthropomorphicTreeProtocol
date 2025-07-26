@@ -36,7 +36,6 @@
 #include "template.h"
 #include "tls_shared_boringssl.h"
 
-extern Config config;
 
 TLSClientContext::TLSClientContext(const TLSClientConfig& config) : ssl_ctx_{nullptr}, config_(config) {}
 

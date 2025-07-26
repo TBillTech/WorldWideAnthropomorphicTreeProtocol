@@ -27,6 +27,7 @@
 #include "http.h"
 #include "template.h"
 #include "urlparse.h"
+#include "config_yaml.h"
 #include "../../../libraries/ngtcp2/lib/ngtcp2_pkt.h"
 
 using namespace ngtcp2;
@@ -74,7 +75,7 @@ namespace
 
 namespace
 {
-    std::string make_status_body(unsigned int status_code)
+    std::string make_status_body(unsigned int status_code, const ServerConfig& config)
     {
         auto status_string = util::format_uint(status_code);
         auto reason_phrase = http::get_reason_phrase(status_code);
@@ -360,11 +361,12 @@ namespace
         // Notice that live_stream essentially means the stream length is not defined (see find_dyn_length).
         // TODONE: Use the outgoingChunks queue
         auto stream = static_cast<Stream *>(stream_user_data);
+        auto handler = stream->handler;
         bool is_closing = false;
         bool data_finished = false;
 
         ngtcp2_conn_info ci;
-        ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
+        ngtcp2_conn_get_conn_info(handler->conn(), &ci);
         // auto stream_window = ngtcp2_conn_get_max_stream_data_left(stream->handler->conn(), stream_id);
         // auto connection_window = ngtcp2_conn_get_max_data_left(stream->handler->conn());
         
@@ -396,12 +398,12 @@ namespace
             data_finished = true;
         }
 
-        if (is_closing && (!config.send_trailers || stream->trailers_sent)) {
+        if (is_closing && (!handler->server()->listener().getConfig().send_trailers || stream->trailers_sent)) {
             *pflags |= NGHTTP3_DATA_FLAG_EOF;
         } else {
             *pflags |= NGHTTP3_DATA_FLAG_NO_END_STREAM;
         }
-        if (data_finished && config.send_trailers && !stream->trailers_sent)
+        if (data_finished && handler->server()->listener().getConfig().send_trailers && !stream->trailers_sent)
         {
             auto stream_id_str = util::format_uint(stream_id);
             auto trailers = std::to_array({
@@ -543,7 +545,7 @@ int Stream::send_status_response(nghttp3_conn *httpconn,
                                  unsigned int status_code,
                                  const std::vector<HTTPHeader> &extra_headers)
 {
-    status_resp_body = make_status_body(status_code);
+    status_resp_body = make_status_body(status_code, handler->server()->listener().getConfig());
 
     auto status_code_str = util::format_uint(status_code);
     auto content_length_str = util::format_uint(status_resp_body.size());
@@ -576,7 +578,7 @@ int Stream::send_status_response(nghttp3_conn *httpconn,
         return -1;
     }
 
-    if (config.send_trailers)
+    if (handler->server()->listener().getConfig().send_trailers)
     {
         auto stream_id_str = util::format_uint(stream_id);
         auto trailers = std::to_array({
@@ -633,7 +635,7 @@ int Stream::start_response(nghttp3_conn *httpconn)
 
     if ((!live_stream) && (dyn_len == -1))
     {
-        auto path = config.htdocs + get_request().path;
+        auto path = handler->server()->listener().getConfig().htdocs + get_request().path;
         auto [fe, rv] = open_file(path);
         if (rv != 0)
         {
@@ -644,7 +646,7 @@ int Stream::start_response(nghttp3_conn *httpconn)
         if (fe.flags & FILE_ENTRY_TYPE_DIR)
         {
             send_redirect_response(httpconn, 308,
-                                   path.substr(config.htdocs.size() - 1) + '/');
+                                   path.substr(handler->server()->listener().getConfig().htdocs.size() - 1) + '/');
             return 0;
         }
 
@@ -663,8 +665,8 @@ int Stream::start_response(nghttp3_conn *httpconn)
         if (*ext == '.')
         {
             ++ext;
-            auto it = config.mime_types.find(std::string{ext, std::end(get_request().path)});
-            if (it != std::end(config.mime_types))
+            auto it = handler->server()->listener().getConfig().mime_types.find(std::string{ext, std::end(get_request().path)});
+            if (it != std::end(handler->server()->listener().getConfig().mime_types))
             {
                 content_type = (*it).second;
             }
@@ -695,7 +697,7 @@ int Stream::start_response(nghttp3_conn *httpconn)
     };
 
     size_t nvlen = 4;
-    if (live_stream || config.send_trailers) {
+    if (live_stream || handler->server()->listener().getConfig().send_trailers) {
         // Don't send content-length for live streams or if adding trailera
         nvlen = 3;
     }
@@ -743,7 +745,7 @@ int Stream::start_response(nghttp3_conn *httpconn)
         nva[nvlen++] = util::make_nv_nc("priority"sv, prival);
     }
 
-    if (!config.quiet)
+    if (!handler->server()->listener().getConfig().quiet)
     {
         debug::print_http_response_headers(stream_id, nva.data(), nvlen);
     }
@@ -757,7 +759,7 @@ int Stream::start_response(nghttp3_conn *httpconn)
         return -1;
     }
 
-    if (config.send_trailers && dyn_len == -1)
+    if (handler->server()->listener().getConfig().send_trailers && dyn_len == -1)
     {
         auto stream_id_str = util::format_uint(stream_id);
         auto trailers = std::to_array({
@@ -810,7 +812,7 @@ namespace
 
         if (ngtcp2_conn_in_closing_period(conn))
         {
-            if (!config.quiet)
+            if (!s->listener().getConfig().quiet)
             {
                 std::cerr << "Server Closing Period is over" << std::endl;
             }
@@ -820,7 +822,7 @@ namespace
         }
         if (ngtcp2_conn_in_draining_period(conn))
         {
-            if (!config.quiet)
+            if (!s->listener().getConfig().quiet)
             {
                 std::cerr << "Server Draining Period is over" << std::endl;
             }
@@ -842,7 +844,7 @@ namespace
         auto h = static_cast<Handler *>(w->data);
         auto s = h->server();
 
-        if (!config.quiet)
+        if (!s->listener().getConfig().quiet)
         {
             std::cerr << "Server Timer expired" << std::endl;
         }
@@ -903,7 +905,7 @@ Handler::Handler(struct ev_loop *loop, Server *server)
 
 Handler::~Handler()
 {
-    if (!config.quiet)
+    if (!server()->listener().getConfig().quiet)
     {
         std::cerr << "Server " << scid_ << " Closing QUIC connection " << std::endl;
     }
@@ -928,7 +930,7 @@ namespace
     {
         auto h = static_cast<Handler *>(user_data);
 
-        if (!config.quiet)
+        if (!h->server()->listener().getConfig().quiet)
         {
             debug::handshake_completed(conn, user_data);
         }
@@ -944,7 +946,7 @@ namespace
 
 int Handler::handshake_completed()
 {
-    if (!config.quiet)
+    if (!server()->listener().getConfig().quiet)
     {
         std::cerr << "Server Negotiated cipher suite is " << tls_session_.get_cipher_name()
                   << std::endl;
@@ -969,11 +971,11 @@ int Handler::handshake_completed()
                  .count();
 
     auto tokenlen = ngtcp2_crypto_generate_regular_token(
-        token.data(), config.static_secret.data(), config.static_secret.size(),
+        token.data(), server()->listener().getConfig().static_secret.data(), server()->listener().getConfig().static_secret.size(),
         path->remote.addr, path->remote.addrlen, t);
     if (tokenlen < 0)
     {
-        if (!config.quiet)
+        if (!server()->listener().getConfig().quiet)
         {
             std::cerr << "Server Unable to generate token" << std::endl;
         }
@@ -983,7 +985,7 @@ int Handler::handshake_completed()
     if (auto rv = ngtcp2_conn_submit_new_token(conn_, token.data(), tokenlen);
         rv != 0)
     {
-        if (!config.quiet)
+        if (!server()->listener().getConfig().quiet)
         {
             std::cerr << "Server ngtcp2_conn_submit_new_token: " << ngtcp2_strerror(rv)
                       << std::endl;
@@ -1004,11 +1006,8 @@ namespace
             return NGTCP2_ERR_CALLBACK_FAILURE;
         }
 
-        if (!config.quiet && config.show_secret)
-        {
-            debug::print_hp_mask({dest, NGTCP2_HP_MASKLEN},
-                                 {sample, NGTCP2_HP_SAMPLELEN});
-        }
+        // debug::print_hp_mask({dest, NGTCP2_HP_MASKLEN},
+        //                         {sample, NGTCP2_HP_SAMPLELEN});
 
         return 0;
     }
@@ -1020,7 +1019,8 @@ namespace
                          ngtcp2_encryption_level encryption_level, uint64_t offset,
                          const uint8_t *data, size_t datalen, void *user_data)
     {
-        if (!config.quiet && !config.no_quic_dump)
+        auto handler = static_cast<Handler *>(user_data);
+        if (!handler->server()->listener().getConfig().quiet && !handler->server()->listener().getConfig().no_quic_dump)
         {
             debug::print_crypto_data(encryption_level, {data, datalen});
         }
@@ -1201,6 +1201,7 @@ namespace
     int get_new_connection_id(ngtcp2_conn *, ngtcp2_cid *cid, uint8_t *token,
                               size_t cidlen, void *user_data)
     {
+        auto handler = static_cast<Handler *>(user_data);
         if (util::generate_secure_random({cid->data, cidlen}) != 0)
         {
             return NGTCP2_ERR_CALLBACK_FAILURE;
@@ -1208,7 +1209,7 @@ namespace
 
         cid->datalen = cidlen;
         if (ngtcp2_crypto_generate_stateless_reset_token(
-                token, config.static_secret.data(), config.static_secret.size(), cid) !=
+                token, handler->server()->listener().getConfig().static_secret.data(), handler->server()->listener().getConfig().static_secret.size(), cid) !=
             0)
         {
             return NGTCP2_ERR_CALLBACK_FAILURE;
@@ -1256,9 +1257,10 @@ namespace
 {
     int path_validation(ngtcp2_conn *conn, uint32_t flags, const ngtcp2_path *path,
                         const ngtcp2_path */*old_path*/,
-                        ngtcp2_path_validation_result res, void */*user_data*/)
+                        ngtcp2_path_validation_result res, void *user_data)
     {
-        if (!config.quiet)
+        auto handler = static_cast<Handler *>(user_data);
+        if (!handler->server()->listener().getConfig().quiet)
         {
             debug::path_validation(path, res);
         }
@@ -1275,11 +1277,11 @@ namespace
                      .count();
 
         auto tokenlen = ngtcp2_crypto_generate_regular_token(
-            token.data(), config.static_secret.data(), config.static_secret.size(),
+            token.data(), handler->server()->listener().getConfig().static_secret.data(), handler->server()->listener().getConfig().static_secret.size(),
             path->remote.addr, path->remote.addrlen, t);
         if (tokenlen < 0)
         {
-            if (!config.quiet)
+            if (!handler->server()->listener().getConfig().quiet)
             {
                 std::cerr << "Server Unable to generate token" << std::endl;
             }
@@ -1290,7 +1292,7 @@ namespace
         if (auto rv = ngtcp2_conn_submit_new_token(conn, token.data(), tokenlen);
             rv != 0)
         {
-            if (!config.quiet)
+            if (!handler->server()->listener().getConfig().quiet)
             {
                 std::cerr << "Server ngtcp2_conn_submit_new_token: " << ngtcp2_strerror(rv)
                           << std::endl;
@@ -1331,8 +1333,9 @@ namespace
     {
         // TODONE: Add this to the incoming chunks queue, instead of just printing it out
         auto stream = static_cast<Stream *>(stream_user_data);
+        auto handler = stream->handler;
 
-        if (!config.quiet && !config.no_http_dump)
+        if (!handler->server()->listener().getConfig().quiet && !handler->server()->listener().getConfig().no_http_dump)
         {
             debug::print_http_data(stream_id, {data, datalen});
         }
@@ -1369,7 +1372,8 @@ namespace
     int http_begin_request_headers(nghttp3_conn *, int64_t stream_id,
                                    void *user_data, void */* stream_user_data */)
     {
-        if (!config.quiet)
+        auto handler = static_cast<Handler *>(user_data);
+        if (!handler->server()->listener().getConfig().quiet)
         {
             debug::print_http_begin_request_headers(stream_id);
         }
@@ -1396,14 +1400,14 @@ namespace
                                  nghttp3_rcbuf *value, uint8_t flags,
                                  void *user_data, void *stream_user_data)
     {
-        if (!config.quiet)
+        auto handler = static_cast<Handler *>(user_data);
+        if (!handler->server()->listener().getConfig().quiet)
         {
             debug::print_http_header(stream_id, name, value, flags);
         }
 
-        auto h = static_cast<Handler *>(user_data);
         auto stream = static_cast<Stream *>(stream_user_data);
-        h->http_recv_request_header(stream, token, name, value);
+        handler->http_recv_request_header(stream, token, name, value);
         return 0;
     }
 } // namespace
@@ -1435,12 +1439,12 @@ namespace
     int http_end_request_headers(nghttp3_conn *, int64_t stream_id, int /* fin */,
                                  void *user_data, void *stream_user_data)
     {
-        if (!config.quiet)
+        auto h = static_cast<Handler *>(user_data);
+        if (!h->server()->listener().getConfig().quiet)
         {
             debug::print_http_end_headers(stream_id);
         }
 
-        auto h = static_cast<Handler *>(user_data);
         auto stream = static_cast<Stream *>(stream_user_data);
         if (h->http_end_request_headers(stream) != 0)
         {
@@ -1452,7 +1456,8 @@ namespace
 
 int Handler::http_end_request_headers(Stream *stream)
 {
-    if (config.early_response)
+    auto handler = stream->handler;
+    if (handler->server()->listener().getConfig().early_response)
     {
         if (start_response(stream) != 0)
         {
@@ -1481,7 +1486,8 @@ namespace
 
 int Handler::http_end_stream(Stream *stream)
 {
-    if (!config.early_response)
+    auto handler = stream->handler;
+    if (!handler->server()->listener().getConfig().early_response)
     {
         return start_response(stream);
     }
@@ -1546,7 +1552,7 @@ void Handler::http_stream_close(int64_t stream_id, uint64_t app_error_code)
         return;
     }
 
-    if (!config.quiet)
+    if (!server()->listener().getConfig().quiet)
     {
         std::cerr << "Server HTTP stream " << stream_id << " closed with error code "
                   << app_error_code << std::endl;
@@ -1620,9 +1626,10 @@ int Handler::http_reset_stream(int64_t stream_id, uint64_t app_error_code)
 namespace
 {
     int http_recv_settings(nghttp3_conn *, const nghttp3_settings *settings,
-                           void */* conn_user_data */)
+                           void *conn_user_data)
     {
-        if (!config.quiet)
+        auto handler = static_cast<Handler *>(conn_user_data);
+        if (!handler->server()->listener().getConfig().quiet)
         {
             debug::print_http_settings(settings);
         }
@@ -1700,7 +1707,7 @@ int Handler::setup_httpconn()
         return -1;
     }
 
-    if (!config.quiet)
+    if (!server()->listener().getConfig().quiet)
     {
         fprintf(stderr, "Server http: control stream=%" PRIx64 "\n", ctrl_stream_id);
     }
@@ -1734,7 +1741,7 @@ int Handler::setup_httpconn()
         return -1;
     }
 
-    if (!config.quiet)
+    if (!server()->listener().getConfig().quiet)
     {
         fprintf(stderr,
                 "Server http: QPACK streams encoder=%" PRIx64 " decoder=%" PRIx64 "\n",
@@ -1851,26 +1858,26 @@ int Handler::init(const Endpoint &ep, const Address &local_addr,
 
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
-    settings.log_printf = config.quiet ? nullptr : debug::log_printf;
+    settings.log_printf = server()->listener().getConfig().quiet ? nullptr : debug::log_printf;
     settings.initial_ts = util::timestamp();
     settings.token = token.data();
     settings.tokenlen = token.size();
     settings.token_type = token_type;
-    settings.cc_algo = config.cc_algo;
-    settings.initial_rtt = config.initial_rtt;
-    settings.max_window = config.max_window;
-    settings.max_stream_window = config.max_stream_window;
-    settings.handshake_timeout = config.handshake_timeout;
-    settings.no_pmtud = config.no_pmtud;
-    settings.ack_thresh = config.ack_thresh;
-    if (config.max_udp_payload_size)
+    settings.cc_algo = server()->listener().getConfig().cc_algo;
+    settings.initial_rtt = server()->listener().getConfig().initial_rtt;
+    settings.max_window = server()->listener().getConfig().max_window;
+    settings.max_stream_window = server()->listener().getConfig().max_stream_window;
+    settings.handshake_timeout = server()->listener().getConfig().handshake_timeout;
+    settings.no_pmtud = server()->listener().getConfig().no_pmtud;
+    settings.ack_thresh = server()->listener().getConfig().ack_thresh;
+    if (server()->listener().getConfig().max_udp_payload_size)
     {
-        settings.max_tx_udp_payload_size = config.max_udp_payload_size;
+        settings.max_tx_udp_payload_size = server()->listener().getConfig().max_udp_payload_size;
         settings.no_tx_udp_payload_size_shaping = 1;
     }
-    if (!config.qlog_dir.empty())
+    if (!server()->listener().getConfig().qlog_dir.empty())
     {
-        auto path = std::string{config.qlog_dir};
+        auto path = std::string{server()->listener().getConfig().qlog_dir};
         path += '/';
         path += util::format_hex({scid_.data, scid_.datalen});
         path += ".sqlog";
@@ -1883,48 +1890,48 @@ int Handler::init(const Endpoint &ep, const Address &local_addr,
         }
         settings.qlog_write = ::write_qlog;
     }
-    if (!config.preferred_versions.empty())
+    if (!server()->listener().getConfig().preferred_versions.empty())
     {
-        settings.preferred_versions = config.preferred_versions.data();
-        settings.preferred_versionslen = config.preferred_versions.size();
+        settings.preferred_versions = server()->listener().getConfig().preferred_versions.data();
+        settings.preferred_versionslen = server()->listener().getConfig().preferred_versions.size();
     }
-    if (!config.available_versions.empty())
+    if (!server()->listener().getConfig().available_versions.empty())
     {
-        settings.available_versions = config.available_versions.data();
-        settings.available_versionslen = config.available_versions.size();
+        settings.available_versions = server()->listener().getConfig().available_versions.data();
+        settings.available_versionslen = server()->listener().getConfig().available_versions.size();
     }
-    if (config.initial_pkt_num == UINT32_MAX)
+    if (server()->listener().getConfig().initial_pkt_num == UINT32_MAX)
     {
         auto dis = std::uniform_int_distribution<uint32_t>(0, INT32_MAX);
         settings.initial_pkt_num = dis(randgen);
     }
     else
     {
-        settings.initial_pkt_num = config.initial_pkt_num;
+        settings.initial_pkt_num = server()->listener().getConfig().initial_pkt_num;
     }
 
-    if (!config.pmtud_probes.empty())
+    if (!server()->listener().getConfig().pmtud_probes.empty())
     {
-        settings.pmtud_probes = config.pmtud_probes.data();
-        settings.pmtud_probeslen = config.pmtud_probes.size();
+        settings.pmtud_probes = server()->listener().getConfig().pmtud_probes.data();
+        settings.pmtud_probeslen = server()->listener().getConfig().pmtud_probes.size();
 
-        if (!config.max_udp_payload_size)
+        if (!server()->listener().getConfig().max_udp_payload_size)
         {
             settings.max_tx_udp_payload_size = *std::max_element(
-                std::begin(config.pmtud_probes), std::end(config.pmtud_probes));
+                std::begin(server()->listener().getConfig().pmtud_probes), std::end(server()->listener().getConfig().pmtud_probes));
         }
     }
 
     ngtcp2_transport_params params;
     ngtcp2_transport_params_default(&params);
-    params.initial_max_stream_data_bidi_local = config.max_stream_data_bidi_local;
+    params.initial_max_stream_data_bidi_local = server()->listener().getConfig().max_stream_data_bidi_local;
     params.initial_max_stream_data_bidi_remote =
-        config.max_stream_data_bidi_remote;
-    params.initial_max_stream_data_uni = config.max_stream_data_uni;
-    params.initial_max_data = config.max_data;
-    params.initial_max_streams_bidi = config.max_streams_bidi;
-    params.initial_max_streams_uni = config.max_streams_uni;
-    params.max_idle_timeout = config.timeout;
+        server()->listener().getConfig().max_stream_data_bidi_remote;
+    params.initial_max_stream_data_uni = server()->listener().getConfig().max_stream_data_uni;
+    params.initial_max_data = server()->listener().getConfig().max_data;
+    params.initial_max_streams_bidi = server()->listener().getConfig().max_streams_bidi;
+    params.initial_max_streams_uni = server()->listener().getConfig().max_streams_uni;
+    params.max_idle_timeout = server()->listener().getConfig().timeout;
     params.stateless_reset_token_present = 1;
     params.active_connection_id_limit = 7;
     params.grease_quic_bit = 1;
@@ -1943,25 +1950,25 @@ int Handler::init(const Endpoint &ep, const Address &local_addr,
     params.original_dcid_present = 1;
 
     if (ngtcp2_crypto_generate_stateless_reset_token(
-            params.stateless_reset_token, config.static_secret.data(),
-            config.static_secret.size(), &scid_) != 0)
+            params.stateless_reset_token, server()->listener().getConfig().static_secret.data(),
+            server()->listener().getConfig().static_secret.size(), &scid_) != 0)
     {
         return -1;
     }
 
-    if (config.preferred_ipv4_addr.len || config.preferred_ipv6_addr.len)
+    if (server()->listener().getConfig().preferred_ipv4_addr.len || server()->listener().getConfig().preferred_ipv6_addr.len)
     {
         params.preferred_addr_present = 1;
 
-        if (config.preferred_ipv4_addr.len)
+        if (server()->listener().getConfig().preferred_ipv4_addr.len)
         {
-            params.preferred_addr.ipv4 = config.preferred_ipv4_addr.su.in;
+            params.preferred_addr.ipv4 = server()->listener().getConfig().preferred_ipv4_addr.su.in;
             params.preferred_addr.ipv4_present = 1;
         }
 
-        if (config.preferred_ipv6_addr.len)
+        if (server()->listener().getConfig().preferred_ipv6_addr.len)
         {
-            params.preferred_addr.ipv6 = config.preferred_ipv6_addr.su.in6;
+            params.preferred_addr.ipv6 = server()->listener().getConfig().preferred_ipv6_addr.su.in6;
             params.preferred_addr.ipv6_present = 1;
         }
 
@@ -2437,7 +2444,7 @@ void Handler::start_draining_period()
         static_cast<ev_tstamp>(ngtcp2_conn_get_pto(conn_)) / NGTCP2_SECONDS * 3;
     ev_timer_again(loop_, &timer_);
 
-    if (!config.quiet)
+    if (!server()->listener().getConfig().quiet)
     {
         std::cerr << "Server Draining period has started (" << timer_.repeat << " seconds)"
                   << std::endl;
@@ -2459,7 +2466,7 @@ int Handler::start_closing_period()
         static_cast<ev_tstamp>(ngtcp2_conn_get_pto(conn_)) / NGTCP2_SECONDS * 3;
     ev_timer_again(loop_, &timer_);
 
-    if (!config.quiet)
+    if (!server()->listener().getConfig().quiet)
     {
         std::cerr << "Server Closing period has started (" << timer_.repeat << " seconds)"
                   << std::endl;
@@ -2519,7 +2526,7 @@ int Handler::handle_error()
 
 int Handler::send_conn_close()
 {
-    if (!config.quiet)
+    if (!server()->listener().getConfig().quiet)
     {
         std::cerr << "Server Closing Period: TX CONNECTION_CLOSE" << std::endl;
     }
@@ -2542,7 +2549,7 @@ void Handler::update_timer()
 
     if (expiry <= now)
     {
-        if (!config.quiet)
+        if (!server()->listener().getConfig().quiet)
         {
             auto t = static_cast<ev_tstamp>(now - expiry) / NGTCP2_SECONDS;
             std::cerr << "Server Timer has already expired: " << std::fixed << t << "s"
@@ -2555,7 +2562,7 @@ void Handler::update_timer()
     }
 
     auto t = static_cast<ev_tstamp>(expiry - now) / NGTCP2_SECONDS;
-    if (!config.quiet)
+    if (!server()->listener().getConfig().quiet)
     {
         std::cerr << "Server Set timer=" << std::fixed << t << "s" << std::defaultfloat
                   << std::endl;
@@ -2567,7 +2574,7 @@ void Handler::update_timer()
 int Handler::recv_stream_data(uint32_t flags, int64_t stream_id,
                               std::span<const uint8_t> data)
 {
-    if (!config.quiet && !config.no_quic_dump)
+    if (!server()->listener().getConfig().quiet && !server()->listener().getConfig().no_quic_dump)
     {
         debug::print_stream_data(stream_id, data);
     }
@@ -2625,7 +2632,7 @@ int Handler::update_key(uint8_t *rx_secret, uint8_t *tx_secret,
         return -1;
     }
 
-    if (!config.quiet && config.show_secret)
+    if (!server()->listener().getConfig().quiet && server()->listener().getConfig().show_secret)
     {
         std::cerr << "Server application_traffic rx secret " << nkey_update_ << std::endl;
         debug::print_secrets({rx_secret, secretlen}, {rx_key.data(), keylen},
@@ -2642,7 +2649,7 @@ Server *Handler::server() { return server_; }
 
 int Handler::on_stream_close(int64_t stream_id, uint64_t app_error_code)
 {
-    if (!config.quiet)
+    if (!server()->listener().getConfig().quiet)
     {
         std::cerr << "Server QUIC stream " << stream_id << " closed" << std::endl;
     }
@@ -2723,7 +2730,7 @@ Server::~Server()
 
 void Server::disconnect()
 {
-    config.tx_loss_prob = 0;
+    //listener().getConfig().tx_loss_prob = 0;
 
     for (auto &ep : endpoints_)
     {
@@ -2969,13 +2976,13 @@ int Server::init(const char *addr, const char *port)
         return -1;
     }
 
-    if (config.preferred_ipv4_addr.len &&
-        add_endpoint(endpoints_, config.preferred_ipv4_addr) != 0)
+    if (listener().getConfig().preferred_ipv4_addr.len &&
+        add_endpoint(endpoints_, listener().getConfig().preferred_ipv4_addr) != 0)
     {
         return -1;
     }
-    if (config.preferred_ipv6_addr.len &&
-        add_endpoint(endpoints_, config.preferred_ipv6_addr) != 0)
+    if (listener().getConfig().preferred_ipv6_addr.len &&
+        add_endpoint(endpoints_, listener().getConfig().preferred_ipv6_addr) != 0)
     {
         return -1;
     }
@@ -3077,7 +3084,7 @@ int Server::on_read(Endpoint &ep)
 
             ++pktcnt;
 
-            if (!config.quiet)
+            if (!listener().getConfig().quiet)
             {
                 std::array<char, IF_NAMESIZE> ifname;
                 std::cerr << "Server Received packet: local="
@@ -3095,9 +3102,9 @@ int Server::on_read(Endpoint &ep)
                 break;
             }
 
-            if (debug::packet_lost(config.rx_loss_prob))
+            if (debug::packet_lost(listener().getConfig().rx_loss_prob))
             {
-                if (!config.quiet)
+                if (!listener().getConfig().quiet)
                 {
                     std::cerr << "Server ** Simulated incoming packet loss **" << std::endl;
                 }
@@ -3206,7 +3213,7 @@ void Server::read_pkt(Endpoint &ep, const Address &local_addr,
 
         if (auto rv = debug_ngtcp2_accept(&hd, data.data(), data.size()); rv != 0)
         {
-            if (!config.quiet)
+            if (!listener().getConfig().quiet)
             {
                 std::cerr << "Server got unexpected packet received: length=" << data.size()
                           << std::endl;
@@ -3227,7 +3234,7 @@ void Server::read_pkt(Endpoint &ep, const Address &local_addr,
 
         assert(hd.type == NGTCP2_PKT_INITIAL);
 
-        if (config.validate_addr || hd.tokenlen)
+        if (listener().getConfig().validate_addr || hd.tokenlen)
         {
             std::cerr << "Server Perform stateless address validation" << std::endl;
             if (hd.tokenlen == 0)
@@ -3265,7 +3272,7 @@ void Server::read_pkt(Endpoint &ep, const Address &local_addr,
             case NGTCP2_CRYPTO_TOKEN_MAGIC_REGULAR:
                 if (verify_token(&hd, sa, salen) != 0)
                 {
-                    if (config.validate_addr)
+                    if (listener().getConfig().validate_addr)
                     {
                         send_retry(&hd, ep, local_addr, sa, salen, data.size() * 3);
                         return;
@@ -3280,11 +3287,11 @@ void Server::read_pkt(Endpoint &ep, const Address &local_addr,
                 }
                 break;
             default:
-                if (!config.quiet)
+                if (!listener().getConfig().quiet)
                 {
                     std::cerr << "Server Ignore unrecognized token" << std::endl;
                 }
-                if (config.validate_addr)
+                if (listener().getConfig().validate_addr)
                 {
                     send_retry(&hd, ep, local_addr, sa, salen, data.size() * 3);
                     return;
@@ -3407,13 +3414,13 @@ int Server::send_version_negotiation(uint32_t version,
 
     *p++ = generate_reserved_version(sa, salen, version);
 
-    if (config.preferred_versions.empty())
+    if (listener().getConfig().preferred_versions.empty())
     {
         *p++ = NGTCP2_PROTO_VER_V1;
     }
     else
     {
-        for (auto v : config.preferred_versions)
+        for (auto v : listener().getConfig().preferred_versions)
         {
             *p++ = v;
         }
@@ -3465,7 +3472,7 @@ int Server::send_retry(const ngtcp2_pkt_hd *chd, Endpoint &ep,
         return -1;
     }
 
-    if (!config.quiet)
+    if (!listener().getConfig().quiet)
     {
         std::cerr << "Server Sending Retry packet to [" << host.data()
                   << "]:" << port.data() << std::endl;
@@ -3486,14 +3493,14 @@ int Server::send_retry(const ngtcp2_pkt_hd *chd, Endpoint &ep,
                  .count();
 
     auto tokenlen = ngtcp2_crypto_generate_retry_token2(
-        token.data(), config.static_secret.data(), config.static_secret.size(),
+        token.data(), listener().getConfig().static_secret.data(), listener().getConfig().static_secret.size(),
         chd->version, sa, salen, &scid, &chd->dcid, t);
     if (tokenlen < 0)
     {
         return -1;
     }
 
-    if (!config.quiet)
+    if (!listener().getConfig().quiet)
     {
         std::cerr << "Server Generated address validation token:" << std::endl;
         util::hexdump(stderr, token.data(), tokenlen);
@@ -3591,7 +3598,7 @@ int Server::send_stateless_reset(size_t pktlen, std::span<const uint8_t> dcid,
     std::array<uint8_t, NGTCP2_STATELESS_RESET_TOKENLEN> token;
 
     if (ngtcp2_crypto_generate_stateless_reset_token(
-            token.data(), config.static_secret.data(), config.static_secret.size(),
+            token.data(), listener().getConfig().static_secret.data(), listener().getConfig().static_secret.size(),
             &cid) != 0)
     {
         return -1;
@@ -3658,7 +3665,7 @@ int Server::verify_retry_token(ngtcp2_cid *ocid, const ngtcp2_pkt_hd *hd,
 {
     int rv;
 
-    if (!config.quiet)
+    if (!listener().getConfig().quiet)
     {
         std::array<char, NI_MAXHOST> host;
         std::array<char, NI_MAXSERV> port;
@@ -3681,8 +3688,8 @@ int Server::verify_retry_token(ngtcp2_cid *ocid, const ngtcp2_pkt_hd *hd,
                  .count();
 
     rv = ngtcp2_crypto_verify_retry_token2(
-        ocid, hd->token, hd->tokenlen, config.static_secret.data(),
-        config.static_secret.size(), hd->version, sa, salen, &hd->dcid,
+        ocid, hd->token, hd->tokenlen, listener().getConfig().static_secret.data(),
+        listener().getConfig().static_secret.size(), hd->version, sa, salen, &hd->dcid,
         10 * NGTCP2_SECONDS, t);
     switch (rv)
     {
@@ -3699,7 +3706,7 @@ int Server::verify_retry_token(ngtcp2_cid *ocid, const ngtcp2_pkt_hd *hd,
         return 1;
     }
 
-    if (!config.quiet)
+    if (!listener().getConfig().quiet)
     {
         std::cerr << "Server Token was successfully validated" << std::endl;
     }
@@ -3721,7 +3728,7 @@ int Server::verify_token(const ngtcp2_pkt_hd *hd, const sockaddr *sa,
         return -1;
     }
 
-    if (!config.quiet)
+    if (!listener().getConfig().quiet)
     {
         std::cerr << "Server Verifying token from [" << host.data() << "]:" << port.data()
                   << std::endl;
@@ -3733,18 +3740,18 @@ int Server::verify_token(const ngtcp2_pkt_hd *hd, const sockaddr *sa,
                  .count();
 
     if (ngtcp2_crypto_verify_regular_token(hd->token, hd->tokenlen,
-                                           config.static_secret.data(),
-                                           config.static_secret.size(), sa, salen,
+                                           listener().getConfig().static_secret.data(),
+                                           listener().getConfig().static_secret.size(), sa, salen,
                                            3600 * NGTCP2_SECONDS, t) != 0)
     {
-        if (!config.quiet)
+        if (!listener().getConfig().quiet)
         {
             std::cerr << "Server Could not verify token" << std::endl;
         }
         return -1;
     }
 
-    if (!config.quiet)
+    if (!listener().getConfig().quiet)
     {
         std::cerr << "Server Token was successfully validated" << std::endl;
     }
@@ -3770,9 +3777,9 @@ Server::send_packet(Endpoint &ep, bool &no_gso, const ngtcp2_addr &local_addr,
 {
     assert(gso_size);
 
-    if (debug::packet_lost(config.tx_loss_prob))
+    if (debug::packet_lost(listener().getConfig().tx_loss_prob))
     {
-        if (!config.quiet)
+        if (!listener().getConfig().quiet)
         {
             std::cerr << "Server ** Simulated outgoing packet loss **" << std::endl;
         }
@@ -3937,7 +3944,7 @@ Server::send_packet(Endpoint &ep, bool &no_gso, const ngtcp2_addr &local_addr,
         return {{}, NETWORK_ERR_OK};
     }
 
-    if (!config.quiet)
+    if (!listener().getConfig().quiet)
     {
         std::cerr << "Server Sent packet: local="
                   << util::straddr(local_addr.addr, local_addr.addrlen)
@@ -4360,48 +4367,77 @@ void QuicListener::connect(const string &, const string &, int)
     throw std::runtime_error("QuicListener::connect is not supported");
 }
 
-void QuicListener::initializeConfig() {
+void QuicListener::initializeConfig(const YAML::Node &yaml_config) {
     using namespace std::literals;
     
-    // Initialize paths similar to library_tester.cpp
-    auto sandbox_path = realpath("../test_instances/sandbox/", nullptr);
-    std::string keylog_filename, session_filename, tp_filename;
-    if (sandbox_path) {
-        keylog_filename = std::string(sandbox_path) + "/keylog_listener";
-        session_filename = std::string(sandbox_path) + "/session_log_listener";
-        tp_filename = std::string(sandbox_path) + "/tp_log_listener";
-        free(sandbox_path);
-    } else {
-        keylog_filename = "keylog_listener";
-        session_filename = "session_log_listener";
-        tp_filename = "tp_log_listener";
+    if (!yaml_config["log_path"]) {
+        throw std::runtime_error("log_path is not specified in the configuration");
     }
-    
+    // Initialize paths similar to library_tester.cpp
+    string log_path = yaml_config["log_path"].as<std::string>();
+    std::string keylog_filename, session_filename, tp_filename;
+    keylog_filename = log_path + "/keylog_listener";
+    session_filename = log_path + "/session_log_listener";
+    tp_filename = log_path + "/tp_log_listener";
+
+    set<string> non_optional_fields = { 
+        "private_key_file",
+        "cert_file",
+        "log_path"
+    };
+
+    // Initialize the optional_fields set by looping through the YAML config node, assuming it is a map
+    set<string> seen_fields;
+    if (yaml_config.IsMap()) {
+        for (const auto& field : yaml_config) {
+            if (field.first.IsScalar()) {
+                // If the field is in the non_optional_fields set, we skip it
+                if (non_optional_fields.find(field.first.as<std::string>()) != non_optional_fields.end()) {
+                    continue; // already handled
+                }
+                seen_fields.insert(field.first.as<std::string>());
+            }
+        }
+    }
+    set<string> non_provided_fields;
+
+    // Create a templated helper lambda which will either evaluate to the default value, or to the value from the YAML config node,
+    // and if it exists in the YAML config node, then also remove it from the optional_fields set
+    // and if it does not exist, then add it to the non_provided_fields set.
+    auto get = [&yaml_config, &non_provided_fields, &seen_fields](const std::string& field_name, auto default_value) {
+        if (yaml_config[field_name]) {
+            seen_fields.erase(field_name);
+            return yaml_config[field_name].as<decltype(default_value)>();
+        } else {
+            non_provided_fields.insert(field_name);
+            return default_value;
+        }
+    };
+
     config = ServerConfig{
-        .preferred_ipv4_addr = {}, // TODO: Default added from Config struct initializers
-        .preferred_ipv6_addr = {}, // TODO: Default added from Config struct initializers
-        .dcid = {}, // TODO: Default added from Config struct initializers
-        .scid = {}, // TODO: Default added from Config struct initializers
-        .scid_present = false, // TODO: Default added from Config struct initializers
-        .tx_loss_prob = 0.,
-        .rx_loss_prob = 0.,
-        .fd = -1,
+        .preferred_ipv4_addr = get("preferred_ipv4_addr", ngtcp2::Address({})), // TODO: Default added from Config struct initializers
+        .preferred_ipv6_addr = get("preferred_ipv6_addr", ngtcp2::Address({})), // TODO: Default added from Config struct initializers
+        .dcid = get("dcid", ngtcp2_cid({})), // TODO: Default added from Config struct initializers
+        .scid = get("scid", ngtcp2_cid({})), // TODO: Default added from Config struct initializers
+        .scid_present = get("scid_present", false), // TODO: Default added from Config struct initializers
+        .tx_loss_prob = get("tx_loss_prob", 0.),
+        .rx_loss_prob = get("rx_loss_prob", 0.),
         .ciphers = ngtcp2::util::crypto_default_ciphers(),
         .groups = ngtcp2::util::crypto_default_groups(),
         .htdocs = ""s,
-        .mime_types_file = "/etc/mime.types"s,
+        .mime_types_file = get("mime_types_file", "/etc/mime.types"s),
         .mime_types = {}, // TODO: Default added from Config struct initializers
         .port = 0, // TODO: Default added from Config struct initializers
         .nstreams = 0, // TODO: Default added from Config struct initializers
         .data = nullptr, // TODO: Default added from Config struct initializers
         .datalen = 0, // TODO: Default added from Config struct initializers
         .version = NGTCP2_PROTO_VER_V1,
-        .quiet = true,
-        .timeout = 30 * NGTCP2_SECONDS,
-        .show_secret = false, // TODO: Default added from Config struct initializers
-        .validate_addr = false, // TODO: Default added from Config struct initializers
-        .early_response = false,
-        .verify_client = false, // TODO: Default added from Config struct initializers
+        .quiet = get("quiet", true),
+        .timeout = get("timeout", 30 * NGTCP2_SECONDS),
+        .show_secret = get("show_secret", false), // TODO: Default added from Config struct initializers
+        .validate_addr = get("validate_addr", false), // TODO: Default added from Config struct initializers
+        .early_response = get("early_response", false),
+        .verify_client = get("verify_client", false), // TODO: Default added from Config struct initializers
         .session_file = session_filename,
         .tp_file = tp_filename,
         .keylog_filename = keylog_filename,
@@ -4434,7 +4470,7 @@ void QuicListener::initializeConfig() {
         .sni = "", // TODO: Default added from Config struct initializers
         .initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT,
         .max_udp_payload_size = 0, // TODO: Default added from Config struct initializers
-        .send_trailers = false,
+        .send_trailers = get("send_trailers", false),
         .handshake_timeout = UINT64_MAX,
         .preferred_versions = {}, // TODO: Default added from Config struct initializers
         .available_versions = {}, // TODO: Default added from Config struct initializers
@@ -4444,4 +4480,84 @@ void QuicListener::initializeConfig() {
         .initial_pkt_num = UINT32_MAX,
         .pmtud_probes = {}, // TODO: Default added from Config struct initializers
     };
+
+    map<string, map<const char, size_t>> bag_of_characters;
+    for (const auto& field : non_provided_fields) {
+        // For each non provided field, we will compute a "bag of characters" and store it in the bag_of_characters map
+        // This will be used to compute similarity later
+        // Loop or characters in the field name, and construct a map of character to character count;
+        map<const char, size_t> field_value;
+        for (const char& c : field) {
+            field_value[c]++;
+        }
+        bag_of_characters[field] = std::move(field_value);
+    }
+
+    // A lambda function to compute the similarity between two fields, will add up the absolute value of the differences per character
+    auto compute_similarity = [](map<const char, size_t> seen_field_chars, map<const char, size_t> other) {
+        size_t similarity = 0;
+        for (const auto& [c, count] : seen_field_chars) {
+            // If the character is not in the other map, we add the count to the similarity
+            if (other.find(c) == other.end()) {
+                similarity += count*2;
+            } else {
+                similarity += std::abs(static_cast<int>(count) - static_cast<int>(other.at(c)));
+            }
+        }
+        // Do it again, only reverse the seen_field_chars and other
+        for (const auto& [c, count] : other) {
+            // If the character is not in the seen_field_chars map, we add the count to the similarity
+            if (seen_field_chars.find(c) == seen_field_chars.end()) {
+                similarity += count*2;
+            } else {
+                similarity += std::abs(static_cast<int>(count) - static_cast<int>(seen_field_chars.at(c)));
+            }
+        }
+        return similarity/2;  // Divide by 2, since we counted each character twice
+    };
+
+    // A lambda function which will compute the top 5 most similar fields from the non_provided_fields set, and return them as a vector of strings
+    auto get_top_similar_fields = [&bag_of_characters, &compute_similarity](const string& seen_field) {
+        vector<pair<string, size_t>> similarities;
+        map<const char, size_t> seen_field_chars;
+        for (auto c : seen_field) {
+            seen_field_chars[c]++;
+        }
+        for (const auto& field : bag_of_characters) {
+            // Compute the similarity between the field and each seen field
+            size_t similarity = compute_similarity(seen_field_chars, field.second);
+            similarities.emplace_back(field.first, similarity);
+        }
+        // Sort the similarities by the similarity value, in descending order
+        std::sort(similarities.begin(), similarities.end(),
+            [](const pair<string, size_t>& a, const pair<string, size_t>& b) {
+                return a.second > b.second;
+            });
+        // Drop similiarities past the top 5
+        similarities.resize(std::min(similarities.size(), size_t(5)));
+        return similarities;
+    };
+
+    // Now, print warning messages for any seen_fields that are left.
+    // Using "bag of characters" approach to compute similiarity, print out the top 5 most similiar fields from the non_provided_fields set
+    if (!seen_fields.empty()) {
+        std::cerr << "Warning! QuicConnector::initializeConfig: The following fields were provided in the YAML config, but not found in the ClientConfig struct and will be set to default values: ";
+        for (const auto& field : seen_fields) {
+            auto similiarities = get_top_similar_fields(field);
+            string suggestion_str;
+            if (similiarities.size())
+               suggestion_str  = " (Did you mean one of : ";
+            for (const auto& [suggestion, similarity] : similiarities) {
+                suggestion_str += suggestion + ", ";
+            }
+            if (similiarities.size()) {
+                suggestion_str.pop_back(); // Remove the last comma
+                suggestion_str.pop_back(); // Remove the last space
+                suggestion_str += "?)";
+            } else {
+                suggestion_str = ".";
+            }
+            std::cerr << field << suggestion_str << " ";
+        }
+    }
 }
