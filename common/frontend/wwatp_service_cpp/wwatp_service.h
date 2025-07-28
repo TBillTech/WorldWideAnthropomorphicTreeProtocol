@@ -77,24 +77,24 @@ public:
     bool hasBackend(const std::string& backend_name) const;
 
     /**
-     * Get a QuicListener by server name
-     * @param server_name Name of the server
+     * Get a QuicListener by server port
+     * @param server_port Port of the server
      * @return Reference to the QuicListener
      */
-    QuicListener& getQuicListener(const std::string& server_name);
+    QuicListener& getQuicListener(const uint16_t server_port);
 
     /**
-     * Get all available QuicListener server names
-     * @return Vector of server names
+     * Get all available QuicListener server ports
+     * @return Vector of server ports
      */
-    std::vector<std::string> getQuicListenerNames() const;
+    std::vector<uint16_t> getQuicListenerPorts() const;
 
     /**
-     * Check if a QuicListener exists for a server name
-     * @param server_name Name to check
+     * Check if a QuicListener exists for a server port
+     * @param server_port Port to check
      * @return True if QuicListener exists
      */
-    bool hasQuicListener(const std::string& server_name) const;
+    bool hasQuicListener(const uint16_t server_port) const;
 
     /**
      * Get the configuration backend used by this service
@@ -149,7 +149,7 @@ private:
     // Constructed components
     std::map<std::string, std::shared_ptr<Backend>> backends_;
     std::map<std::string, std::shared_ptr<Frontend>> frontends_;
-    std::map<std::string, QuicListener> quic_listeners_;
+    std::map<uint16_t, QuicListener> quic_listeners_;
 
     // The Http3ClientBackends need to be tracked by their updater
     Http3ClientBackendUpdater http3_client_updater_;
@@ -208,14 +208,18 @@ private:
      */
     std::shared_ptr<Frontend> createCloningMediator(const TreeNode& config);
     std::shared_ptr<Frontend> createYAMLMediator(const TreeNode& config);
+    void updateServerWithChild(
+        std::shared_ptr<HTTP3Server> server, const std::string& child_path, 
+        const TreeNode& child_node, bool is_wwatp_route);
     std::shared_ptr<Frontend> createHTTP3Server(const TreeNode& config);
     
     /**
      * Create a QuicListener from configuration
      * @param server_name Name of the server for lookup
      * @param config YAML configuration node
+     * @return Reference to the created QuicListener
      */
-    void createQuicListener(const std::string& server_name, const YAML::Node& config);
+    QuicListener& createQuicListener(const uint16_t server_name, const YAML::Node& config);
 
     /**
      * Helper to get a string property from a TreeNode

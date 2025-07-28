@@ -77,6 +77,7 @@ private:
 
 class HTTP3Server : public Frontend {
 public:
+    HTTP3Server(const std::string& name) : name_(name) { };
     HTTP3Server(const std::string& name, std::map<std::string, chunks>&& staticAssets) 
         : name_(name), staticAssets_(std::move(staticAssets)) { };
     ~HTTP3Server() = default;

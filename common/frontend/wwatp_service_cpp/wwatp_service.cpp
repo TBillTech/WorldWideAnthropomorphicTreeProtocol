@@ -78,25 +78,25 @@ bool WWATPService::hasBackend(const std::string& backend_name) const {
     return backends_.find(backend_name) != backends_.end();
 }
 
-QuicListener& WWATPService::getQuicListener(const std::string& server_name) {
-    auto it = quic_listeners_.find(server_name);
+QuicListener& WWATPService::getQuicListener(const uint16_t server_port) {
+    auto it = quic_listeners_.find(server_port);
     if (it == quic_listeners_.end()) {
-        throw std::runtime_error("QuicListener '" + server_name + "' not found");
+        throw std::runtime_error("QuicListener on port '" + std::to_string(server_port) + "' not found");
     }
     return it->second;
 }
 
-std::vector<std::string> WWATPService::getQuicListenerNames() const {
-    std::vector<std::string> names;
-    names.reserve(quic_listeners_.size());
-    for (const auto& [name, listener] : quic_listeners_) {
-        names.push_back(name);
+std::vector<uint16_t> WWATPService::getQuicListenerPorts() const {
+    std::vector<uint16_t> ports;
+    ports.reserve(quic_listeners_.size());
+    for (const auto& [port, listener] : quic_listeners_) {
+        ports.push_back(port);
     }
-    return names;
+    return ports;
 }
 
-bool WWATPService::hasQuicListener(const std::string& server_name) const {
-    return quic_listeners_.find(server_name) != quic_listeners_.end();
+bool WWATPService::hasQuicListener(const uint16_t server_port) const {
+    return quic_listeners_.find(server_port) != quic_listeners_.end();
 }
 
 void WWATPService::initializeFactories() {
@@ -473,7 +473,7 @@ std::shared_ptr<Backend> WWATPService::createFileBackend(const TreeNode& config)
 std::shared_ptr<Frontend> WWATPService::createCloningMediator(const TreeNode& config) {
     std::string name = getStringProperty(config, "name");
     if (name.empty()) {
-        throw std::runtime_error("CloningMediator requires 'name' property");
+        name = config.getNodeName();
     }
     
     std::string backend_a_name = getStringProperty(config, "backend_a");
@@ -498,7 +498,7 @@ std::shared_ptr<Frontend> WWATPService::createCloningMediator(const TreeNode& co
 std::shared_ptr<Frontend> WWATPService::createYAMLMediator(const TreeNode& config) {
     std::string name = getStringProperty(config, "name");
     if (name.empty()) {
-        throw std::runtime_error("YAMLMediator requires 'name' property");
+        name = config.getNodeName();
     }
     
     std::string tree_backend_name = getStringProperty(config, "tree_backend");
@@ -527,6 +527,48 @@ std::shared_ptr<Frontend> WWATPService::createYAMLMediator(const TreeNode& confi
     return std::make_shared<YAMLMediator>(name, *tree_backend, *yaml_backend, specifier, initialize_from_yaml);
 }
 
+void WWATPService::updateServerWithChild( 
+    std::shared_ptr<HTTP3Server> server, const std::string& child_path, 
+    const TreeNode& child_node, bool is_wwatp_route) {
+    if (is_wwatp_route) {
+        string backend_name = getStringProperty(child_node, "backend", "");
+        if (backend_name.empty()) {
+            throw std::runtime_error("WWATP route requires 'backend' property");
+        }
+        size_t journal_size = getUint64Property(child_node, "journal_size", 1000);
+        auto find_backend = backends_.find(backend_name);
+        if (find_backend == backends_.end()) {
+            throw std::runtime_error("Backend not found: " + backend_name);
+        }
+        server->addBackendRoute(*find_backend->second, journal_size, child_path);
+    }
+    else
+    {
+        for (auto & [type, name] : child_node.getPropertyInfo()) {
+            auto static_name = name + "." + type;
+            auto url = "/" + static_name;
+            auto shared_span = child_node.getPropertyValueSpan(name);
+            chunks asset = {get<2>(shared_span)};
+            server->addStaticAsset(url, asset);
+        }
+    }
+    auto children_names = child_node.getChildNames();
+    for (const auto& child_name : children_names) {
+        auto child_node_label = child_node.getLabelRule() + "/" + child_name;
+        if (child_name.find("/") != std::string::npos) {
+            child_node_label = child_name;
+        }
+        auto child_child_node = config_backend_->getNode(child_name);
+        if (child_child_node.is_nothing()) {
+            std::cerr << "Warning: Child node '" << child_name << "' not found in HTTP3Server configuration" << std::endl;
+            continue;
+        }
+        auto child_child_path = child_path + "/" + child_child_node.unsafe_get_just().getNodeName();
+        updateServerWithChild(server, child_child_path, child_child_node.unsafe_get_just(), 
+            is_wwatp_route || child_child_path == "/wwatp");
+    }
+}
+
 std::shared_ptr<Frontend> WWATPService::createHTTP3Server(const TreeNode& config) {
     std::string name = getStringProperty(config, "name");
     if (name.empty()) {
@@ -542,30 +584,65 @@ std::shared_ptr<Frontend> WWATPService::createHTTP3Server(const TreeNode& config
     }
     string yaml_string(yaml_span.begin<const char>(), yaml_span.end<const char>());
     // Load the YAML configuration from the yaml_string
-    auto yaml_config = YAML::Load(yaml_string);
+    YAML::Node yaml_config = YAML::Load(yaml_string);
     // Next get the name and port from the yaml_config
     std::string server_name = yaml_config["name"].as<std::string>(name);
-    int port = yaml_config["port"].as<int>(8443); // Default to 8443
+    uint16_t port = yaml_config["port"].as<uint16_t>(8443); // Default to 8443
+    QuicListener& listener = createQuicListener(port, yaml_config);
 
     // Create HTTP3Server with empty static assets
-    std::map<std::string, chunks> static_assets;
-    auto server = std::make_shared<HTTP3Server>(name, std::move(static_assets));
-    
-    
+    auto server = std::make_shared<HTTP3Server>(name);
+
+    // Now loop through all of the properties in the TreeNode config, and create static assets or wwatp backend routes as configured
+    for (const auto& [type, name] : config.getPropertyInfo()) {
+        auto static_name = name + "." + type;
+        auto url = "/" + static_name;
+        auto shared_span = config.getPropertyValueSpan(name);
+        chunks asset = {get<2>(shared_span)};
+        server->addStaticAsset(url, asset);
+    }
+
+    auto children_names = config.getChildNames();
+    for (const auto& child_name : children_names) {
+        auto child_node = config_backend_->getNode(child_name);
+        if (child_node.is_nothing()) {
+            std::cerr << "Warning: Child node '" << child_name << "' not found in HTTP3Server configuration" << std::endl;
+            continue;
+        }
+        auto child_path = "/" + child_node.unsafe_get_just().getNodeName();
+        updateServerWithChild(server, child_path, child_node.unsafe_get_just(), child_path == "/wwatp");
+    }
+
+    prepare_stream_callback_fn theServerHandlerWrapper = [&server](const Request &req) {
+        return server->getResponseCallback(req);
+    };
+
+    listener.registerRequestHandler(make_pair(server_name, theServerHandlerWrapper));
+
+
     return server;
 }
 
-void WWATPService::createQuicListener(const std::string& server_name, const YAML::Node& config) {
-    // Store in the map - the QuicListener constructor now handles config validation
-    quic_listeners_.emplace(std::piecewise_construct,
-                           std::forward_as_tuple(server_name),
-                           std::forward_as_tuple(io_context_, config));
-    
+QuicListener& WWATPService::createQuicListener(const uint16_t port, const YAML::Node& config) {
     // Extract configuration parameters for logging
     std::string private_key_file = config["private_key_file"].as<std::string>("");
     std::string cert_file = config["cert_file"].as<std::string>("");
 
-    std::cout << "Created QuicListener '" << server_name << "' with private_key: " << private_key_file
+    auto findit = quic_listeners_.find(port);
+    if(findit != quic_listeners_.end()) {
+        std::cerr << "QuicListener for port " << port << " already exists, returning existing instance with private key: " 
+                  << private_key_file << ", cert: " << cert_file << std::endl;
+        return findit->second;
+    }
+    // Store in the map - the QuicListener constructor now handles config validation
+    auto listener = quic_listeners_.emplace(std::piecewise_construct,
+                           std::forward_as_tuple(port),
+                           std::forward_as_tuple(io_context_, config));
+    listener.first->second.listen("localhost", "127.0.0.1", port);
+    
+    std::cout << "Created QuicListener '" << port << "' with private_key: " << private_key_file
               << ", cert: " << cert_file << std::endl;
+
+    return listener.first->second;
 }
 
