@@ -25,6 +25,8 @@ unique_ptr<Communication> createServerCommunication(const string& protocol, boos
         config["quiet"] = false;
         config["send_trailers"] = send_trailers;
         config["log_path"] = "../test_instances/sandbox/"; // Ensure sandbox path is set
+        config["quic_dump"] = true;
+        config["http_dump"] = true;
         return make_unique<QuicListener>(io_context, config);
     } else if (protocol == "TCP") {
         return make_unique<TcpCommunication>(io_context);
@@ -43,6 +45,8 @@ unique_ptr<Communication> createClientCommunication(const string& protocol, boos
         config["quiet"] = false;
         config["send_trailers"] = send_trailers;
         config["log_path"] = "../test_instances/sandbox/"; // Ensure sandbox path is set
+        config["quic_dump"] = true;
+        config["http_dump"] = true;
         return make_unique<QuicConnector>(io_context, config);
     } else if (protocol == "TCP") {
         return make_unique<TcpCommunication>(io_context);

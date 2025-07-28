@@ -7,6 +7,10 @@ build/
 # Ignore Visual Studio Code settings
 .vscode/
 
+# Ignore .claude files
+.claude/
+.mcp.json
+
 # Ignore sandbox directory
 sandbox/
 

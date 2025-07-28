@@ -55,36 +55,6 @@ ClientStream::~ClientStream() {
   }
 }
 
-int ClientStream::open_file(const std::string_view &path) {
-  assert(fd == -1);
-
-  std::string_view filename;
-
-  auto it = std::find(std::rbegin(path), std::rend(path), '/').base();
-  if (it == std::end(path)) {
-    filename = "index.html"sv;
-  } else {
-    filename = std::string_view{it, static_cast<size_t>(std::end(path) - it)};
-    if (filename == ".."sv || filename == "."sv) {
-      std::cerr << "Client Invalid file name: " << filename << std::endl;
-      return -1;
-    }
-  }
-
-  auto fname = std::string{handler->getQuicConnector().getConfig().download};
-  fname += '/';
-  fname += filename;
-
-  fd = open(fname.c_str(), O_WRONLY | O_CREAT | O_TRUNC,
-            S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-  if (fd == -1) {
-    std::cerr << "Client open: Could not open file " << fname << ": "
-              << strerror(errno) << std::endl;
-    return -1;
-  }
-
-  return 0;
-}
 
 void ClientStream::append_data(std::span<const uint8_t> data) {
     if (!req.isWWATP()) {
@@ -324,7 +294,7 @@ int recv_crypto_data(ngtcp2_conn *conn,
                      ngtcp2_encryption_level encryption_level, uint64_t offset,
                      const uint8_t *data, size_t datalen, void *user_data) {
     auto c = static_cast<Client *>(user_data);
-    if (!c->getQuicConnector().getConfig().quiet && !c->getQuicConnector().getConfig().no_quic_dump) {
+    if (!c->getQuicConnector().getConfig().quiet && c->getQuicConnector().getConfig().quic_dump) {
         debug::print_crypto_data(encryption_level, {data, datalen});
     }
 
@@ -338,7 +308,7 @@ int recv_stream_data(ngtcp2_conn *, uint32_t flags, int64_t stream_id,
                      uint64_t /* offset */, const uint8_t *data, size_t datalen,
                      void *user_data, void */*stream_user_data*/) {
     auto c = static_cast<Client *>(user_data);
-    if (!c->getQuicConnector().getConfig().quiet && !c->getQuicConnector().getConfig().no_quic_dump) {
+    if (!c->getQuicConnector().getConfig().quiet && c->getQuicConnector().getConfig().quic_dump) {
         debug::print_stream_data(stream_id, {data, datalen});
     }
 
@@ -442,16 +412,6 @@ int handshake_confirmed(ngtcp2_conn *conn, void *user_data) {
     return 0;
 }
 } // namespace
-
-bool Client::should_exit() const {
-    return handshake_confirmed_ &&
-         (!quic_connector_.getConfig().wait_for_ticket || ticket_received_) &&
-         ((quic_connector_.getConfig().exit_on_first_stream_close &&
-           (quic_connector_.getConfig().nstreams == 0 || nstreams_closed_)) ||
-          (quic_connector_.getConfig().exit_on_all_streams_close &&
-           quic_connector_.getConfig().nstreams == nstreams_done_ &&
-           nstreams_closed_ == nstreams_done_));
-}
 
 int Client::handshake_confirmed() {
   handshake_confirmed_ = true;
@@ -778,24 +738,16 @@ auto callbacks = ngtcp2_callbacks{
 #pragma GCC diagnostic pop
 
   ngtcp2_cid scid, dcid;
-  if (quic_connector_.getConfig().scid_present) {
-    scid = quic_connector_.getConfig().scid;
-  } else {
     scid.datalen = 17;
     if (util::generate_secure_random({scid.data, scid.datalen}) != 0) {
-      std::cerr << "Client Could not generate source connection ID" << std::endl;
-      return -1;
+        std::cerr << "Client Could not generate source connection ID" << std::endl;
+        return -1;
     }
-  }
-  if (quic_connector_.getConfig().dcid.datalen == 0) {
     dcid.datalen = 18;
     if (util::generate_secure_random({dcid.data, dcid.datalen}) != 0) {
       std::cerr << "Client Could not generate destination connection ID" << std::endl;
       return -1;
     }
-  } else {
-    dcid = quic_connector_.getConfig().dcid;
-  }
 
   ngtcp2_settings settings;
   ngtcp2_settings_default(&settings);
@@ -1065,13 +1017,6 @@ int Client::on_read(const Endpoint &ep) {
     }
   }
 
-  if (should_exit()) {
-    ngtcp2_ccerr_set_application_error(
-      &last_error_, nghttp3_err_infer_quic_app_error_code(0), nullptr, 0);
-    disconnect();
-    return -1;
-  }
-
   update_timer();
 
   return 0;
@@ -1122,13 +1067,6 @@ int Client::on_write() {
 
   if (auto rv = write_streams(); rv != 0) {
     return rv;
-  }
-
-  if (should_exit()) {
-    ngtcp2_ccerr_set_application_error(
-      &last_error_, nghttp3_err_infer_quic_app_error_code(0), nullptr, 0);
-    disconnect();
-    return -1;
   }
 
   update_timer();
@@ -2249,7 +2187,7 @@ int http_recv_data(nghttp3_conn *, int64_t stream_id, const uint8_t *data,
 
     ngtcp2_conn_get_conn_info(stream->handler->conn(), &ci);
 
-    if (!client->getQuicConnector().getConfig().quiet && !client->getQuicConnector().getConfig().no_http_dump) {
+    if (!client->getQuicConnector().getConfig().quiet && client->getQuicConnector().getConfig().http_dump) {
         debug::print_http_data(stream_id, {data, datalen});
     }
     client->http_consume(stream_id, datalen);
@@ -2859,10 +2797,6 @@ void QuicConnector::connect(const string &peer_name, const string& peer_ip_addr,
             }
         }
 
-        if (config.nstreams == 0) {
-            config.nstreams = config.requests.size();
-            }
-
         TLSClientConfig tls_config{
             .session_file = config.session_file,
             .groups = config.groups,
@@ -3010,8 +2944,7 @@ void QuicConnector::initializeConfig(const YAML::Node& yaml_config) {
     }
     // Initialize paths similar to library_tester.cpp
     string log_path = yaml_config["log_path"].as<std::string>();
-    std::string keylog_filename, session_filename, tp_filename;
-    keylog_filename = log_path + "/keylog_listener";
+    std::string session_filename, tp_filename;
     session_filename = log_path + "/session_log_listener";
     tp_filename = log_path + "/tp_log_listener";
     
@@ -3051,70 +2984,49 @@ void QuicConnector::initializeConfig(const YAML::Node& yaml_config) {
 
 
     config = ClientConfig{
-        .preferred_ipv4_addr = get("preferred_ipv4_addr", ngtcp2::Address({})), // TODO: Default added from Config struct initializers
-        .preferred_ipv6_addr = get("preferred_ipv6_addr", ngtcp2::Address({})), // TODO: Default added from Config struct initializers
-        .dcid = get("dcid", ngtcp2_cid({})), // TODO: Default added from Config struct initializers
-        .scid = get("scid", ngtcp2_cid({})), // TODO: Default added from Config struct initializers
-        .scid_present = get("scid_present", false), // TODO: Default added from Config struct initializers
         .tx_loss_prob = get("tx_loss_prob", 0.),
         .rx_loss_prob = get("rx_loss_prob", 0.),
-        .ciphers = ngtcp2::util::crypto_default_ciphers(),
-        .groups = ngtcp2::util::crypto_default_groups(),
-        .htdocs = ""s,
-        .mime_types_file = "/etc/mime.types"s,
-        .mime_types = {}, // TODO: Default added from Config struct initializers
-        .port = 0, // TODO: Default added from Config struct initializers
-        .nstreams = 0, // TODO: Default added from Config struct initializers
-        .data = nullptr, // TODO: Default added from Config struct initializers
-        .datalen = 0, // TODO: Default added from Config struct initializers
-        .version = NGTCP2_PROTO_VER_V1,
+        .groups = get("groups", string(ngtcp2::util::crypto_default_groups())),
+        .port = get("port", (uint16_t)8443),
+        .version = NGTCP2_PROTO_VER_V1, // NOT a user parameter (for now)
         .quiet = get("quiet", true),
         .timeout = get("timeout", 30 * NGTCP2_SECONDS),
-        .show_secret = get("show_secret", false), // TODO: Default added from Config struct initializers
-        .validate_addr = get("validate_addr", false), // TODO: Default added from Config struct initializers
+        .show_secret = get("show_secret", false), 
         .early_response = get("early_response", false),
-        .verify_client = get("verify_client", false), // TODO: Default added from Config struct initializers
-        .session_file = session_filename,
-        .tp_file = tp_filename,
-        .keylog_filename = keylog_filename,
-        .change_local_addr = 0, // TODO: Default added from Config struct initializers
-        .key_update = 0, // TODO: Default added from Config struct initializers
-        .delay_stream = 0, // TODO: Default added from Config struct initializers
-        .nat_rebinding = false, // TODO: Default added from Config struct initializers
-        .no_preferred_addr = false, // TODO: Default added from Config struct initializers
-        .download = "", // TODO: Default added from Config struct initializers
-        .requests = {}, // TODO: Default added from Config struct initializers
-        .qlog_file = "", // TODO: Default added from Config struct initializers
-        .qlog_dir = "", // TODO: Default added from Config struct initializers
-        .no_quic_dump = false, // TODO: Default added from Config struct initializers
-        .no_http_dump = false, // TODO: Default added from Config struct initializers
-        .max_data = 24_m,
-        .max_stream_data_bidi_local = 16_m,
-        .max_stream_data_bidi_remote = 256_k,
-        .max_stream_data_uni = 256_k,
-        .max_streams_bidi = 100,
-        .max_streams_uni = 100,
-        .max_window = 6_m,
-        .max_stream_window = 6_m,
-        .max_dyn_length = 20_m,
-        .exit_on_first_stream_close = false, // TODO: Default added from Config struct initializers
-        .exit_on_all_streams_close = false, // TODO: Default added from Config struct initializers
-        .disable_early_data = false, // TODO: Default added from Config struct initializers
-        .static_secret = {}, // TODO: Default added from Config struct initializers
-        .cc_algo = NGTCP2_CC_ALGO_CUBIC,
-        .token_file = "", // TODO: Default added from Config struct initializers
-        .sni = "", // TODO: Default added from Config struct initializers
-        .initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT,
-        .max_udp_payload_size = 0, // TODO: Default added from Config struct initializers
+        .session_file = get("session_file", session_filename),
+        .tp_file = get("tp_file", tp_filename),
+        .change_local_addr = get("change_local_addr", (ngtcp2_duration)0),
+        .key_update = get("key_update", (ngtcp2_duration)0),
+        .delay_stream = get("delay_stream", (ngtcp2_duration)0),
+        .nat_rebinding = get("nat_rebinding", false),
+        .no_preferred_addr = get("no_preferred_addr", false),
+        .qlog_file = get("qlog_file", string("")),
+        .qlog_dir = get("qlog_dir", string("")),
+        .quic_dump = get("quic_dump", false),
+        .http_dump = get("http_dump", false),
+        .max_data = get("max_data", 24_m),
+        .max_stream_data_bidi_local = get("max_stream_data_bidi_local", 16_m),
+        .max_stream_data_bidi_remote = get("max_stream_data_bidi_remote", 256_k),
+        .max_stream_data_uni = get("max_stream_data_uni", 256_k),
+        .max_streams_bidi = get("max_streams_bidi", 100UL),
+        .max_streams_uni = get("max_streams_uni", 100UL),
+        .max_window = get("max_window", 6_m),
+        .max_stream_window = get("max_stream_window", 6_m),
+        .disable_early_data = get("disable_early_data", false),
+        .static_secret = {}, // NOT a user parameter
+        .cc_algo = NGTCP2_CC_ALGO_CUBIC,  // NOT a user parameter (for now)
+        .token_file = get("token_file", string("")),
+        .sni = get("sni", string("")),
+        .initial_rtt = get("initial_rtt", NGTCP2_DEFAULT_INITIAL_RTT),
+        .max_udp_payload_size = get("max_udp_payload_size", (size_t)0),
         .send_trailers = get("send_trailers", false),
-        .handshake_timeout = UINT64_MAX,
-        .preferred_versions = {}, // TODO: Default added from Config struct initializers
-        .available_versions = {}, // TODO: Default added from Config struct initializers
-        .no_pmtud = false, // TODO: Default added from Config struct initializers
-        .ack_thresh = 2,
-        .wait_for_ticket = false, // TODO: Default added from Config struct initializers
-        .initial_pkt_num = UINT32_MAX,
-        .pmtud_probes = {}, // TODO: Default added from Config struct initializers
+        .handshake_timeout = get("handshake_timeout", UINT64_MAX),
+        .preferred_versions = get("preferred_versions", std::vector<uint32_t>{}), 
+        .available_versions = get("available_versions", std::vector<uint32_t>{}), 
+        .no_pmtud = get("no_pmtud", false),
+        .ack_thresh = get("ack_thresh", (size_t)2),
+        .initial_pkt_num = get("initial_pkt_num", UINT32_MAX),
+        .pmtud_probes = get("pmtud_probes", std::vector<uint16_t>{}), // TODO: Default added from Config struct initializers
     };
 
     map<string, map<const char, size_t>> bag_of_characters;
