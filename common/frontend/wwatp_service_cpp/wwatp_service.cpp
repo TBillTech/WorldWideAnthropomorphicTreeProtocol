@@ -23,6 +23,20 @@
 
 using namespace fplus;
 
+WWATPService::ConnectorSpecifier getConnectorSpecifier(const YAML::Node& config) {
+    std::string name = config["name"].as<std::string>("");
+    std::string ip_address = config["ip"].as<std::string>("localhost");
+    uint16_t port = config["port"].as<uint16_t>(443); // Default to 443 if not specified
+    return std::make_tuple(name, ip_address, port);
+}
+
+ostream& operator<<(std::ostream& os, const WWATPService::ConnectorSpecifier& spec) {
+    os << "ConnectorSpecifier(name: " << std::get<0>(spec)
+       << ", ip: " << std::get<1>(spec)
+       << ", port: " << std::get<2>(spec) << ")";
+    return os;
+}
+
 WWATPService::WWATPService(string name, std::shared_ptr<Backend> config_backend, const std::string& config_label)
     : name_(name), config_backend_(config_backend), config_label_(config_label) {
     if (!config_backend_) {
@@ -76,27 +90,6 @@ std::vector<std::string> WWATPService::getBackendNames() const {
 
 bool WWATPService::hasBackend(const std::string& backend_name) const {
     return backends_.find(backend_name) != backends_.end();
-}
-
-QuicListener& WWATPService::getQuicListener(const uint16_t server_port) {
-    auto it = quic_listeners_.find(server_port);
-    if (it == quic_listeners_.end()) {
-        throw std::runtime_error("QuicListener on port '" + std::to_string(server_port) + "' not found");
-    }
-    return it->second;
-}
-
-std::vector<uint16_t> WWATPService::getQuicListenerPorts() const {
-    std::vector<uint16_t> ports;
-    ports.reserve(quic_listeners_.size());
-    for (const auto& [port, listener] : quic_listeners_) {
-        ports.push_back(port);
-    }
-    return ports;
-}
-
-bool WWATPService::hasQuicListener(const uint16_t server_port) const {
-    return quic_listeners_.find(server_port) != quic_listeners_.end();
 }
 
 void WWATPService::initializeFactories() {
@@ -432,33 +425,75 @@ std::shared_ptr<Backend> WWATPService::createRedirectedBackend(const TreeNode& c
     return std::make_shared<RedirectedBackend>(*underlying_backend, redirect_root);
 }
 
-std::shared_ptr<Backend> WWATPService::createHttp3ClientBackend(const TreeNode& config) {
-    string server_url = getStringProperty(config, "server_url");
-    if (server_url.empty()) {
-        throw std::runtime_error("HTTP3ClientBackend requires 'server_url' property");
+QuicConnector& WWATPService::obtainQuicConnector(const YAML::Node& config) {
+    ConnectorSpecifier conspec = getConnectorSpecifier(config);
+    auto it = quic_connectors_.find(conspec);
+    if (it != quic_connectors_.end()) {
+        return it->second;
     }
+    auto connector_it = quic_connectors_.emplace(
+        std::piecewise_construct,
+        std::forward_as_tuple(conspec),
+        std::forward_as_tuple(io_context_, config)
+    );
 
-    string backend_name = getStringProperty(config, "local_backend", "http3_client_cache");
+    if (!connector_it.second) {
+        throw std::runtime_error("Failed to create QuicConnector for specifier: " + get<1>(conspec) + ":" + to_string(get<2>(conspec)));
+    }
+    std::cout << "Created QuicConnector for specifier: " << conspec << std::endl;
+    return connector_it.first->second;
+}
+
+Http3ClientBackendUpdater& WWATPService::obtainHttp3ClientUpdater(const YAML::Node& config) {
+    ConnectorSpecifier conspec = getConnectorSpecifier(config);
+    auto it = http3_client_updaters_.find(conspec);
+    if (it != http3_client_updaters_.end()) {
+        return it->second;
+    }
+    auto updater_it = http3_client_updaters_.emplace(
+        std::piecewise_construct,
+        std::forward_as_tuple(conspec),
+        std::forward_as_tuple(get<0>(conspec), get<1>(conspec), get<2>(conspec))
+    );
+
+    return updater_it.first->second;
+}
+
+
+std::shared_ptr<Backend> WWATPService::createHttp3ClientBackend(const TreeNode& config) {
+    // Get the yaml configuration for the HTTP3 client backend
+    auto [unused1, unused2, yaml_span] = config.getPropertyValueSpan("config");
+    if (yaml_span.size() == 0) {
+        throw std::runtime_error("HTTP3ClientBackend requires 'config' property with YAML content");
+    }
+    string yaml_content(yaml_span.begin<const char>(), yaml_span.end<const char>());
+    YAML::Node yaml_config = YAML::Load(yaml_content);
+
+    ConnectorSpecifier connspec = getConnectorSpecifier(yaml_config);
+
+    string backend_name = yaml_config["local_backend"].as<string>("http3_client_cache");
     auto local_backend = getBackend(backend_name);
     if (!local_backend) {
         throw std::runtime_error("Backend '" + backend_name + "' not found for HTTP3ClientBackend");
     }
-    bool blocking_mode = getBoolProperty(config, "blocking_mode", true);
-    size_t journalRequestsPerMinute = getUint64Property(config, "journal_requests_per_minute", 60);
+    bool blocking_mode = yaml_config["blocking_mode"].as<bool>(true);
+    size_t journalRequestsPerMinute = yaml_config["journal_requests_per_minute"].as<size_t>(60);
     Request request;
-    request.scheme = getStringProperty(config, "scheme", "https"); // Assuming HTTPS for HTTP3
-    string ip = getStringProperty(config, "ip", "127.0.0.1");
-    string port = getStringProperty(config, "port", "443");
-    request.authority = getStringProperty(config, "authority", ip + ":" + port);
-    request.path = getStringProperty(config, "path", "/wwatp/api");
-    request.method = getStringProperty(config, "method", "GET");
-    request.pri.urgency = static_cast<int32_t>(getInt64Property(config, "priority", 0));
-    request.pri.inc = getInt64Property(config, "increment", 0);
+    request.scheme = yaml_config["scheme"].as<string>("https"); // Assuming HTTPS for HTTP3
+    string ip = yaml_config["ip"].as<string>("127.0.0.1");
+    string port_str = yaml_config["port"].as<string>("443");
+    request.authority = yaml_config["authority"].as<string>(ip + ":" + port_str);
+    request.path = yaml_config["path"].as<string>("/wwatp/api");
+    request.method = yaml_config["method"].as<string>("GET");
+    request.pri.urgency = static_cast<int32_t>(yaml_config["priority"].as<int64_t>(0));
+    request.pri.inc = yaml_config["increment"].as<int64_t>(0);
     maybe<TreeNode> staticNode;
-    Http3ClientBackend& http3_client_backend = http3_client_updater_.addBackend(*local_backend, blocking_mode, request, journalRequestsPerMinute, staticNode);
+    Http3ClientBackendUpdater& http3_client_updater = obtainHttp3ClientUpdater(yaml_config);
+    Http3ClientBackend& http3_client_backend = http3_client_updater.addBackend(*local_backend, blocking_mode, request, journalRequestsPerMinute, staticNode);
     // Use shared_ptr with custom deleter that doesn't delete - the updater owns the object
     return shared_ptr<Http3ClientBackend>(&http3_client_backend, [](Http3ClientBackend*){});
 }
+
 
 std::shared_ptr<Backend> WWATPService::createFileBackend(const TreeNode& config) {
     std::string root_path = getStringProperty(config, "root_path");
@@ -470,7 +505,7 @@ std::shared_ptr<Backend> WWATPService::createFileBackend(const TreeNode& config)
 }
 
 // Frontend creation methods
-std::shared_ptr<Frontend> WWATPService::createCloningMediator(const TreeNode& config) {
+pair<shared_ptr<Frontend>, WWATPService::ConnectorSpecifier> WWATPService::createCloningMediator(const TreeNode& config) {
     std::string name = getStringProperty(config, "name");
     if (name.empty()) {
         name = config.getNodeName();
@@ -492,10 +527,11 @@ std::shared_ptr<Frontend> WWATPService::createCloningMediator(const TreeNode& co
     
     bool versioned = getBoolProperty(config, "versioned", true);
     
-    return std::make_shared<CloningMediator>(name, *backend_a, *backend_b, versioned);
+    return {make_shared<CloningMediator>(name, *backend_a, *backend_b, versioned),
+            tuple<string, string, uint16_t>(name, "", 0)}; // Dummy connector specifier
 }
 
-std::shared_ptr<Frontend> WWATPService::createYAMLMediator(const TreeNode& config) {
+pair<shared_ptr<Frontend>, WWATPService::ConnectorSpecifier> WWATPService::createYAMLMediator(const TreeNode& config) {
     std::string name = getStringProperty(config, "name");
     if (name.empty()) {
         name = config.getNodeName();
@@ -524,7 +560,8 @@ std::shared_ptr<Frontend> WWATPService::createYAMLMediator(const TreeNode& confi
     
     bool initialize_from_yaml = getBoolProperty(config, "initialize_from_yaml", true);
     
-    return std::make_shared<YAMLMediator>(name, *tree_backend, *yaml_backend, specifier, initialize_from_yaml);
+    return {make_shared<YAMLMediator>(name, *tree_backend, *yaml_backend, specifier, initialize_from_yaml),
+            tuple<string, string, uint16_t>(name, "", 0)}; // Dummy connector specifier
 }
 
 void WWATPService::updateServerWithChild( 
@@ -569,7 +606,7 @@ void WWATPService::updateServerWithChild(
     }
 }
 
-std::shared_ptr<Frontend> WWATPService::createHTTP3Server(const TreeNode& config) {
+pair<shared_ptr<Frontend>, WWATPService::ConnectorSpecifier> WWATPService::createHTTP3Server(const TreeNode& config) {
     std::string name = getStringProperty(config, "name");
     if (name.empty()) {
         name = config.getNodeName();
@@ -585,10 +622,10 @@ std::shared_ptr<Frontend> WWATPService::createHTTP3Server(const TreeNode& config
     string yaml_string(yaml_span.begin<const char>(), yaml_span.end<const char>());
     // Load the YAML configuration from the yaml_string
     YAML::Node yaml_config = YAML::Load(yaml_string);
+    ConnectorSpecifier connspec = getConnectorSpecifier(yaml_config);
     // Next get the name and port from the yaml_config
     std::string server_name = yaml_config["name"].as<std::string>(name);
-    uint16_t port = yaml_config["port"].as<uint16_t>(8443); // Default to 8443
-    QuicListener& listener = createQuicListener(port, yaml_config);
+    QuicListener& listener = obtainQuicListener(yaml_config);
 
     // Create HTTP3Server with empty static assets
     auto server = std::make_shared<HTTP3Server>(name);
@@ -620,29 +657,91 @@ std::shared_ptr<Frontend> WWATPService::createHTTP3Server(const TreeNode& config
     listener.registerRequestHandler(make_pair(server_name, theServerHandlerWrapper));
 
 
-    return server;
+    return {server, connspec};
 }
 
-QuicListener& WWATPService::createQuicListener(const uint16_t port, const YAML::Node& config) {
+QuicListener& WWATPService::obtainQuicListener(const YAML::Node& config) {
     // Extract configuration parameters for logging
     std::string private_key_file = config["private_key_file"].as<std::string>("");
     std::string cert_file = config["cert_file"].as<std::string>("");
+    auto connspec = getConnectorSpecifier(config);
 
-    auto findit = quic_listeners_.find(port);
+    auto findit = quic_listeners_.find(connspec);
     if(findit != quic_listeners_.end()) {
-        std::cerr << "QuicListener for port " << port << " already exists, returning existing instance with private key: " 
+        std::cerr << "QuicListener " << connspec << " already exists, returning existing instance with private key: " 
                   << private_key_file << ", cert: " << cert_file << std::endl;
         return findit->second;
     }
     // Store in the map - the QuicListener constructor now handles config validation
     auto listener = quic_listeners_.emplace(std::piecewise_construct,
-                           std::forward_as_tuple(port),
+                           std::forward_as_tuple(connspec),
                            std::forward_as_tuple(io_context_, config));
-    listener.first->second.listen("localhost", "127.0.0.1", port);
-    
-    std::cout << "Created QuicListener '" << port << "' with private_key: " << private_key_file
+    std::cout << "Created QuicListener " << connspec << " with private_key: " << private_key_file
               << ", cert: " << cert_file << std::endl;
 
     return listener.first->second;
+}
+
+void WWATPService::start(Communication&, double time, size_t sleep_milli) { 
+    if (!initialized_) {
+        throw std::runtime_error("WWATPService not initialized");
+    }
+    // Loop through the quic_listeners_ and start each listener
+    for (auto& [conspec, listener] : quic_listeners_) {
+        listener.listen(get<0>(conspec), get<1>(conspec), get<2>(conspec));
+    }
+    // Loop through the quic_connectors_ and start each connector
+    for (auto& [conspec, connector] : quic_connectors_) {
+        connector.connect(get<0>(conspec), get<1>(conspec), get<2>(conspec));
+    }
+    // Loop through the frontends_ and start each frontend
+    for (auto& [name, frontend_pair ] : frontends_) {
+        auto [frontend, conspec] = frontend_pair;
+        // Find the listener by name, which for HTTP3Server is the same as the get<0>(conspec)
+        auto listener_it = quic_listeners_.find(conspec);
+        if (listener_it != quic_listeners_.end()) {
+            frontend->start(listener_it->second, time, sleep_milli);
+        } else {
+            if (dynamic_cast<HTTP3Server*>(frontend.get()) != nullptr) {
+                std::cerr << "Warning: Listener for HTTP3Server frontend '" << name << "' not found, skipping start" << std::endl;
+            }
+        }
+    }
+    // loop through the http3_client_updaters_ and start each updater
+    for (auto& [conspec, updater] : http3_client_updaters_) {
+        auto findit = quic_connectors_.find(conspec);
+        if (findit == quic_connectors_.end()) {
+            std::cerr << "Warning: QuicConnector for specifier " << conspec << " not found, skipping updater start" << std::endl;
+            continue;
+        }
+        updater.start(findit->second, time, sleep_milli);
+    }
+    std::cout << "WWATPService started successfully" << std::endl;
+    initialized_ = true;
+}
+
+void WWATPService::stop() {
+    if (!initialized_) {
+        throw std::runtime_error("WWATPService not initialized");
+    }
+    // loop through the http3_client_updaters_ and stop each updater
+    for (auto& [conspec, updater] : http3_client_updaters_) {
+        updater.stop(); 
+    }
+    // loop through the frontends_ and stop each frontend
+    for (auto& [name, frontend_pair] : frontends_) {
+        auto [frontend, conspec] = frontend_pair;
+        frontend->stop();
+    }
+    // loop through the quic_connectors_ and stop each connector
+    for (auto& [__, connector] : quic_connectors_) {
+        connector.close();
+    }
+    // loop through the quic_listeners_ and stop each listener
+    for (auto& [__, listener] : quic_listeners_) {
+        listener.close();
+    }
+    std::cout << "WWATPService stopped successfully" << std::endl;
+    initialized_ = false;
 }
 

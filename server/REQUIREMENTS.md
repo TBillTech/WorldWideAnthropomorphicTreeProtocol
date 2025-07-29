@@ -4,12 +4,52 @@
 
 ### Current Architecture
 
+The WWATP architecture follows a layered frontend/backend pattern with the WWATPService acting as a meta-frontend that orchestrates other components:
+
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   QuicListener  │───▶│   HTTP3Server    │───▶│  WWATPService  │
-│  (Network I/O)  │    │   (Frontend)     │    │ (Tree Storage)  │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            WWATPService (Frontend)                          │
+│                                                                             │
+│  ┌─────────────────────────┐   ┌──────────────────┐   ┌─────────────────┐   │
+│  │      frontends_         │   │  config_backend_ │   │    backends_    │   │
+│  │                         │   │   (YAML Config)  │   │                 │   │
+│  │ ┌─────────────────────┐ │   │                  │   │ ┌─────────────┐ │   │
+│  │ │   HTTP3Server       │ │◀──│  config/         │──▶│ │SimpleBackend│ │   │
+│  │ │   CloningMediator   │ │   │   backends/      │   │ │Transactional│ │   │
+│  │ │   YAMLMediator      │ │   │   frontends/     │   │ │ThreadSafe   │ │   │
+│  │ │                     │ │   │                  │   │ │Http3Client  │ │   │
+│  │ │                     │ │   │                  │   │ │File         │ │   │
+│  │ │                     │ │   │                  │   │ │Composite    │ │   │
+│  │ │                     │ │   │                  │   │ │Redirected   │ │   │
+│  │ └─────────────────────┘ │   └──────────────────┘   │ └─────────────┘ │   │
+│  └─────────────────────────┘                          └─────────────────┘   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    quic_listeners_                                  │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                 │   │
+│  │  │QuicListener │  │QuicListener │  │QuicListener │  (by port)      │   │
+│  │  │  Port 443   │  │  Port 8080  │  │  Port 9000  │                 │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘                 │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Key Architectural Features:**
+
+1. **WWATPService as Meta-Frontend**: WWATPService extends Frontend and orchestrates the entire service architecture from configuration data stored in `config_backend_`.
+
+2. **Configuration-Driven Architecture**: The `config_backend_` contains YAML configuration data that is isomorphic to the actual backend and frontend instances:
+   - `config/backends/` - Defines backend instances with their types and dependencies
+   - `config/frontends/` - Defines frontend instances with their configuration
+
+3. **Component Management**: WWATPService maintains registries of:
+   - `backends_` - Map of backend names to Backend instances  
+   - `frontends_` - Map of frontend names to Frontend instances
+   - `quic_listeners_` - Map of ports to QuicListener instances
+
+4. **Dependency Resolution**: Uses topological sorting to construct backends in proper dependency order, allowing backends to reference other backends by name.
+
+5. **Factory Pattern**: Backend and frontend factories create instances from TreeNode configuration data, with factory functions registered by type.
 
 ## Requirements
 

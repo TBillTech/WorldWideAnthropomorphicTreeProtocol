@@ -19,6 +19,7 @@ namespace YAML {
 #include "http3_client_backend.h"
 #include "http3_server.h"
 #include "quic_listener.h"
+#include "quic_connector.h"
 
 
 /**
@@ -37,6 +38,8 @@ namespace YAML {
  */
 class WWATPService : public Frontend {
 public:
+    using ConnectorSpecifier = std::tuple<std::string, std::string, uint16_t>;
+
     /**
      * Constructor
      * @param config_backend Backend containing the configuration tree
@@ -77,26 +80,6 @@ public:
     bool hasBackend(const std::string& backend_name) const;
 
     /**
-     * Get a QuicListener by server port
-     * @param server_port Port of the server
-     * @return Reference to the QuicListener
-     */
-    QuicListener& getQuicListener(const uint16_t server_port);
-
-    /**
-     * Get all available QuicListener server ports
-     * @return Vector of server ports
-     */
-    std::vector<uint16_t> getQuicListenerPorts() const;
-
-    /**
-     * Check if a QuicListener exists for a server port
-     * @param server_port Port to check
-     * @return True if QuicListener exists
-     */
-    bool hasQuicListener(const uint16_t server_port) const;
-
-    /**
      * Get the configuration backend used by this service
      * @return The configuration backend
      */
@@ -112,29 +95,20 @@ public:
     std::string getName() const { return name_; }
     std::string getType() const { return "wwatp_service"; }
 
-    void start(Communication& connector, double time, size_t sleep_milli = 100) override { 
+    void run(size_t sleep_milli = 100) {
         if (!initialized_) {
             throw std::runtime_error("WWATPService not initialized");
         }
-        if (http3_client_updater_.size()) {
-            http3_client_updater_.run(connector, time, sleep_milli);
+        if (quic_listeners_.empty() && quic_connectors_.empty()) {
+            return;
         }
-        for (const auto& frontend : frontends_) {
-            frontend.second->start(connector, time, sleep_milli);
-        }
+        auto& ignored = quic_listeners_.begin()->second;
+        start(ignored, 0.0, sleep_milli);
     }
 
-    void stop() override {
-        if (!initialized_) {
-            throw std::runtime_error("WWATPService not initialized");
-        }
-        if (http3_client_updater_.size()) {
-            http3_client_updater_.stop();
-        }
-        for (const auto& frontend : frontends_) {
-            frontend.second->stop();
-        }
-    }
+    void start(Communication& ignored, double time, size_t sleep_milli = 100) override;
+
+    void stop() override; 
 
 private:
     // Configuration
@@ -148,18 +122,19 @@ private:
 
     // Constructed components
     std::map<std::string, std::shared_ptr<Backend>> backends_;
-    std::map<std::string, std::shared_ptr<Frontend>> frontends_;
-    std::map<uint16_t, QuicListener> quic_listeners_;
+    std::map<std::string, std::pair<std::shared_ptr<Frontend>, ConnectorSpecifier>> frontends_;
+    std::map<ConnectorSpecifier, QuicListener> quic_listeners_;
 
     // The Http3ClientBackends need to be tracked by their updater
-    Http3ClientBackendUpdater http3_client_updater_;
+    std::map<ConnectorSpecifier, QuicConnector> quic_connectors_;
+    std::map<ConnectorSpecifier, Http3ClientBackendUpdater> http3_client_updaters_;
 
     // Backend factory function type
     using BackendFactory = std::function<std::shared_ptr<Backend>(const TreeNode&)>;
     std::map<std::string, BackendFactory> backend_factories_;
 
     // Frontend factory function type
-    using FrontendFactory = std::function<std::shared_ptr<Frontend>(const TreeNode&)>;
+    using FrontendFactory = std::function<std::pair<std::shared_ptr<Frontend>, ConnectorSpecifier>(const TreeNode&)>;
     std::map<std::string, FrontendFactory> frontend_factories_;
 
     /**
@@ -200,18 +175,21 @@ private:
     std::shared_ptr<Backend> createThreadsafeBackend(const TreeNode& config);
     std::shared_ptr<Backend> createCompositeBackend(const TreeNode& config);
     std::shared_ptr<Backend> createRedirectedBackend(const TreeNode& config);
+    QuicConnector& obtainQuicConnector(const YAML::Node& config);
+    Http3ClientBackendUpdater& obtainHttp3ClientUpdater(const YAML::Node& config);
     std::shared_ptr<Backend> createHttp3ClientBackend(const TreeNode& config);
     std::shared_ptr<Backend> createFileBackend(const TreeNode& config);
 
     /**
      * Create specific frontend types from configuration
      */
-    std::shared_ptr<Frontend> createCloningMediator(const TreeNode& config);
-    std::shared_ptr<Frontend> createYAMLMediator(const TreeNode& config);
+    std::pair<std::shared_ptr<Frontend>, ConnectorSpecifier> createCloningMediator(const TreeNode& config);
+    std::pair<std::shared_ptr<Frontend>, ConnectorSpecifier> createYAMLMediator(const TreeNode& config);
     void updateServerWithChild(
         std::shared_ptr<HTTP3Server> server, const std::string& child_path, 
         const TreeNode& child_node, bool is_wwatp_route);
-    std::shared_ptr<Frontend> createHTTP3Server(const TreeNode& config);
+    std::pair<std::shared_ptr<Frontend>, ConnectorSpecifier> createHTTP3Server(const TreeNode& config);
+    std::shared_ptr<Frontend> createHTTP3ClientUpdater(const TreeNode& config);
     
     /**
      * Create a QuicListener from configuration
@@ -219,7 +197,7 @@ private:
      * @param config YAML configuration node
      * @return Reference to the created QuicListener
      */
-    QuicListener& createQuicListener(const uint16_t server_name, const YAML::Node& config);
+    QuicListener& obtainQuicListener(const YAML::Node& config);
 
     /**
      * Helper to get a string property from a TreeNode

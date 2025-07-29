@@ -25,7 +25,7 @@ class CloningMediator : public Frontend {
         void stop() override { /* CloningMediator stops automatically */ }  
         bool isRunning() const override { return true; }
         
-        std::vector<Backend*> getBackends() const override {
+        std::vector<Backend*> getBackends() override {
             return {&backendA_, &backendB_};
         }
 

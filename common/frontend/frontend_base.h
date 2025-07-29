@@ -61,7 +61,7 @@ public:
      * Get the backends this frontend uses
      * @return Vector of backend pointers
      */
-    virtual std::vector<Backend*> getBackends() const = 0;
+    virtual std::vector<Backend*> getBackends() = 0;
 
 protected:
     /**

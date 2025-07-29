@@ -277,7 +277,7 @@ int main() {
     SimpleBackend local_blocking_backend(local_blocking_tree);
     ThreadsafeBackend local_blocking_backend_threadsafe(local_blocking_backend);
 
-    Http3ClientBackendUpdater client_backend_updater;
+    Http3ClientBackendUpdater client_backend_updater("client_backend_updater", "127.0.0.1", 12345);
     Http3ClientBackend& static_html_client = client_backend_updater.addBackend(static_backend, false, staticHtmlRequest, 0, fplus::just(staticHtmlNode));
     Http3ClientBackend& random_bytes_client = client_backend_updater.addBackend(static_backend, false, randomBytesRequest, 0, fplus::just(randomBytesNode));
     Http3ClientBackend& static_blocking_html_client = client_backend_updater.addBackend(static_backend, true, staticBlockingHtmlRequest, 0, fplus::just(staticHtmlNode));
@@ -337,7 +337,7 @@ int main() {
         reader_tester.testAnimalNodesNoElephant();
     }
 
-    client_backend_updater.run(*client_communication, timesecs, 100);
+    client_backend_updater.start(*client_communication, timesecs, 100);
     theServer.start(*server_communication, 0, 100);
 
     {

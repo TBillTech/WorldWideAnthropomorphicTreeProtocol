@@ -67,7 +67,7 @@ class YAMLMediator : public Frontend {
         void stop() override { /* YAMLMediator stops automatically */ }  
         bool isRunning() const override { return true; }
         
-        std::vector<Backend*> getBackends() const override {
+        std::vector<Backend*> getBackends() override {
             return {&backendTree_, &backendYAMLTree_};
         }
 

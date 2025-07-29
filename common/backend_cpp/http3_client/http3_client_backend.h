@@ -4,6 +4,7 @@
 #include "communication.h"
 #include "http3_tree_message.h"
 #include "request.h"
+#include "frontend_base.h"
 
 // The journaling feature interfaces with the http3 server to request the latest list of notifications beyond the client's current.
 // Moreover, since the server does not push notifications, it will replay notifications up to some past limit whenever the client desires.
@@ -179,14 +180,17 @@ private:
 
 class Communication;
 
-class Http3ClientBackendUpdater {
+class Http3ClientBackendUpdater : public Frontend {
     public:
-        Http3ClientBackendUpdater() = default;
+        Http3ClientBackendUpdater(string name, string ip_addr, uint16_t port) : name_(name), ip_addr_(ip_addr), port_(port) {}
         ~Http3ClientBackendUpdater() = default;
 
         // Delete copy constructor and copy assignment operator
         Http3ClientBackendUpdater(const Http3ClientBackendUpdater& other) = delete;
         Http3ClientBackendUpdater& operator=(const Http3ClientBackendUpdater&) = delete;
+
+        string getName() const override { return "Http3ClientBackendUpdater_" + name_ + "_" + ip_addr_ + "_" + to_string(port_); }
+        string getType() const override { return "http3_client_backend_updater"; }
 
         // Add a backend to the updater. This method should only be used with Request object that are tree urls.
         // Getting static assets at Request urls is done elsewhere.
@@ -194,6 +198,13 @@ class Http3ClientBackendUpdater {
         Http3ClientBackend& addBackend(Backend& local_backend, bool blocking_mode, Request request, size_t journalRequestsPerMinute = 0, 
                                        fplus::maybe<TreeNode> staticNode = fplus::maybe<TreeNode>());
         Http3ClientBackend& getBackend(const std::string& url);
+        std::vector<Backend*> getBackends() override {
+            std::vector<Backend*> backends;
+            for (auto& backend : backends_) {
+                backends.push_back(&backend);
+            }
+            return backends;
+        }
 
         // There can be multiple request streams per backend, so each new request
         // needs to get a new stream identifier from the quic connector, and then
@@ -214,7 +225,7 @@ class Http3ClientBackendUpdater {
         // 2. As a daemon thread, using the below function, which will create new thread 
         //    and do the above work until the stop flag is set to true.
         // NOTE: Using the block mode of the Http3ClientBackend is most easily done in mode 2.
-        void run(Communication& connector, double time, size_t sleep_milli = 100) {
+        void start(Communication& connector, double time, size_t sleep_milli = 100) override {
             stopFlag.store(false);
             updaterThread_ = thread([this, &connector, time, sleep_milli]() {
                 double local_time = time;
@@ -227,11 +238,15 @@ class Http3ClientBackendUpdater {
                 return EXIT_SUCCESS;
             });
         }
-        void stop() {
+        void stop() override {
             stopFlag.store(true);
             if (updaterThread_.joinable()) {
                 updaterThread_.join();
             }
+        }
+
+        bool isRunning() const override {
+            return updaterThread_.joinable();
         }
 
         size_t size() const {
@@ -239,7 +254,10 @@ class Http3ClientBackendUpdater {
         }
 
     private:
-        // Track the backends which will be updated by this class.  
+        string name_;
+        string ip_addr_;
+        uint16_t port_;
+        // Track the backends which will be updated by this class.
         std::list<Http3ClientBackend> backends_;
 
         std::map<StreamIdentifier, HTTP3TreeMessage> ongoingRequests_;
@@ -248,6 +266,6 @@ class Http3ClientBackendUpdater {
 
         std::list<StreamIdentifier> completeRequests_;
 
-        thread updaterThread_;  // Thread to run the updater
+        thread updaterThread_;  // Thread to start the updater
         atomic<bool> stopFlag{false};  // Flag to stop the updater thread
 };

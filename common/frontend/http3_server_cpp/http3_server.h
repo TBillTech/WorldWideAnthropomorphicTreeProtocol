@@ -97,7 +97,7 @@ public:
         return !stopFlag.load();
     }
 
-    std::vector<Backend*> getBackends() const override {
+    std::vector<Backend*> getBackends() override {
         std::vector<Backend*> backends;
         for (const auto& [url, route] : servers_) {
             backends.push_back(&route.getBackend());
