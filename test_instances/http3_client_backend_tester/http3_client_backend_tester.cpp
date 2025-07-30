@@ -237,12 +237,11 @@ int main() {
 
     Request staticHtmlRequest{.scheme = "https", .authority = "localhost", .path = "/index.html", .method = "GET", .pri = {0, 0}};
     Request staticBlockingHtmlRequest{.scheme = "https", .authority = "localhost", .path = "/index.html", .method = "GET", .pri = {1, 0}};
-    TreeNodeVersion aVersion;
     TreeNode staticHtmlNode(
         "index.html",
         "Static HTML file",
         {{"html", "index"}},
-        aVersion,
+        DEFAULT_TREE_NODE_VERSION,
         {},
         shared_span<>(global_no_chunk_header, false),
         fplus::nothing<std::string>(),
@@ -253,7 +252,7 @@ int main() {
         "randombytes.bin",
         "Random bytes file",
         {{"bin", "randombytes"}},
-        aVersion,
+        DEFAULT_TREE_NODE_VERSION,
         {},
         shared_span<>(global_no_chunk_header, false),
         fplus::nothing<std::string>(),

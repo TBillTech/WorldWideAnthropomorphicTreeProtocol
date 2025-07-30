@@ -5,12 +5,11 @@ using namespace std;
 
 TreeNodeVersion fromYAMLNode(const YAML::Node& node) {
     TreeNodeVersion version;
-    if (!node["version_number"] || !node["max_version_sequence"] || !node["policy"]) {
-        throw std::runtime_error("YAML node does not contain required fields for TreeNodeVersion");
-    }
-    version.version_number = node["version_number"].as<uint16_t>();
-    version.max_version_sequence = node["max_version_sequence"].as<uint16_t>();
-    version.policy = node["policy"].as<std::string>();
+    // Provide default values if fields are missing
+    version.version_number = node["version_number"] ? node["version_number"].as<uint16_t>() : 0;
+    version.max_version_sequence = node["max_version_sequence"] ? node["max_version_sequence"].as<uint16_t>() : 256;
+    version.policy = node["policy"] ? node["policy"].as<std::string>() : "default";
+    
     if (node["authorial_proof"]) {
         version.authorial_proof = fplus::just(node["authorial_proof"].as<std::string>());
     } else {
@@ -721,8 +720,13 @@ YAML::Node TreeNode::asYAMLNode(Backend &backend, bool loadChildren) const
 
 YAML::Node& TreeNode::updateYAMLNode(YAML::Node& yaml) const
 {
-    yaml["description"] = description;
-    yaml["version"] = version.asYAMLNode();
+    // Only include description if it differs from the node name
+    if (description != getNodeName()) {
+        yaml["description"] = description;
+    }
+    if (!version.isDefault()) {
+        yaml["version"] = version.asYAMLNode();
+    }
     if (query_how_to.is_just()) {
         yaml["query_how_to"] = query_how_to.unsafe_get_just();
     }
@@ -742,9 +746,27 @@ vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_p
 
     std::string label_rule = label_prefix + name;
 
-    std::string description = node["description"].as<std::string>("");
+    // Use node name as default description if not specified in YAML
+    std::string description;
+    if (node["description"]) {
+        description = node["description"].as<std::string>();
+    } else {
+        description = name;
+    }
 
-    TreeNodeVersion version = fromYAMLNode(node["version"]);
+    TreeNodeVersion version;
+    if (node["version"]) {
+        version = fromYAMLNode(node["version"]);
+    } else {
+        // Use default version: {0, 256, "default", all optionals empty}
+        version.version_number = 0;
+        version.max_version_sequence = 256;
+        version.policy = "default";
+        version.authorial_proof = fplus::nothing<std::string>();
+        version.authors = fplus::nothing<std::string>();
+        version.readers = fplus::nothing<std::string>();
+        version.collision_depth = fplus::nothing<int>();
+    }
     std::set<std::string> children;
     if (node["child_names"]) {
         for (const auto& child_name : node["child_names"]) {

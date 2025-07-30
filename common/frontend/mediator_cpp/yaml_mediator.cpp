@@ -109,7 +109,7 @@ void toYAMLCallback(Backend& yamlBackend, Backend& backend, YAML::Node yaml, Pro
         TreeNode yamlNode(node_label, 
             node_label + " YAML Container", 
             { {specifier.getPropertyType(), specifier.getPropertyName()} },
-            TreeNodeVersion{0, 256, "default", maybe<string>(), maybe<string>(), maybe<string>(), maybe<int>()}, // Default version for YAML nodes
+            DEFAULT_TREE_NODE_VERSION, // Default version for YAML nodes
             {},
             move(concatted), 
             maybe<string>(), // No query how-to for YAML nodes

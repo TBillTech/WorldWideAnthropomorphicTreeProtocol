@@ -310,19 +310,18 @@ TEST_CASE("WWATPService SimpleBackend test via TreeNodes", "[WWATPService][Simpl
     
     // Create the configuration structure for a SimpleBackend
     // The WWATPService expects config/backends/test_simple with a "type" property
-    TreeNodeVersion aVersion;
     shared_span<> no_content1(global_no_chunk_header, false);
     shared_span<> no_content2(global_no_chunk_header, false);
     
     // Create config root node
-    TreeNode config_root("config", "Configuration root", {}, aVersion, {"backends"}, std::move(no_content1), nothing<string>(), nothing<string>());
+    TreeNode config_root("config", "Configuration root", {}, DEFAULT_TREE_NODE_VERSION, {"backends"}, std::move(no_content1), nothing<string>(), nothing<string>());
     
     // Create backends node as a child of config  
-    TreeNode backends_node("config/backends", "Backend configurations", {}, aVersion, {"test_simple"}, std::move(no_content2), nothing<string>(), nothing<string>());
+    TreeNode backends_node("config/backends", "Backend configurations", {}, DEFAULT_TREE_NODE_VERSION, {"test_simple"}, std::move(no_content2), nothing<string>(), nothing<string>());
     
     // Create the simple backend config using the same pattern as createAnimalNode
     TreeNode simple_backend_config("config/backends/test_simple",
-        "Test simple backend configuration", {}, aVersion, {}, std::move(no_content1), nothing<string>(), nothing<string>());
+        "Test simple backend configuration", {}, DEFAULT_TREE_NODE_VERSION, {}, std::move(no_content1), nothing<string>(), nothing<string>());
     // Set the type property to "simple"
     simple_backend_config.insertPropertyString(0, "type", "string", "simple");
 
@@ -356,34 +355,19 @@ TEST_CASE("WWATPService SimpleBackend test via YAMLMediator", "[WWATPService][Si
     SimpleBackend config_yaml_backend(config_yaml_memory_tree);
     
     // Create a YAML configuration string for the SimpleBackend
+    // Note: version fields and descriptions are omitted when they match defaults
     string config_yaml = R"(config:
-  description: "Configuration root"
-  version:
-    version_number: 0
-    max_version_sequence: 256
-    policy: "default"
   child_names: [backends]
   backends:
-    description: "Backend configurations"
-    version:
-      version_number: 0
-      max_version_sequence: 256
-      policy: "default"
     child_names: [test_simple]
     test_simple:
-      description: "Test simple backend configuration"
-      version:
-        version_number: 0
-        max_version_sequence: 256
-        policy: "default"
       type: simple
 )";
     
     // Create a YAML storage node in the config_yaml_backend
-    TreeNodeVersion aVersion;
     shared_span<> no_content(global_no_chunk_header, false);
     TreeNode yaml_config_node("config_yaml", "YAML Configuration Storage", 
-        {}, aVersion, {}, std::move(no_content), 
+        {}, DEFAULT_TREE_NODE_VERSION, {}, std::move(no_content), 
         nothing<string>(), nothing<string>());
     
     // Insert the YAML property using insertPropertyString

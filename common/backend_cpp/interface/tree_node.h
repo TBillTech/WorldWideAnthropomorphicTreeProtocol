@@ -43,8 +43,8 @@ std::ostream& show_contents(std::ostream& os);
 
 class TreeNodeVersion {
     public:
-        uint16_t version_number;
-        uint16_t max_version_sequence;
+        uint16_t version_number = 0;
+        uint16_t max_version_sequence = 256;
         std::string policy = "default";
         fplus::maybe<std::string> authorial_proof;
         fplus::maybe<std::string> authors;
@@ -55,6 +55,12 @@ class TreeNodeVersion {
             assert(max_version_sequence > 0);
             version_number = (version_number + 1) % max_version_sequence;
             return *this; 
+        }
+        
+        bool isDefault() const {
+            return (version_number == 0 && max_version_sequence == 256 && policy == "default" &&
+                   authorial_proof.is_nothing() && authors.is_nothing() && 
+                   readers.is_nothing() && collision_depth.is_nothing());
         }
         bool operator==( const TreeNodeVersion& other ) const {
             return version_number == other.version_number &&
@@ -137,6 +143,9 @@ class TreeNodeVersion {
             return node;
         }
 };
+
+// Global default TreeNodeVersion constant for convenient use
+inline const TreeNodeVersion DEFAULT_TREE_NODE_VERSION;
 
 TreeNodeVersion fromYAMLNode(const YAML::Node& node);
 class Backend;
