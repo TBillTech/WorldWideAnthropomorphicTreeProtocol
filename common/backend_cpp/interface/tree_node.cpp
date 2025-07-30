@@ -818,6 +818,25 @@ vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_p
                 throw std::runtime_error("Invalid property name: " + it.first.as<std::string>());
             }
         }
+        else {
+            // Default type is "string" if not specified
+            type = "string";
+            // However, attempt to do better:
+            if (it.second.IsScalar()) {
+                std::string value = it.second.as<std::string>();
+                if (value == "true" || value == "True" || value == "false" || value == "False") {
+                    type = "bool";
+                }
+                // If it is a number, we treat it as an int64
+                else if (std::all_of(value.begin(), value.end(), ::isdigit) || (value[0] == '-' && std::all_of(value.begin() + 1, value.end(), ::isdigit))) {
+                    type = "int64";
+                }
+                // If it is a number with a period, then treat it as a double
+                else if (value.find('.') != std::string::npos && std::all_of(value.begin(), value.end(), [](char c) { return ::isdigit(c) || c == '.' || c == '-'; })) {
+                    type = "double";
+                }
+            }
+        }
         infos.push_back({type, name});
 
         if (fixed_size_types.find(type) == fixed_size_types.end()) {

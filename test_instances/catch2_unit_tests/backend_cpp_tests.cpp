@@ -347,15 +347,33 @@ TEST_CASE("WWATPService SimpleBackend test via TreeNodes", "[WWATPService][Simpl
     tester.testBackendLogically();
 }
 
-TEST_CASE("WWATPService SimpleBackend test via YAMLMediator", "[WWATPService][SimpleBackend][YAMLMediator]") {
+TEST_CASE("WWATPService Basic Backend test via YAMLMediator", "[WWATPService][YAMLMediator]") {
     // Create a YAML configuration string for the SimpleBackend
     // Note: version fields and descriptions are omitted when they match defaults
+    string base_path = "/home/tom/sandbox/file_backend_test_store";
+    if (std::filesystem::exists(base_path)) {
+        std::filesystem::remove_all(base_path); // Clean up the directory if it exists
+    }
+    std::filesystem::create_directory(base_path);
     string config_yaml = R"(config:
   child_names: [backends]
   backends:
-    child_names: [test_simple]
+    child_names: [test_simple, for_threadsafe, test_threadsafe, for_transactional, test_transactional, file_backend]
     test_simple:
       type: simple
+    for_threadsafe:
+      type: simple
+    test_threadsafe:
+      type: threadsafe
+      backend: for_threadsafe
+    for_transactional:
+      type: simple
+    test_transactional:
+      type: transactional
+      backend: for_transactional
+    file_backend:
+      type: file
+      root_path: )" + base_path + R"(
 )";
     
     // Create the configuration backend from YAML using the WWATPService helper function
@@ -370,11 +388,184 @@ TEST_CASE("WWATPService SimpleBackend test via YAMLMediator", "[WWATPService][Si
     // Get the constructed SimpleBackend by name
     auto simple_backend = wwatp_service->getBackend("test_simple");
     REQUIRE(simple_backend != nullptr);
-    
-    // Run the same logical tests as the original SimpleBackend test
-    BackendTestbed tester(*simple_backend);
-    tester.addAnimalsToBackend();
-    tester.addNotesPageTree();
-    tester.testBackendLogically();
+    {
+        // Run the same logical tests as the original SimpleBackend test
+        BackendTestbed tester(*simple_backend);
+        tester.addAnimalsToBackend();
+        tester.addNotesPageTree();
+        tester.testBackendLogically();
+    }
+
+    // Get the constructed ThreadsafeBackend by name
+    auto threadsafe_backend = wwatp_service->getBackend("test_threadsafe");
+    REQUIRE(threadsafe_backend != nullptr);
+    // Run the same logical tests as the original ThreadsafeBackend test
+    {
+        BackendTestbed tester(*threadsafe_backend);
+        tester.addAnimalsToBackend();
+        tester.addNotesPageTree();
+        tester.testBackendLogically();
+    }
+
+    // Get the constructed TransactionalBackend by name
+    auto transactional_backend = wwatp_service->getBackend("test_transactional");
+    REQUIRE(transactional_backend != nullptr);
+    // Run the same logical tests as the original TransactionalBackend test
+    {
+        BackendTestbed tester(*transactional_backend);
+        tester.addAnimalsToBackend();
+        tester.addNotesPageTree();
+        tester.testBackendLogically();
+    }
+
+    auto file_backend = wwatp_service->getBackend("file_backend");
+    REQUIRE(file_backend != nullptr);
+    {
+        size_t notification_delay = 40; // milliseconds
+        BackendTestbed tester(*file_backend);
+        tester.addAnimalsToBackend();
+        tester.addNotesPageTree();
+        this_thread::sleep_for(chrono::milliseconds(notification_delay));
+        file_backend->processNotifications();
+        // put a lion node listener on file_backend_b
+        string lion_listener_name = "lion_listener";
+        bool lion_node_modified = false;
+        file_backend->registerNodeListener(lion_listener_name, "lion", false,
+            [&lion_node_modified](Backend& notified_backend, const string label_rule, const fplus::maybe<TreeNode> node) {
+                REQUIRE("lion" == label_rule);
+                if (node.is_just()) {
+                    auto found_node = node.get_with_default(TreeNode());
+                    if (found_node.getLabelRule() == "lion") {
+                        lion_node_modified = true;
+                    }
+                }
+            });
+        this_thread::sleep_for(chrono::milliseconds(notification_delay));
+        // Now modify the lion node directly on disk: 
+        auto lion_node_path = base_path + "/lion.node";
+        {
+            std::ifstream read_lion_file(lion_node_path);
+            if (!read_lion_file) {
+                throw std::runtime_error("Failed to open lion.node for reading");
+            }
+            TreeNode raw_lion_node;
+            read_lion_file >> raw_lion_node; // Read the node from the file
+            read_lion_file.close();
+            std::ofstream lion_file(lion_node_path);
+            if (!lion_file) {
+                throw std::runtime_error("Failed to open lion.node for writing");
+            }
+            // Now modify the node
+            raw_lion_node.setDescription("A majestic creature with a loud roar");
+            lion_file << hide_contents << raw_lion_node; // Write the modified node back to the file
+            lion_file.close();
+        }
+        this_thread::sleep_for(chrono::milliseconds(notification_delay));
+        file_backend->processNotifications();
+        REQUIRE(lion_node_modified); // We should have been notified of the modification
+    }
 }
 
+TEST_CASE("WWATPService CompositeBackend mountBackend test via YAMLMediator", "[WWATPService][CompositeBackend][YAMLMediator]") {
+    // Create a YAML configuration string for CompositeBackend with mounted backends
+    string config_yaml = R"(config:
+  child_names: [backends]
+  backends:
+    child_names: [root_simple, zoo_simple, museum_simple, test_composite]
+    root_simple:
+      type: simple
+    zoo_simple:
+      type: simple
+    museum_simple:
+      type: simple
+    test_composite:
+      type: composite
+      backend: root_simple
+      child_names: [zoo_simple, museum_simple]
+      zoo_simple:
+        mount_path: zoo
+      museum_simple:
+        mount_path: museum
+)";
+    
+    // Create the configuration backend from YAML using the helper function
+    auto config_backend = createConfigBackendFromYAML(config_yaml);
+    
+    // Create the WWATPService with the configuration backend
+    auto wwatp_service = make_shared<WWATPService>("test_service", config_backend, "config");
+    
+    // Initialize the service to construct all backends
+    wwatp_service->initialize();
+    
+    // Get the individual backends for adding data
+    auto zoo_backend = wwatp_service->getBackend("zoo_simple");
+    auto museum_backend = wwatp_service->getBackend("museum_simple");
+    auto composite_backend = wwatp_service->getBackend("test_composite");
+    
+    REQUIRE(zoo_backend != nullptr);
+    REQUIRE(museum_backend != nullptr);
+    REQUIRE(composite_backend != nullptr);
+    
+    // Add animals to zoo and museum backends directly
+    {
+        BackendTestbed zoo_tester(*zoo_backend);
+        zoo_tester.addAnimalsToBackend();
+        zoo_tester.addNotesPageTree();
+    }
+    {
+        BackendTestbed museum_tester(*museum_backend);
+        museum_tester.addAnimalsToBackend();
+        museum_tester.addNotesPageTree();
+    }
+    
+    // Test the composite backend with prefixed paths (zoo/ and museum/)
+    BackendTestbed tester(*composite_backend);
+    tester.testBackendLogically("zoo/");
+    tester.testBackendLogically("museum/");
+}
+
+TEST_CASE("WWATPService RedirectedBackend test via YAMLMediator", "[WWATPService][RedirectedBackend][YAMLMediator]") {
+    // Create a YAML configuration string for RedirectedBackend
+    string config_yaml = R"(config:
+  child_names: [backends]
+  backends:
+    child_names: [test_redirected, underlying_composite, for_composite, zoo_simple]
+    test_redirected:
+      type: redirected
+      backend: underlying_composite
+      redirect_root: zoo
+    underlying_composite:
+      type: composite
+      backend: for_composite
+      child_names: [zoo_simple]
+      zoo_simple:
+        mount_path: zoo
+    for_composite:
+      type: simple
+    zoo_simple:
+      type: simple
+)";
+    
+    // Create the configuration backend from YAML using the helper function
+    auto config_backend = createConfigBackendFromYAML(config_yaml);
+    
+    // Create the WWATPService with the configuration backend
+    auto wwatp_service = make_shared<WWATPService>("test_service", config_backend, "config");
+    
+    // Initialize the service to construct all backends
+    wwatp_service->initialize();
+    
+    {
+        auto zoo_backend = wwatp_service->getBackend("zoo_simple");
+        REQUIRE(zoo_backend != nullptr);
+        BackendTestbed tester(*zoo_backend);
+        tester.addAnimalsToBackend();
+        tester.addNotesPageTree();
+    }
+    {
+        auto redirected_backend = wwatp_service->getBackend("test_redirected");
+        REQUIRE(redirected_backend != nullptr);
+        BackendTestbed tester(*redirected_backend);
+        tester.testBackendLogically();
+    }
+}

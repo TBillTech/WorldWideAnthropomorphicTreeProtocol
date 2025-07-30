@@ -75,11 +75,17 @@ void WWATPService::initialize() {
 }
 
 std::shared_ptr<Backend> WWATPService::getBackend(const std::string& backend_name) const {
+    if (!initialized_) {
+        throw std::runtime_error("WWATPService not initialized");
+    }
     auto it = backends_.find(backend_name);
     return (it != backends_.end()) ? it->second : nullptr;
 }
 
 std::vector<std::string> WWATPService::getBackendNames() const {
+    if (!initialized_) {
+        throw std::runtime_error("WWATPService not initialized");
+    }
     std::vector<std::string> names;
     names.reserve(backends_.size());
     for (const auto& [name, backend] : backends_) {
@@ -89,6 +95,9 @@ std::vector<std::string> WWATPService::getBackendNames() const {
 }
 
 bool WWATPService::hasBackend(const std::string& backend_name) const {
+    if (!initialized_) {
+        throw std::runtime_error("WWATPService not initialized");
+    }
     return backends_.find(backend_name) != backends_.end();
 }
 
@@ -181,7 +190,7 @@ void WWATPService::constructBackends() {
         try {
             auto backend = factory_it->second(backend_config);
             backends_[backend_name] = backend;
-            std::cout << "Created backend '" << backend_name << "' of type '" << backend_type << "'" << std::endl;
+            std::cout << "Created backend '" << backend_name << "' of type '" << backend_type << "'" << endl << flush;
         } catch (const std::exception& e) {
             throw std::runtime_error("Failed to create backend '" + backend_name + "': " + e.what());
         }
@@ -215,7 +224,7 @@ void WWATPService::constructFrontends() {
         try {
             auto frontend = factory_it->second(frontend_node.unsafe_get_just());
             frontends_[frontend_name] = frontend;
-            std::cout << "Created frontend '" << frontend_name << "' of type '" << frontend_type << "'" << std::endl;
+            std::cout << "Created frontend '" << frontend_name << "' of type '" << frontend_type << "'" << endl << flush;
         } catch (const std::exception& e) {
             throw std::runtime_error("Failed to create frontend '" + frontend_name + "': " + e.what());
         }
@@ -282,12 +291,21 @@ std::vector<std::string> WWATPService::getBackendDependencies(const TreeNode& ba
     std::vector<std::string> dependencies;
     
     // Check common dependency property names
-    std::vector<std::string> dep_properties = {"backend", "underlying_backend", "base_backend", "parent_backend"};
+    std::vector<std::string> dep_properties = {"backend"};
     
     for (const std::string& prop : dep_properties) {
         std::string dep = getStringProperty(backend_config, prop);
         if (!dep.empty()) {
             dependencies.push_back(dep);
+        }
+    }
+    
+    // Special handling for CompositeBackend - it also depends on all child backends it needs to mount
+    std::string backend_type = getStringProperty(backend_config, "type");
+    if (backend_type == "composite") {
+        // Add all child backends as dependencies
+        for (const std::string& child_name : backend_config.getChildNames()) {
+            dependencies.push_back(child_name);
         }
     }
     
@@ -344,13 +362,13 @@ std::shared_ptr<Backend> WWATPService::createTransactionalBackend(const TreeNode
     if (underlying_backend_name.empty()) {
         throw std::runtime_error("TransactionalBackend requires 'backend' property");
     }
-    
-    auto underlying_backend = getBackend(underlying_backend_name);
-    if (!underlying_backend) {
+
+    auto underlying_backend = backends_.find(underlying_backend_name);
+    if (underlying_backend == backends_.end()) {
         throw std::runtime_error("Underlying backend '" + underlying_backend_name + "' not found");
     }
     
-    return std::make_shared<TransactionalBackend>(*underlying_backend);
+    return std::make_shared<TransactionalBackend>(*underlying_backend->second);
 }
 
 std::shared_ptr<Backend> WWATPService::createThreadsafeBackend(const TreeNode& config) {
@@ -358,32 +376,32 @@ std::shared_ptr<Backend> WWATPService::createThreadsafeBackend(const TreeNode& c
     if (underlying_backend_name.empty()) {
         throw std::runtime_error("ThreadsafeBackend requires 'backend' property");
     }
-    
-    auto underlying_backend = getBackend(underlying_backend_name);
-    if (!underlying_backend) {
+
+    auto underlying_backend = backends_.find(underlying_backend_name);
+    if (underlying_backend == backends_.end()) {
         throw std::runtime_error("Underlying backend '" + underlying_backend_name + "' not found");
     }
     
-    return std::make_shared<ThreadsafeBackend>(*underlying_backend);
+    return std::make_shared<ThreadsafeBackend>(*underlying_backend->second);
 }
 
 std::shared_ptr<Backend> WWATPService::createCompositeBackend(const TreeNode& config) {
-    std::string root_backend_name = getStringProperty(config, "root_backend");
+    std::string root_backend_name = getStringProperty(config, "backend");
     if (root_backend_name.empty()) {
-        throw std::runtime_error("CompositeBackend requires 'root_backend' property");
+        throw std::runtime_error("CompositeBackend requires 'backend' property");
     }
-    
-    auto root_backend = getBackend(root_backend_name);
-    if (!root_backend) {
+
+    auto root_backend = backends_.find(root_backend_name);
+    if (root_backend == backends_.end()) {
         throw std::runtime_error("Root backend '" + root_backend_name + "' not found");
     }
-    
-    auto composite = std::make_shared<CompositeBackend>(*root_backend);
+
+    auto composite = std::make_shared<CompositeBackend>(*root_backend->second);
 
     // Iterate through the children nodes, which will have names == backend name, and a string property called "mount_path"
     for (const auto& child_name : config.getChildNames()) {
         auto child_label = config.getLabelRule() + "/" + child_name;
-        auto child_node = config_backend_->getNode(child_name);
+        auto child_node = config_backend_->getNode(child_label);
         if (child_node.is_nothing()) {
             std::cerr << "Warning: Child backend configuration '" << child_name << "' not found" << std::endl;
             continue;
@@ -394,12 +412,12 @@ std::shared_ptr<Backend> WWATPService::createCompositeBackend(const TreeNode& co
             continue;   
         }
         auto backend_name = child_node.unsafe_get_just().getNodeName();
-        auto child_backend = getBackend(child_name);
-        if (!child_backend) {
+        auto child_backend = backends_.find(child_name);
+        if (child_backend == backends_.end()) {
             std::cerr << "Warning: Child backend '" << child_name << "' not found" << std::endl;
             continue;
         }
-        if (!composite->mountBackend(mount_path, *child_backend).second) {
+        if (!composite->mountBackend(mount_path, *(child_backend->second)).second) {
             std::cerr << "Warning: Failed to add child backend '" << child_name << "' to composite backend" << std::endl;
         } else {
             std::cout << "Added child backend '" << child_name << "' at mount path '" << mount_path << "'" << std::endl;
@@ -414,14 +432,14 @@ std::shared_ptr<Backend> WWATPService::createRedirectedBackend(const TreeNode& c
     if (underlying_backend_name.empty()) {
         throw std::runtime_error("RedirectedBackend requires 'backend' property");
     }
-    
-    auto underlying_backend = getBackend(underlying_backend_name);
-    if (!underlying_backend) {
+
+    auto underlying_backend = backends_.find(underlying_backend_name);
+    if (underlying_backend == backends_.end()) {
         throw std::runtime_error("Underlying backend '" + underlying_backend_name + "' not found");
     }
     
     std::string redirect_root = getStringProperty(config, "redirect_root", "");
-    return std::make_shared<RedirectedBackend>(*underlying_backend, redirect_root);
+    return std::make_shared<RedirectedBackend>(*(underlying_backend->second), redirect_root);
 }
 
 QuicConnector& WWATPService::obtainQuicConnector(const YAML::Node& config) {
@@ -470,9 +488,9 @@ std::shared_ptr<Backend> WWATPService::createHttp3ClientBackend(const TreeNode& 
 
     ConnectorSpecifier connspec = getConnectorSpecifier(yaml_config);
 
-    string backend_name = yaml_config["local_backend"].as<string>("http3_client_cache");
-    auto local_backend = getBackend(backend_name);
-    if (!local_backend) {
+    string backend_name = yaml_config["backend"].as<string>("http3_client_cache");
+    auto local_backend = backends_.find(backend_name);
+    if (local_backend == backends_.end()) {
         throw std::runtime_error("Backend '" + backend_name + "' not found for HTTP3ClientBackend");
     }
     bool blocking_mode = yaml_config["blocking_mode"].as<bool>(true);
@@ -488,7 +506,7 @@ std::shared_ptr<Backend> WWATPService::createHttp3ClientBackend(const TreeNode& 
     request.pri.inc = yaml_config["increment"].as<int64_t>(0);
     maybe<TreeNode> staticNode;
     Http3ClientBackendUpdater& http3_client_updater = obtainHttp3ClientUpdater(yaml_config);
-    Http3ClientBackend& http3_client_backend = http3_client_updater.addBackend(*local_backend, blocking_mode, request, journalRequestsPerMinute, staticNode);
+    Http3ClientBackend& http3_client_backend = http3_client_updater.addBackend(*(local_backend->second), blocking_mode, request, journalRequestsPerMinute, staticNode);
     // Use shared_ptr with custom deleter that doesn't delete - the updater owns the object
     return shared_ptr<Http3ClientBackend>(&http3_client_backend, [](Http3ClientBackend*){});
 }
@@ -516,17 +534,17 @@ pair<shared_ptr<Frontend>, WWATPService::ConnectorSpecifier> WWATPService::creat
     if (backend_a_name.empty() || backend_b_name.empty()) {
         throw std::runtime_error("CloningMediator requires 'backend_a' and 'backend_b' properties");
     }
-    
-    auto backend_a = getBackend(backend_a_name);
-    auto backend_b = getBackend(backend_b_name);
-    
-    if (!backend_a || !backend_b) {
+
+    auto backend_a = backends_.find(backend_a_name);
+    auto backend_b = backends_.find(backend_b_name);
+
+    if (backend_a == backends_.end() || backend_b == backends_.end()) {
         throw std::runtime_error("Required backends not found for CloningMediator '" + name + "'");
     }
     
-    bool versioned = getBoolProperty(config, "versioned", true);
-    
-    return {make_shared<CloningMediator>(name, *backend_a, *backend_b, versioned),
+    bool versioned = getBoolProperty(config, "versioned", false);
+
+    return {make_shared<CloningMediator>(name, *(backend_a->second), *(backend_b->second), versioned),
             tuple<string, string, uint16_t>(name, "", 0)}; // Dummy connector specifier
 }
 
@@ -543,10 +561,10 @@ pair<shared_ptr<Frontend>, WWATPService::ConnectorSpecifier> WWATPService::creat
         throw std::runtime_error("YAMLMediator requires 'tree_backend' and 'yaml_backend' properties");
     }
     
-    auto tree_backend = getBackend(tree_backend_name);
-    auto yaml_backend = getBackend(yaml_backend_name);
-    
-    if (!tree_backend || !yaml_backend) {
+    auto tree_backend = backends_.find(tree_backend_name);
+    auto yaml_backend = backends_.find(yaml_backend_name);
+
+    if (tree_backend == backends_.end() || yaml_backend == backends_.end()) {
         throw std::runtime_error("Required backends not found for YAMLMediator '" + name + "'");
     }
     
@@ -558,8 +576,8 @@ pair<shared_ptr<Frontend>, WWATPService::ConnectorSpecifier> WWATPService::creat
     PropertySpecifier specifier(node_label, property_name, property_type);
     
     bool initialize_from_yaml = getBoolProperty(config, "initialize_from_yaml", true);
-    
-    return {make_shared<YAMLMediator>(name, *tree_backend, *yaml_backend, specifier, initialize_from_yaml),
+
+    return {make_shared<YAMLMediator>(name, *(tree_backend->second), *(yaml_backend->second), specifier, initialize_from_yaml),
             tuple<string, string, uint16_t>(name, "", 0)}; // Dummy connector specifier
 }
 
