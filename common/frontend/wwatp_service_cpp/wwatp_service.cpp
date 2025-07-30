@@ -758,3 +758,32 @@ std::vector<Backend*> WWATPService::getBackends() {
     return result;
 }
 
+std::shared_ptr<Backend> createConfigBackendFromYAML(const std::string& config_yaml) {
+    // Create configuration backends: one for tree structure, one for YAML storage
+    auto config_memory_tree = make_shared<MemoryTree>();
+    auto config_backend = make_shared<SimpleBackend>(config_memory_tree);
+    auto config_yaml_memory_tree = make_shared<MemoryTree>();
+    SimpleBackend config_yaml_backend(config_yaml_memory_tree);
+    
+    // Create a YAML storage node in the config_yaml_backend
+    shared_span<> no_content(global_no_chunk_header, false);
+    TreeNode yaml_config_node("config_yaml", "YAML Configuration Storage", 
+        {}, DEFAULT_TREE_NODE_VERSION, {}, std::move(no_content), 
+        nothing<string>(), nothing<string>());
+    
+    // Insert the YAML property using insertPropertyString
+    yaml_config_node.insertPropertyString(0, "config", "yaml", config_yaml);
+    
+    // Insert the YAML configuration node
+    config_yaml_backend.upsertNode({yaml_config_node});
+    
+    // Create PropertySpecifier for the YAMLMediator
+    PropertySpecifier specifier("config_yaml", "config", "yaml");
+    
+    // Create YAMLMediator to convert YAML to tree structure
+    // initialize_from_yaml = true means read from config_yaml_backend and populate config_backend
+    YAMLMediator yaml_mediator("config_mediator", *config_backend, config_yaml_backend, specifier, true);
+    
+    return config_backend;
+}
+

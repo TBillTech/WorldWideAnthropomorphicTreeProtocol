@@ -227,4 +227,12 @@ private:
      */
     bool getBoolProperty(const TreeNode& node, const std::string& property_name, 
                         bool default_value = false) const;
+
 };
+
+/**
+ * Helper function to create a config backend from a YAML string
+ * @param config_yaml The YAML configuration string
+ * @return Shared pointer to the created configuration backend
+ */
+std::shared_ptr<Backend> createConfigBackendFromYAML(const std::string& config_yaml);
