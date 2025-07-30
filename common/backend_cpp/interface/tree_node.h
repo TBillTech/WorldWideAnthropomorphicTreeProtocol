@@ -231,7 +231,7 @@ public:
     // index values are 0-based, but indexes beyond the current size of the property_infos vector induce append behavior.
     template<typename T>
     void insertProperty(size_t index, const string& name, const T& value);
-    void insertPropertyString(size_t index, const string& name, const string& value);
+    void insertPropertyString(size_t index, const string& name, const string& type, const string& value);
     // insertPropertySpan inserts the property data as a block of bytes at the specified index, it accepts the property name and type, and the raw property value stored in a shared_span<>.
     // It MUST NOT already exist in the properties, since this is used to insert new properties.
     // index values are 0-based, but indexes beyond the current size of the property_infos vector induce append behavior.

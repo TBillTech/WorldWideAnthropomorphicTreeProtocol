@@ -484,13 +484,13 @@ void TreeNode::insertProperty(size_t index, const string& name, const T& value)
     property_data.compress();
 }
 
-void TreeNode::insertPropertyString(size_t index, const string& name, const string& value)
+void TreeNode::insertPropertyString(size_t index, const string& name, const string& type, const string& value)
 {
     // convert string to shared_span<>
     payload_chunk_header header(4, payload_chunk_header::SIGNAL_OTHER_CHUNK, value.size());
     shared_span<> data_span(header, std::span<const char>(value.data(), value.size()));
     // insert the property data
-    insertPropertySpan(index, name, "string", move(data_span));
+    insertPropertySpan(index, name, type, move(data_span));
 }
 
 void TreeNode::insertPropertySpan(size_t index, const string& name, const string& type, const shared_span<>&& data)

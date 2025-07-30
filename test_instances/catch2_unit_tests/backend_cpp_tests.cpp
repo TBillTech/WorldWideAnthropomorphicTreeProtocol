@@ -7,6 +7,7 @@
 #include "backend_testbed.h"
 #include "file_backend.h"
 #include "wwatp_service.h"
+#include "yaml_mediator.h"
 #include <sstream>
 #include <filesystem>
 
@@ -302,10 +303,7 @@ TEST_CASE("FileBackend test", "[FileBackend]") {
     }
 }
 
-TEST_CASE("WWATPService SimpleBackend test", "[WWATPService][SimpleBackend]") {
-    // set to pool size for the type UDPChunk to 4 GB
-    memory_pool.setPoolSize<UDPChunk>(static_cast<uint64_t>(4) * 1024 * 1024 * 1024 / UDPChunk::chunk_size);
-
+TEST_CASE("WWATPService SimpleBackend test via TreeNodes", "[WWATPService][SimpleBackend]") {
     // Create a configuration backend to hold the service configuration
     auto config_memory_tree = make_shared<MemoryTree>();
     SimpleBackend config_backend(config_memory_tree);
@@ -326,12 +324,80 @@ TEST_CASE("WWATPService SimpleBackend test", "[WWATPService][SimpleBackend]") {
     TreeNode simple_backend_config("config/backends/test_simple",
         "Test simple backend configuration", {}, aVersion, {}, std::move(no_content1), nothing<string>(), nothing<string>());
     // Set the type property to "simple"
-    simple_backend_config.insertPropertyString(0, "type", "simple");
+    simple_backend_config.insertPropertyString(0, "type", "string", "simple");
 
     // Insert the backend configuration into the hierarchy
     REQUIRE(config_backend.upsertNode({config_root}));
     REQUIRE(config_backend.upsertNode({backends_node}));
     REQUIRE(config_backend.upsertNode({simple_backend_config}));
+    
+    // Create the WWATPService with the configuration backend
+    auto wwatp_service = make_shared<WWATPService>("test_service", make_shared<SimpleBackend>(config_backend), "config");
+    
+    // Initialize the service to construct all backends
+    wwatp_service->initialize();
+    
+    // Get the constructed SimpleBackend by name
+    auto simple_backend = wwatp_service->getBackend("test_simple");
+    REQUIRE(simple_backend != nullptr);
+    
+    // Run the same logical tests as the original SimpleBackend test
+    BackendTestbed tester(*simple_backend);
+    tester.addAnimalsToBackend();
+    tester.addNotesPageTree();
+    tester.testBackendLogically();
+}
+
+TEST_CASE("WWATPService SimpleBackend test via YAMLMediator", "[WWATPService][SimpleBackend][YAMLMediator]") {
+    // Create configuration backends: one for tree structure, one for YAML storage
+    auto config_memory_tree = make_shared<MemoryTree>();
+    SimpleBackend config_backend(config_memory_tree);
+    auto config_yaml_memory_tree = make_shared<MemoryTree>();
+    SimpleBackend config_yaml_backend(config_yaml_memory_tree);
+    
+    // Create a YAML configuration string for the SimpleBackend
+    string config_yaml = R"(config:
+  description: "Configuration root"
+  version:
+    version_number: 0
+    max_version_sequence: 256
+    policy: "default"
+  child_names: [backends]
+  backends:
+    description: "Backend configurations"
+    version:
+      version_number: 0
+      max_version_sequence: 256
+      policy: "default"
+    child_names: [test_simple]
+    test_simple:
+      description: "Test simple backend configuration"
+      version:
+        version_number: 0
+        max_version_sequence: 256
+        policy: "default"
+      type: simple
+)";
+    
+    // Create a YAML storage node in the config_yaml_backend
+    TreeNodeVersion aVersion;
+    shared_span<> no_content(global_no_chunk_header, false);
+    TreeNode yaml_config_node("config_yaml", "YAML Configuration Storage", 
+        {}, aVersion, {}, std::move(no_content), 
+        nothing<string>(), nothing<string>());
+    
+    // Insert the YAML property using insertPropertyString
+    yaml_config_node.insertPropertyString(0, "config", "yaml", config_yaml);
+    
+    // Insert the YAML configuration node
+    REQUIRE(config_yaml_backend.upsertNode({yaml_config_node}));
+    
+    // Create PropertySpecifier for the YAMLMediator
+    PropertySpecifier specifier("config_yaml", "config", "yaml");
+    
+    // Create YAMLMediator to convert YAML to tree structure
+    // initialize_from_yaml = true means read from config_yaml_backend and populate config_backend
+    YAMLMediator yaml_mediator("config_mediator", config_backend, config_yaml_backend, specifier, true);
     
     // Create the WWATPService with the configuration backend
     auto wwatp_service = make_shared<WWATPService>("test_service", make_shared<SimpleBackend>(config_backend), "config");
