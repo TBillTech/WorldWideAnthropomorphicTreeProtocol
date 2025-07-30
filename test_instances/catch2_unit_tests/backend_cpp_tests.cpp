@@ -6,6 +6,7 @@
 #include "redirected_backend.h"
 #include "backend_testbed.h"
 #include "file_backend.h"
+#include "wwatp_service.h"
 #include <sstream>
 #include <filesystem>
 
@@ -299,5 +300,53 @@ TEST_CASE("FileBackend test", "[FileBackend]") {
         // This rewrites the files one more time so the human can browse them.
         tester.addAnimalsToBackend();
     }
+}
+
+TEST_CASE("WWATPService SimpleBackend test", "[WWATPService][SimpleBackend]") {
+    // set to pool size for the type UDPChunk to 4 GB
+    memory_pool.setPoolSize<UDPChunk>(static_cast<uint64_t>(4) * 1024 * 1024 * 1024 / UDPChunk::chunk_size);
+
+    // Create a configuration backend to hold the service configuration
+    auto config_memory_tree = make_shared<MemoryTree>();
+    SimpleBackend config_backend(config_memory_tree);
+    
+    // Create the configuration structure for a SimpleBackend
+    // The WWATPService expects config/backends/test_simple with a "type" property
+    TreeNodeVersion aVersion;
+    shared_span<> no_content1(global_no_chunk_header, false);
+    shared_span<> no_content2(global_no_chunk_header, false);
+    
+    // Create config root node
+    TreeNode config_root("config", "Configuration root", {}, aVersion, {"backends"}, std::move(no_content1), nothing<string>(), nothing<string>());
+    
+    // Create backends node as a child of config  
+    TreeNode backends_node("config/backends", "Backend configurations", {}, aVersion, {"test_simple"}, std::move(no_content2), nothing<string>(), nothing<string>());
+    
+    // Create the simple backend config using the same pattern as createAnimalNode
+    TreeNode simple_backend_config("config/backends/test_simple",
+        "Test simple backend configuration", {}, aVersion, {}, std::move(no_content1), nothing<string>(), nothing<string>());
+    // Set the type property to "simple"
+    simple_backend_config.insertPropertyString(0, "type", "simple");
+
+    // Insert the backend configuration into the hierarchy
+    REQUIRE(config_backend.upsertNode({config_root}));
+    REQUIRE(config_backend.upsertNode({backends_node}));
+    REQUIRE(config_backend.upsertNode({simple_backend_config}));
+    
+    // Create the WWATPService with the configuration backend
+    auto wwatp_service = make_shared<WWATPService>("test_service", make_shared<SimpleBackend>(config_backend), "config");
+    
+    // Initialize the service to construct all backends
+    wwatp_service->initialize();
+    
+    // Get the constructed SimpleBackend by name
+    auto simple_backend = wwatp_service->getBackend("test_simple");
+    REQUIRE(simple_backend != nullptr);
+    
+    // Run the same logical tests as the original SimpleBackend test
+    BackendTestbed tester(*simple_backend);
+    tester.addAnimalsToBackend();
+    tester.addNotesPageTree();
+    tester.testBackendLogically();
 }
 

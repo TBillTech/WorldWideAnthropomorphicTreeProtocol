@@ -274,6 +274,12 @@ tuple<uint64_t, T, shared_span<>> TreeNode::getPropertyValue(const string& name)
     return make_tuple(cur_size, *remaining_data.begin<T>(), cur_span);
 }
 
+tuple<uint64_t, string> TreeNode::getPropertyString(const string& name) const
+{
+    auto [size, size_span, data_span] = getPropertyValueSpan(name);
+    return make_tuple(size, string(data_span.begin<const char>(), data_span.end<const char>()));
+}
+
 tuple<uint64_t, shared_span<>, shared_span<>> TreeNode::getPropertyValueSpan(const string& name) const
 {
     auto it = std::find_if(property_infos.begin(), property_infos.end(), [&](const auto& info) {
@@ -361,6 +367,15 @@ void TreeNode::setPropertyValue(const string& name, const T& value)
     }
     auto value_span = remaining_data.restrict(pair(0, sizeof(T)));
     value_span.copy_type(value);
+}
+
+void TreeNode::setPropertyString(const string& name, const string& value)
+{
+    // convert string to shared_span<>
+    payload_chunk_header header(4, payload_chunk_header::SIGNAL_OTHER_CHUNK, value.size());
+    shared_span<> data_span(header, std::span<const char>(value.data(), value.size()));
+    // set the property data
+    setPropertyValueSpan(name, move(data_span));
 }
 
 void TreeNode::setPropertyValueSpan(const string& name, const shared_span<>&& data)
@@ -467,6 +482,15 @@ void TreeNode::insertProperty(size_t index, const string& name, const T& value)
     property_data = move(concatted);
     property_infos.insert(next_it, {typenameToString<T>(), name});
     property_data.compress();
+}
+
+void TreeNode::insertPropertyString(size_t index, const string& name, const string& value)
+{
+    // convert string to shared_span<>
+    payload_chunk_header header(4, payload_chunk_header::SIGNAL_OTHER_CHUNK, value.size());
+    shared_span<> data_span(header, std::span<const char>(value.data(), value.size()));
+    // insert the property data
+    insertPropertySpan(index, name, "string", move(data_span));
 }
 
 void TreeNode::insertPropertySpan(size_t index, const string& name, const string& type, const shared_span<>&& data)

@@ -211,6 +211,7 @@ public:
     //    the size of the property data, the value of the property, and the raw property value stored in a shared_span<>.
     template<typename T>
     tuple<uint64_t, T, shared_span<>> getPropertyValue(const string& name) const;
+    tuple<uint64_t, string> getPropertyString(const string& name) const;
     // getPropertyValueSpan retrieves the property data as a block of bytes, it accepts the property name and returns:
     //    the size of the property data, and the raw property size stored in a shared_span<>, and the property value as a shared_span<>.
     tuple<uint64_t, shared_span<>, shared_span<>> getPropertyValueSpan(const string& name) const;
@@ -219,6 +220,7 @@ public:
     // It MUST already exist in the properties, otherwise it will throw an exception.
     template<typename T>
     void setPropertyValue(const string& name, const T& value);
+    void setPropertyString(const string& name, const string& value);
     // setPropertyValueSpan sets the property data as a block of bytes, it accepts the property name and the raw property value stored in a shared_span<>.
     // It MUST already exist in the properties, otherwise it will throw an exception.
     // The property value stored in data IS allowed to be of a different size than the prior value (for flexibility).
@@ -229,6 +231,7 @@ public:
     // index values are 0-based, but indexes beyond the current size of the property_infos vector induce append behavior.
     template<typename T>
     void insertProperty(size_t index, const string& name, const T& value);
+    void insertPropertyString(size_t index, const string& name, const string& value);
     // insertPropertySpan inserts the property data as a block of bytes at the specified index, it accepts the property name and type, and the raw property value stored in a shared_span<>.
     // It MUST NOT already exist in the properties, since this is used to insert new properties.
     // index values are 0-based, but indexes beyond the current size of the property_infos vector induce append behavior.

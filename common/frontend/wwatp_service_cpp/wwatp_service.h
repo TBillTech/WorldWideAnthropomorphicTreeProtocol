@@ -110,12 +110,17 @@ public:
 
     void stop() override; 
 
+    bool isRunning() const override;
+
+    std::vector<Backend*> getBackends() override; 
+
 private:
     // Configuration
     std::string name_;
     std::shared_ptr<Backend> config_backend_;
     std::string config_label_;
     bool initialized_ = false;
+    bool running_ = false;
     
     // Network I/O context
     boost::asio::io_context io_context_;

@@ -298,9 +298,8 @@ std::vector<std::string> WWATPService::getBackendDependencies(const TreeNode& ba
 std::string WWATPService::getStringProperty(const TreeNode& node, const std::string& property_name, 
                                            const std::string& default_value) const {
     try {
-        auto string_data = node.getPropertyValueSpan(property_name);
-        string result(get<1>(string_data).begin<const char>(), get<1>(string_data).end<const char>());
-        return result.empty() ? default_value : result;
+        auto [__, string_data] = node.getPropertyString(property_name);
+        return string_data.empty() ? default_value : string_data;
     } catch (const std::exception&) {
         return default_value; // Return default if property not found
     }
@@ -717,6 +716,7 @@ void WWATPService::start(Communication&, double time, size_t sleep_milli) {
         updater.start(findit->second, time, sleep_milli);
     }
     std::cout << "WWATPService started successfully" << std::endl;
+    running_ = true;
     initialized_ = true;
 }
 
@@ -742,6 +742,19 @@ void WWATPService::stop() {
         listener.close();
     }
     std::cout << "WWATPService stopped successfully" << std::endl;
-    initialized_ = false;
+    running_ = false;
+}
+
+bool WWATPService::isRunning() const {
+    return running_;
+}
+
+std::vector<Backend*> WWATPService::getBackends() {
+    std::vector<Backend*> result;
+    result.reserve(backends_.size());
+    for (const auto& [name, backend] : backends_) {
+        result.push_back(backend.get());
+    }
+    return result;
 }
 
