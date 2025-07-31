@@ -20,6 +20,131 @@ using namespace std;
 
 bool send_trailers = false;
 
+// YAML configuration for WWATPService that matches the current HTTP3 client backend tester implementation
+string yaml_config = R"(config:
+  child_names: [backends, frontends]
+  backends:
+    child_names: [initialized_simple, uninitialized_simple, blocking_simple, local_reader_simple, local_writer_simple, reader_of_writer_simple, local_blocking_simple, local_blocking_threadsafe, static_simple]
+    initialized_simple:
+      type: simple
+    uninitialized_simple:
+      type: simple
+    blocking_simple:
+      type: simple
+    local_reader_simple:
+      type: simple
+    local_writer_simple:
+      type: simple
+    reader_of_writer_simple:
+      type: simple
+    local_blocking_simple:
+      type: simple
+    local_blocking_threadsafe:
+      type: threadsafe
+      backend: local_blocking_simple
+    static_simple:
+      type: simple
+  frontends:
+    child_names: [http3_server, http3_client_updater]
+    http3_server:
+      config.yaml:
+        type: http3_server
+        name: localhost
+        ip: 127.0.0.1
+        port: 12345
+        private_key_file: ../test_instances/data/private_key.pem
+        cert_file: ../test_instances/data/cert.pem
+        quiet: true
+        send_trailers: false
+        log_path: ../test_instances/sandbox/
+        static_load: true
+      child_names: [init, uninit, blocking]
+      init:
+        child_names: [wwatp]
+        wwatp:
+          backend: initialized_simple
+      uninit:
+        child_names: [wwatp]
+        wwatp:
+          backend: uninitialized_simple
+      blocking:
+        child_names: [wwatp]
+        wwatp:
+          backend: blocking_simple
+      index.html: ../test_instances/data/libtest_index.html
+      randombytes.bin: ../test_instances/data/randombytes.bin
+    http3_client_updater:
+      type: http3_client_updater
+      name: client_backend_updater
+      child_names: [static_html_client, random_bytes_client, static_blocking_html_client, reader_client, writer_client, reader_of_writer_client, blocking_client]
+      static_html_client:
+        config.yaml:
+            ip: 127.0.0.1
+            port: 12345
+            name: localhost
+            backend: static_simple
+            blocking_mode: false
+            path: /index.html
+            static_node_label: index.html
+            static_node_description: Static HTML file
+            static_node_properties: [["html", "index"]]
+      random_bytes_client:
+        config.yaml:
+            ip: 127.0.0.1
+            port: 12345
+            name: localhost
+            backend: static_simple
+            blocking_mode: false
+            path: /randombytes.bin
+            static_node_label: randombytes.bin
+            static_node_description: Random bytes file
+            static_node_properties: [["bin", "randombytes"]]
+      static_blocking_html_client:
+        config.yaml:
+            ip: 127.0.0.1
+            port: 12345
+            name: localhost
+            backend: static_simple
+            blocking_mode: true
+            path: /index.html
+            static_node_label: index.html
+            static_node_description: Static HTML file
+            static_node_properties: [["html", "index"]]
+      reader_client:
+        config.yaml:
+            ip: 127.0.0.1
+            port: 12345
+            name: localhost
+            backend: local_reader_simple
+            blocking_mode: false
+            path: /init/wwatp/
+            request_full_tree_sync: true
+      writer_client:
+        config.yaml:
+            ip: 127.0.0.1
+            port: 12345
+            name: localhost
+            backend: local_writer_simple
+            blocking_mode: false
+            path: /uninit/wwatp/
+      reader_of_writer_client:
+        config.yaml:
+            ip: 127.0.0.1
+            port: 12345
+            name: localhost
+            backend: reader_of_writer_simple
+            blocking_mode: false
+            path: /uninit/wwatp/
+      blocking_client:
+        config.yaml:
+            ip: 127.0.0.1
+            port: 12345
+            name: localhost
+            backend: local_blocking_threadsafe
+            blocking_mode: true
+            path: /blocking/wwatp/
+)";
+
 unique_ptr<Communication> createServerCommunication(const string& protocol, boost::asio::io_context& io_context) {
     if (protocol == "QUIC") {
         auto private_key_file = "../test_instances/data/private_key.pem";

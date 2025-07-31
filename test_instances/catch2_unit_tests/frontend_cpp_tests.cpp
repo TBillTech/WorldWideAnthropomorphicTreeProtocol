@@ -29,9 +29,7 @@ TEST_CASE("Cloning Mediator copy test", "[CloningMediator]") {
       backend_b: b
 )";
     
-    auto config_backend = createConfigBackendFromYAML(config_yaml);
-    auto wwatp_service = make_shared<WWATPService>("test_service", config_backend, "config");
-    wwatp_service->initialize();
+    auto wwatp_service = make_shared<WWATPService>("test_service", config_yaml);
 
     auto simple_backend_A = wwatp_service->getBackend("a");
     auto simple_backend_B = wwatp_service->getBackend("b");
@@ -65,9 +63,7 @@ TEST_CASE("Cloning Mediator versioned test", "[CloningMediator][versioned]") {
       versioned: true
 )";
     
-    auto config_backend = createConfigBackendFromYAML(config_yaml);
-    auto wwatp_service = make_shared<WWATPService>("test_service", config_backend, "config");
-    wwatp_service->initialize();
+    auto wwatp_service = make_shared<WWATPService>("test_service", config_yaml);
 
     auto simple_backend_A = wwatp_service->getBackend("a");
     auto simple_backend_B = wwatp_service->getBackend("b");    {
@@ -167,9 +163,7 @@ TEST_CASE("WWATPService YAMLMediator construction test", "[WWATPService][YAMLMed
       initialize_from_yaml: true
 )";
     
-    auto config_backend = createConfigBackendFromYAML(config_yaml);
-    auto wwatp_service = make_shared<WWATPService>("test_service", config_backend, "config");
-    wwatp_service->initialize();
+    auto wwatp_service = make_shared<WWATPService>("test_service", config_yaml);
 
     auto nodeful_backend = wwatp_service->getBackend("nodeful_backend");
     auto yaml_backend = wwatp_service->getBackend("yaml_backend");

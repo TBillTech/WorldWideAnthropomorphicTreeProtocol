@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <tuple>
+#include <filesystem>
 #include <yaml-cpp/yaml.h>
 
 // Backend implementations
@@ -45,6 +46,71 @@ WWATPService::WWATPService(string name, std::shared_ptr<Backend> config_backend,
     if (config_label_.empty()) {
         throw std::invalid_argument("Config label cannot be empty");
     }
+}
+
+WWATPService::WWATPService(string name, const std::string& yaml_config)
+    : name_(name), config_backend_(createConfigBackendFromYAML(yaml_config)), config_label_("config") {
+    if (!config_backend_) {
+        throw std::invalid_argument("Failed to create config backend from YAML");
+    }
+    // Automatically initialize since the configuration is ready
+    initialize();
+}
+
+WWATPService::WWATPService(const std::string& path)
+    : config_label_("config") {
+    // Get the name from the final directory in the path
+    std::filesystem::path fs_path(path);
+    name_ = fs_path.filename().string();
+    if (name_.empty()) {
+        name_ = "service";
+    }
+    
+    // Get the parent directory for root_path
+    std::string root_path = fs_path.parent_path().string();
+    if (root_path.empty()) {
+        root_path = ".";
+    }
+    
+    // Construct config_yaml for the configService
+    std::string config_yaml = R"(config:
+  child_names: [backends, frontends]
+  backends:
+    child_names: [config_backend, yaml_file_backend]
+    config_backend:
+      type: simple
+    yaml_file_backend:
+      type: file
+      root_path: )" + root_path + R"(
+  frontends:
+    child_names: [yaml_mediator]
+    yaml_mediator:
+      type: yaml_mediator
+      tree_backend: config_backend
+      yaml_backend: yaml_file_backend
+      node_label: )" + name_ + R"(
+      property_name: config
+      property_type: yaml
+      initialize_from_yaml: true
+)";
+    
+    // Create the configService using the YAML constructor
+    configService_ = std::make_shared<WWATPService>("config_service", config_yaml);
+    
+    // Get the simple backend from configService and set it as our config_backend_
+    config_backend_ = configService_->getBackend("config_backend");
+    if (!config_backend_) {
+        throw std::runtime_error("Failed to get simple_backend from configService");
+    }
+    
+    // Register a listener for all config_backend_ changes (commented out for now to avoid warnings)
+    // config_backend_->registerNodeListener("service_config_listener", "", true, 
+    //     [](Backend& backend, const std::string& label_rule, const fplus::maybe<TreeNode>& node) {
+    //         // TODO: A future clever feature is to update the frontends and backends in the service as configuration changes on disk
+    //     });
+    
+    // Initialize the service
+    initialize();
 }
 
 WWATPService::~WWATPService() {
@@ -213,6 +279,10 @@ void WWATPService::constructFrontends() {
 
         std::string frontend_type = getStringProperty(frontend_node.unsafe_get_just(), "type");
         if (frontend_type.empty()) {
+            // http3_server is a special case that may not have a type, but should have a "config.yaml" property.
+            if (!getStringProperty(frontend_node.unsafe_get_just(), "config.yaml").empty()) {
+                frontend_type = "http3_server";
+            }
             throw std::runtime_error("Frontend '" + frontend_name + "' missing required 'type' property");
         }
 
@@ -640,6 +710,8 @@ pair<shared_ptr<Frontend>, WWATPService::ConnectorSpecifier> WWATPService::creat
     // Load the YAML configuration from the yaml_string
     YAML::Node yaml_config = YAML::Load(yaml_string);
     ConnectorSpecifier connspec = getConnectorSpecifier(yaml_config);
+    // Look for the "static_load" flag in the yaml_config
+    bool static_load = yaml_config["static_load"].as<bool>(false);
     // Next get the name and port from the yaml_config
     std::string server_name = yaml_config["name"].as<std::string>(name);
     QuicListener& listener = obtainQuicListener(yaml_config);
@@ -649,11 +721,46 @@ pair<shared_ptr<Frontend>, WWATPService::ConnectorSpecifier> WWATPService::creat
 
     // Now loop through all of the properties in the TreeNode config, and create static assets or wwatp backend routes as configured
     for (const auto& [type, name] : config.getPropertyInfo()) {
-        auto static_name = name + "." + type;
-        auto url = "/" + static_name;
-        auto shared_span = config.getPropertyValueSpan(name);
-        chunks asset = {get<2>(shared_span)};
-        server->addStaticAsset(url, asset);
+        if (name == "config") {
+            // Skip the config property itself, as it is already handled
+            continue;
+        }
+        if (static_load) {
+            // If static_load then the property is a path
+            auto path = getStringProperty(config, name, "");
+            if (path.empty()) {
+                std::cerr << "Warning: Static asset '" << name << "' has empty path, skipping" << std::endl;
+                continue;
+            }
+            auto full_path = std::filesystem::path(path);
+            if (!std::filesystem::exists(full_path)) {
+                std::cerr << "Warning: Static asset path '" << full_path << "' does not exist, skipping" << std::endl;
+                continue;
+            }
+            auto static_name = name + "." + type;
+            auto url = "/" + static_name;
+            // Read the file content into a chunks object
+            std::ifstream file_stream(full_path, std::ios::binary);
+            if (!file_stream) {
+                std::cerr << "Error: Failed to open static asset file '" << full_path << "' for reading" << std::endl;
+                continue;
+            }
+            payload_chunk_header header(4, 0, 0);
+            std::vector<char> file_content((std::istreambuf_iterator<char>(file_stream)), std::istreambuf_iterator<char>());
+            file_stream.close();
+            std::span<const char> file_span(file_content.data(), file_content.size());
+            chunks asset;
+            asset.push_back({header, file_span});
+            server->addStaticAsset(url, asset);
+            std::cout << "Added static asset '" << static_name << "' at URL '" << url << "'" << std::endl;
+        }
+        else {
+            auto static_name = name + "." + type;
+            auto url = "/" + static_name;
+            auto shared_span = config.getPropertyValueSpan(name);
+            chunks asset = {get<2>(shared_span)};
+            server->addStaticAsset(url, asset);
+        }
     }
 
     auto children_names = config.getChildNames();
@@ -798,9 +905,11 @@ std::shared_ptr<Backend> createConfigBackendFromYAML(const std::string& config_y
     // Create PropertySpecifier for the YAMLMediator
     PropertySpecifier specifier("config_yaml", "config", "yaml");
     
-    // Create YAMLMediator to convert YAML to tree structure
-    // initialize_from_yaml = true means read from config_yaml_backend and populate config_backend
-    YAMLMediator yaml_mediator("config_mediator", *config_backend, config_yaml_backend, specifier, true);
+    {
+        // Create YAMLMediator to convert YAML to tree structure
+        // initialize_from_yaml = true means read from config_yaml_backend and populate config_backend
+        YAMLMediator yaml_mediator("config_mediator", *config_backend, config_yaml_backend, specifier, true);
+    }
     
     return config_backend;
 }

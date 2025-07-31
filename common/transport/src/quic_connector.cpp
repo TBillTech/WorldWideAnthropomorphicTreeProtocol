@@ -2951,7 +2951,12 @@ void QuicConnector::initializeConfig(const YAML::Node& yaml_config) {
     set<string> non_optional_fields = { 
         "private_key_file",
         "cert_file",
-        "log_path"
+        "log_path",
+        "backend",
+        "blocking_mode",
+        "ip",
+        "name",
+        "path"
     };
 
     // Initialize the optional_fields set by looping through the YAML config node, assuming it is a map

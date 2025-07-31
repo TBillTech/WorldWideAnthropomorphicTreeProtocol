@@ -47,6 +47,21 @@ public:
      */
     WWATPService(std::string name, std::shared_ptr<Backend> config_backend, 
                  const std::string& config_label = "config");
+
+    /**
+     * Constructor with YAML configuration string
+     * @param name Service name
+     * @param yaml_config YAML configuration string
+     * This constructor automatically creates the config backend from YAML and initializes the service
+     */
+    WWATPService(std::string name, const std::string& yaml_config);
+
+    /**
+     * Constructor with file path
+     * @param path Path to YAML configuration file
+     * This constructor recursively creates a config service to load the file, then initializes this service
+     */
+    WWATPService(const std::string& path);
     
     /**
      * Destructor - cleanup all constructed components
@@ -121,6 +136,7 @@ private:
     std::string config_label_;
     bool initialized_ = false;
     bool running_ = false;
+    std::shared_ptr<WWATPService> configService_;
     
     // Network I/O context
     boost::asio::io_context io_context_;

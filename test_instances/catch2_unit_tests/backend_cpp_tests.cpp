@@ -376,14 +376,8 @@ TEST_CASE("WWATPService Basic Backend test via YAMLMediator", "[WWATPService][YA
       root_path: )" + base_path + R"(
 )";
     
-    // Create the configuration backend from YAML using the WWATPService helper function
-    auto config_backend = createConfigBackendFromYAML(config_yaml);
-    
-    // Create the WWATPService with the configuration backend
-    auto wwatp_service = make_shared<WWATPService>("test_service", config_backend, "config");
-    
-    // Initialize the service to construct all backends
-    wwatp_service->initialize();
+    // Create the WWATPService with YAML configuration (automatically initializes)
+    auto wwatp_service = make_shared<WWATPService>("test_service", config_yaml);
     
     // Get the constructed SimpleBackend by name
     auto simple_backend = wwatp_service->getBackend("test_simple");
@@ -488,14 +482,8 @@ TEST_CASE("WWATPService CompositeBackend mountBackend test via YAMLMediator", "[
         mount_path: museum
 )";
     
-    // Create the configuration backend from YAML using the helper function
-    auto config_backend = createConfigBackendFromYAML(config_yaml);
-    
-    // Create the WWATPService with the configuration backend
-    auto wwatp_service = make_shared<WWATPService>("test_service", config_backend, "config");
-    
-    // Initialize the service to construct all backends
-    wwatp_service->initialize();
+    // Create the WWATPService with YAML configuration (automatically initializes)
+    auto wwatp_service = make_shared<WWATPService>("test_service", config_yaml);
     
     // Get the individual backends for adding data
     auto zoo_backend = wwatp_service->getBackend("zoo_simple");
@@ -546,14 +534,8 @@ TEST_CASE("WWATPService RedirectedBackend test via YAMLMediator", "[WWATPService
       type: simple
 )";
     
-    // Create the configuration backend from YAML using the helper function
-    auto config_backend = createConfigBackendFromYAML(config_yaml);
-    
-    // Create the WWATPService with the configuration backend
-    auto wwatp_service = make_shared<WWATPService>("test_service", config_backend, "config");
-    
-    // Initialize the service to construct all backends
-    wwatp_service->initialize();
+    // Create the WWATPService with YAML configuration (automatically initializes)
+    auto wwatp_service = make_shared<WWATPService>("test_service", config_yaml);
     
     {
         auto zoo_backend = wwatp_service->getBackend("zoo_simple");
@@ -567,5 +549,84 @@ TEST_CASE("WWATPService RedirectedBackend test via YAMLMediator", "[WWATPService
         REQUIRE(redirected_backend != nullptr);
         BackendTestbed tester(*redirected_backend);
         tester.testBackendLogically();
+    }
+}
+
+TEST_CASE("WWATPService RedirectedBackend test via path WWATP", "[WWATPService][RedirectedBackend][path]") {
+    // Setup sandbox path and clean up any existing redirect_service directory
+    string sandbox_path = "/home/tom/sandbox/";
+    string redirect_service_path = sandbox_path + "redirect_service";
+    
+    // Clean up any existing redirect_service directory
+    if (std::filesystem::exists(redirect_service_path)) {
+        std::filesystem::remove_all(redirect_service_path);
+    }
+    
+    // Require sandbox directory exists
+    REQUIRE(std::filesystem::exists(sandbox_path));
+    
+    // Stage 1: Create FileBackend and write redirect_service config to sandbox
+    {
+        FileBackend file_backend(sandbox_path);
+        
+        // Create the redirect_service node with config_yaml as a property
+        string redirect_config_yaml = R"(config:
+  child_names: [backends]
+  backends:
+    child_names: [test_redirected, underlying_composite, for_composite, zoo_simple]
+    test_redirected:
+      type: redirected
+      backend: underlying_composite
+      redirect_root: zoo
+    underlying_composite:
+      type: composite
+      backend: for_composite
+      child_names: [zoo_simple]
+      zoo_simple:
+        mount_path: zoo
+    for_composite:
+      type: simple
+    zoo_simple:
+      type: simple
+)";
+        
+        TreeNode redirect_service_node = createNoContentTreeNode("redirect_service", "Redirected backend service configuration", {}, 
+            DEFAULT_TREE_NODE_VERSION, {}, nothing<string>(), nothing<string>());
+        
+        // Add the config_yaml as a yaml property
+        redirect_service_node.insertPropertySpan(0, "config", "yaml", 
+            shared_span<>(global_no_chunk_header, std::span<const char>(redirect_config_yaml.data(), redirect_config_yaml.size())));
+        
+        // Write the service node to the file backend
+        REQUIRE(file_backend.upsertNode({redirect_service_node}));
+        
+        // Process notifications to ensure file is written
+        file_backend.processNotifications();
+        
+        // Verify the redirect_service directory was created
+        REQUIRE(std::filesystem::exists(redirect_service_path));
+    }
+    
+    // Stage 2: Use path constructor to load config and test RedirectedBackend
+    {
+        // Create WWATPService using the path constructor
+        auto wwatp_service = make_shared<WWATPService>(redirect_service_path);
+        
+        // Add test data to zoo_simple backend
+        {
+            auto zoo_backend = wwatp_service->getBackend("zoo_simple");
+            REQUIRE(zoo_backend != nullptr);
+            BackendTestbed tester(*zoo_backend);
+            tester.addAnimalsToBackend();
+            tester.addNotesPageTree();
+        }
+        
+        // Test the redirected backend
+        {
+            auto redirected_backend = wwatp_service->getBackend("test_redirected");
+            REQUIRE(redirected_backend != nullptr);
+            BackendTestbed tester(*redirected_backend);
+            tester.testBackendLogically();
+        }
     }
 }
