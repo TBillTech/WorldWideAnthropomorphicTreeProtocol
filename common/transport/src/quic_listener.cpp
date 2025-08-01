@@ -4337,7 +4337,8 @@ void QuicListener::initializeConfig(const YAML::Node &yaml_config) {
         "static_load",
         "type",
         "ip",
-        "name"
+        "name",
+        "type"
     };
 
     // Initialize the optional_fields set by looping through the YAML config node, assuming it is a map

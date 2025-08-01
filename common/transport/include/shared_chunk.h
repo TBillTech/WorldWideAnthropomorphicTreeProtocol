@@ -709,17 +709,32 @@ public:
                     pod_from_chunk<ChunkType, ModifyablePODType>(chunk_stitches[chunk_index], chunks_ref, start_loc);
                 }
                 return chunk_stitches[chunk_index];
-            // Otherwise, it is safe to return the reference to the PODType
+            // Otherwise, check alignment before returning the reference to the PODType
             } else {
-                return *reinterpret_cast<const PODType*>(chunks[chunk_index].first->data + span_index);
+                // Check if the address is properly aligned for PODType
+                uintptr_t addr = reinterpret_cast<uintptr_t>(chunks[chunk_index].first->data + span_index);
+                if (addr % alignof(PODType) == 0) {
+                    // Properly aligned, safe to return direct reference
+                    return *reinterpret_cast<const PODType*>(chunks[chunk_index].first->data + span_index);
+                } else {
+                    // Not aligned, use safe copy through chunk_stitches
+                    if (chunk_index >= chunk_stitches.size()) {
+                        chunk_stitches.resize(chunk_index + 1);
+                    }
+                    pair<bool, pair<size_t, size_t>> start_loc = {true, {span_index, chunk_index}};
+                    pod_from_chunk<ChunkType, ModifyablePODType>(chunk_stitches[chunk_index], chunks, start_loc);
+                    return chunk_stitches[chunk_index];
+                }
             }
         }
         shared_span<ChunkType> to_span() const {
             // Create a new span, starting with the chunk_index and update the first chunk with via the span_index
-            shared_span new_span(0);
+            shared_span new_span(global_no_chunk_header, false);
             new_span.chunks.insert(new_span.chunks.end(), chunks.begin() + chunk_index, chunks.end());
+            new_span.signal_type = reinterpret_cast<uint8_t*>(new_span.chunks.begin()->first->data)[0];
             // Then restrict it to the span_index
-            shared_span restricted_span = new_span.restrict(make_pair(span_index, new_span.size()));
+            size_t signal_size = new_span.get_signal_size();
+            shared_span restricted_span = new_span.restrict(make_pair(span_index-signal_size, new_span.size()));
             return move(restricted_span);
         }
         std::ptrdiff_t distance_to(const_iterator const &other) const {
@@ -776,7 +791,7 @@ public:
     // Begin returns an iterator class that knows how to increment from the end of the span of one chunk to the start of the span of the next chunk.
     template <typename PODType>
     class iterator : public boost::iterator_facade<
-        iterator<PODType>, PODType, boost::random_access_traversal_tag, PODType&>{
+        iterator<PODType>, PODType, boost::random_access_traversal_tag, const PODType&>{
     public:
         template <typename PODType2>
         friend class const_iterator;
@@ -853,16 +868,37 @@ public:
         bool operator!=(iterator const &other) const {
             return &chunks != &other.chunks || chunk_index != other.chunk_index || span_index != other.span_index;
         }
-        PODType& operator*() const {
+        const PODType& operator*() const {
             // If the length of the PODType extends past the end of the chunk, then throw an exception
             if (span_index + sizeof(PODType) > chunks[chunk_index].second.first + chunks[chunk_index].second.second) {
                 // non const iterator dereferencing of PODTypes that cross between chunks is not allowed, 
                 // because it would allow writing past the end of the chunk into other memory 
                 throw invalid_argument("PODType extends past the end of the span");
-            // Otherwise, it is safe to return the reference to the PODType
+            // Otherwise, use safe copying to handle potential alignment issues
             } else {
-                return *reinterpret_cast<PODType*>(chunks[chunk_index].first->data + span_index);
+                // Check if the address is properly aligned for PODType
+                uintptr_t addr = reinterpret_cast<uintptr_t>(chunks[chunk_index].first->data + span_index);
+                if (addr % alignof(PODType) == 0) {
+                    // Properly aligned, safe to return direct reference
+                    return *reinterpret_cast<PODType*>(chunks[chunk_index].first->data + span_index);
+                } else {
+                    // Not aligned, use safe copy through chunk_stitch
+                    pair<bool, pair<size_t, size_t>> start_loc = {true, {span_index, chunk_index}};
+                    pod_from_chunk<ChunkType, PODType>(chunk_stitch, chunks, start_loc);
+                    return chunk_stitch;
+                }
             }
+        }
+
+        void set(const PODType& value) {
+            // Use the shared_span's copy_type method to safely write the value
+            // Create a temporary shared_span from current chunks to call copy_type
+            shared_span new_span(global_no_chunk_header, false);
+            new_span.chunks.insert(new_span.chunks.end(), chunks.begin() + chunk_index, chunks.end());
+            new_span.signal_type = reinterpret_cast<uint8_t*>(new_span.chunks.begin()->first->data)[0];
+            
+            pair<bool, pair<size_t, size_t>> start_loc = {true, {span_index, chunk_index}};
+            new_span.copy_type(value, start_loc);
         }
         shared_span<ChunkType> to_span() const {
             // Create a new span, starting with the chunk_index and update the first chunk with via the span_index
@@ -909,6 +945,7 @@ public:
         vector<pair<shared_ptr<ChunkType>, pair<size_t, size_t>>> const &chunks;
         size_t chunk_index;
         size_t span_index;
+        mutable PODType chunk_stitch;
     };
 
     template <typename PODType>

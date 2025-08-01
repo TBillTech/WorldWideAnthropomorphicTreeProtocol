@@ -1,11 +1,10 @@
 #pragma once
 #include <string>
-#include <string_view>
 #include <iostream>
 
 struct Request {
     // Example URI: "https://www.example.com:443/path/to/resource?query=example#fragment"
-    std::string_view scheme;  // Example: "https"
+    std::string scheme;  // Example: "https"
     std::string authority; // Example: "www.example.com:443"
     std::string path; // Example: "/path/to/resource"
     std::string method; // Example: "GET", "POST", etc.

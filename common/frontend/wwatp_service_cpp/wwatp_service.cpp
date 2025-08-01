@@ -24,6 +24,45 @@
 
 using namespace fplus;
 
+vector<shared_span<>> readFileChunks(string const& file_path) {
+    vector<shared_span<>> chunks;
+    int fd = open(file_path.c_str(), O_RDONLY);
+    if (fd < 0) {
+        cerr << "Error opening file: " << file_path << endl;
+        return chunks;
+    }
+    struct stat file_stat;
+    if (fstat(fd, &file_stat) < 0) {
+        cerr << "Error getting file size: " << file_path << endl;
+        close(fd);
+        return chunks;
+    }
+    size_t file_size = file_stat.st_size;
+    size_t chunk_size = shared_span<>::chunk_size;
+    size_t chunk_payload_size = chunk_size - sizeof(payload_chunk_header);
+    size_t num_chunks = (file_size + chunk_payload_size - 1) / chunk_payload_size; // Round up to the nearest chunk size
+    for (size_t i = 0; i < num_chunks; ++i) {
+        size_t offset = i * chunk_payload_size;
+        size_t size_to_read = min(chunk_payload_size, file_size - offset);
+        if (size_to_read == 0) {
+            break; // No more data to read
+        }
+        // use pread, and create a span<const uint8_t> from the data read
+        char memory[shared_span<>::chunk_size];
+        ssize_t bytes_read = pread(fd, memory, size_to_read, offset);
+        if (bytes_read < 0) {
+            cerr << "Error reading file: " << file_path << endl;
+            close(fd);
+            return chunks;
+        }
+        auto memory_span = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(memory), bytes_read);
+        payload_chunk_header header(0, payload_chunk_header::SIGNAL_OTHER_CHUNK, bytes_read);
+        chunks.emplace_back(header, memory_span);
+    }
+    close(fd);
+    return chunks;
+}
+
 WWATPService::ConnectorSpecifier getConnectorSpecifier(const YAML::Node& config) {
     std::string name = config["name"].as<std::string>("");
     std::string ip_address = config["ip"].as<std::string>("localhost");
@@ -114,7 +153,16 @@ WWATPService::WWATPService(const std::string& path)
 }
 
 WWATPService::~WWATPService() {
-    // Cleanup happens automatically with shared_ptr and unique_ptr
+    if (initialized_) {
+        // loop through the quic_connectors_ and stop each connector
+        for (auto& [__, connector] : quic_connectors_) {
+            connector.close();
+        }
+        // loop through the quic_listeners_ and stop each listener
+        for (auto& [__, listener] : quic_listeners_) {
+            listener.close();
+        }
+    }
 }
 
 void WWATPService::initialize() {
@@ -131,6 +179,15 @@ void WWATPService::initialize() {
 
         // Then construct frontends
         constructFrontends();
+
+        // Loop through the quic_listeners_ and start each listener
+        for (auto& [conspec, listener] : quic_listeners_) {
+            listener.listen(get<0>(conspec), get<1>(conspec), get<2>(conspec));
+        }
+        // Loop through the quic_connectors_ and start each connector
+        for (auto& [conspec, connector] : quic_connectors_) {
+            connector.connect(get<0>(conspec), get<1>(conspec), get<2>(conspec));
+        }
 
         initialized_ = true;
         std::cout << "WWATPService initialized successfully" << std::endl;
@@ -243,9 +300,24 @@ void WWATPService::constructBackends() {
     for (const std::string& backend_name : construction_order) {
         const TreeNode& backend_config = backend_configs[backend_name];
         
-        std::string backend_type = getStringProperty(backend_config, "type");
+        string backend_type = getStringProperty(backend_config, "type");
         if (backend_type.empty()) {
-            throw std::runtime_error("Backend '" + backend_name + "' missing required 'type' property");
+            // If type is not specified, try to get it from the config.yaml property
+            string config_yaml = getStringProperty(backend_config, "config");
+            if (!config_yaml.empty()) {
+                try {
+                    YAML::Node yaml_node = YAML::Load(config_yaml);
+                    if (yaml_node["type"]) {
+                        backend_type = yaml_node["type"].as<std::string>();
+                    }
+                } catch (const YAML::ParserException& e) {
+                    std::cerr << "YAML parsing error for backend '" << backend_name << "': " << e.what() << std::endl;
+                }
+            }
+            if (backend_type.empty()) {
+                // If still empty, throw an error
+                throw std::runtime_error("Backend '" + backend_name + "' missing required 'type' property");
+            }
         }
 
         auto factory_it = backend_factories_.find(backend_type);
@@ -280,10 +352,21 @@ void WWATPService::constructFrontends() {
         std::string frontend_type = getStringProperty(frontend_node.unsafe_get_just(), "type");
         if (frontend_type.empty()) {
             // http3_server is a special case that may not have a type, but should have a "config.yaml" property.
-            if (!getStringProperty(frontend_node.unsafe_get_just(), "config.yaml").empty()) {
-                frontend_type = "http3_server";
+            string config_yaml = getStringProperty(frontend_node.unsafe_get_just(), "config");
+            if (!config_yaml.empty()) {
+                try {
+                    YAML::Node yaml_config = YAML::Load(config_yaml);
+                    if (yaml_config["type"]) {
+                        frontend_type = yaml_config["type"].as<std::string>();
+                }
+                } catch (const YAML::ParserException& e) {
+                    std::cerr << "YAML parsing error for frontend '" << frontend_name << "': " << e.what() << std::endl;
+                }
             }
-            throw std::runtime_error("Frontend '" + frontend_name + "' missing required 'type' property");
+            if (frontend_type.empty()) {
+                // If still empty, throw an error
+                throw std::runtime_error("Frontend '" + frontend_name + "' missing required 'type' property");
+            }
         }
 
         auto factory_it = frontend_factories_.find(frontend_type);
@@ -359,12 +442,20 @@ std::vector<std::string> WWATPService::topologicalSort(const std::map<std::strin
 
 std::vector<std::string> WWATPService::getBackendDependencies(const TreeNode& backend_config) {
     std::vector<std::string> dependencies;
+    string config_yaml = getStringProperty(backend_config, "config");
+    auto yaml_config = YAML::Load(config_yaml);
     
     // Check common dependency property names
     std::vector<std::string> dep_properties = {"backend"};
     
     for (const std::string& prop : dep_properties) {
         std::string dep = getStringProperty(backend_config, prop);
+        if (dep.empty()) {
+            // Try to get from YAML config if not found in backend_config
+            if (yaml_config[prop]) {
+                dep = yaml_config[prop].as<std::string>();
+            }
+        }
         if (!dep.empty()) {
             dependencies.push_back(dep);
         }
@@ -372,6 +463,11 @@ std::vector<std::string> WWATPService::getBackendDependencies(const TreeNode& ba
     
     // Special handling for CompositeBackend - it also depends on all child backends it needs to mount
     std::string backend_type = getStringProperty(backend_config, "type");
+    if(backend_type.empty()) {
+        if (!yaml_config["type"].IsNull()) {
+            backend_type = yaml_config["type"].as<std::string>();
+        }
+    }
     if (backend_type == "composite") {
         // Add all child backends as dependencies
         for (const std::string& child_name : backend_config.getChildNames()) {
@@ -563,8 +659,8 @@ std::shared_ptr<Backend> WWATPService::createHttp3ClientBackend(const TreeNode& 
     if (local_backend == backends_.end()) {
         throw std::runtime_error("Backend '" + backend_name + "' not found for HTTP3ClientBackend");
     }
-    bool blocking_mode = yaml_config["blocking_mode"].as<bool>(true);
-    size_t journalRequestsPerMinute = yaml_config["journal_requests_per_minute"].as<size_t>(60);
+    bool blocking_mode = yaml_config["blocking_mode"].as<bool>(false);
+    size_t journalRequestsPerMinute = yaml_config["journal_requests_per_minute"].as<size_t>(0);
     Request request;
     request.scheme = yaml_config["scheme"].as<string>("https"); // Assuming HTTPS for HTTP3
     string ip = yaml_config["ip"].as<string>("127.0.0.1");
@@ -575,6 +671,35 @@ std::shared_ptr<Backend> WWATPService::createHttp3ClientBackend(const TreeNode& 
     request.pri.urgency = static_cast<int32_t>(yaml_config["priority"].as<int64_t>(0));
     request.pri.inc = yaml_config["increment"].as<int64_t>(0);
     maybe<TreeNode> staticNode;
+    string static_node_label = yaml_config["static_node_label"].as<string>("");
+    if (!static_node_label.empty()) {
+        auto static_node_description = yaml_config["static_node_description"].as<string>(static_node_label);
+        string type = "string";
+        // the static_node_label is of the form "name.type"
+        string name = static_node_label.substr(0, static_node_label.find('.'));
+        if (name.empty()) {
+            throw std::runtime_error("Static node label must have a name before the dot");
+        }
+        if (static_node_label.find('.') != string::npos) {
+            type = static_node_label.substr(static_node_label.find('.') + 1);
+            if (type.empty()) {
+                throw std::runtime_error("Static node label must have a type after the dot");
+            }
+        }
+        TreeNode::PropertyInfo static_info({type, name});
+        TreeNode staticHtmlNode(
+            static_node_label,
+            static_node_description,
+            {static_info},
+            DEFAULT_TREE_NODE_VERSION,
+            {},
+            shared_span<>(global_no_chunk_header, false),
+            fplus::nothing<std::string>(),
+            fplus::nothing<std::string>()
+        );
+        staticNode = just(staticHtmlNode);
+    }
+    obtainQuicConnector(yaml_config); // Ensure the connector is created
     Http3ClientBackendUpdater& http3_client_updater = obtainHttp3ClientUpdater(yaml_config);
     Http3ClientBackend& http3_client_backend = http3_client_updater.addBackend(*(local_backend->second), blocking_mode, request, journalRequestsPerMinute, staticNode);
     // Use shared_ptr with custom deleter that doesn't delete - the updater owns the object
@@ -664,7 +789,11 @@ void WWATPService::updateServerWithChild(
         if (find_backend == backends_.end()) {
             throw std::runtime_error("Backend not found: " + backend_name);
         }
-        server->addBackendRoute(*find_backend->second, journal_size, child_path);
+        string url_path = child_path;
+        if (url_path.back() != '/') {
+            url_path += '/';
+        }
+        server->addBackendRoute(*find_backend->second, journal_size, url_path);
     }
     else
     {
@@ -682,14 +811,14 @@ void WWATPService::updateServerWithChild(
         if (child_name.find("/") != std::string::npos) {
             child_node_label = child_name;
         }
-        auto child_child_node = config_backend_->getNode(child_name);
+        auto child_child_node = config_backend_->getNode(child_node_label);
         if (child_child_node.is_nothing()) {
-            std::cerr << "Warning: Child node '" << child_name << "' not found in HTTP3Server configuration" << std::endl;
+            std::cerr << "Warning: Descendant node '" << child_node_label << "' not found in HTTP3Server configuration" << std::endl;
             continue;
         }
         auto child_child_path = child_path + "/" + child_child_node.unsafe_get_just().getNodeName();
         updateServerWithChild(server, child_child_path, child_child_node.unsafe_get_just(), 
-            is_wwatp_route || child_child_path == "/wwatp");
+            is_wwatp_route || child_name == "wwatp");
     }
 }
 
@@ -720,52 +849,28 @@ pair<shared_ptr<Frontend>, WWATPService::ConnectorSpecifier> WWATPService::creat
     auto server = std::make_shared<HTTP3Server>(name);
 
     // Now loop through all of the properties in the TreeNode config, and create static assets or wwatp backend routes as configured
-    for (const auto& [type, name] : config.getPropertyInfo()) {
-        if (name == "config") {
+    for (const auto& [type, property_name] : config.getPropertyInfo()) {
+        if (property_name == "config") {
             // Skip the config property itself, as it is already handled
             continue;
         }
+        auto static_name = property_name + "." + type;
+        auto url = "/" + static_name;
+        chunks asset;
         if (static_load) {
-            // If static_load then the property is a path
-            auto path = getStringProperty(config, name, "");
-            if (path.empty()) {
-                std::cerr << "Warning: Static asset '" << name << "' has empty path, skipping" << std::endl;
-                continue;
-            }
-            auto full_path = std::filesystem::path(path);
-            if (!std::filesystem::exists(full_path)) {
-                std::cerr << "Warning: Static asset path '" << full_path << "' does not exist, skipping" << std::endl;
-                continue;
-            }
-            auto static_name = name + "." + type;
-            auto url = "/" + static_name;
-            // Read the file content into a chunks object
-            std::ifstream file_stream(full_path, std::ios::binary);
-            if (!file_stream) {
-                std::cerr << "Error: Failed to open static asset file '" << full_path << "' for reading" << std::endl;
-                continue;
-            }
-            payload_chunk_header header(4, 0, 0);
-            std::vector<char> file_content((std::istreambuf_iterator<char>(file_stream)), std::istreambuf_iterator<char>());
-            file_stream.close();
-            std::span<const char> file_span(file_content.data(), file_content.size());
-            chunks asset;
-            asset.push_back({header, file_span});
-            server->addStaticAsset(url, asset);
-            std::cout << "Added static asset '" << static_name << "' at URL '" << url << "'" << std::endl;
+            string path = getStringProperty(config, property_name);
+            asset = readFileChunks(path);
+        } else {
+            auto shared_span = config.getPropertyValueSpan(property_name);
+            asset.push_back(get<2>(shared_span));
         }
-        else {
-            auto static_name = name + "." + type;
-            auto url = "/" + static_name;
-            auto shared_span = config.getPropertyValueSpan(name);
-            chunks asset = {get<2>(shared_span)};
-            server->addStaticAsset(url, asset);
-        }
+        server->addStaticAsset(url, asset);
     }
 
     auto children_names = config.getChildNames();
     for (const auto& child_name : children_names) {
-        auto child_node = config_backend_->getNode(child_name);
+        auto child_node_label = config.getLabelRule() + "/" + child_name;
+        auto child_node = config_backend_->getNode(child_node_label);
         if (child_node.is_nothing()) {
             std::cerr << "Warning: Child node '" << child_name << "' not found in HTTP3Server configuration" << std::endl;
             continue;
@@ -774,7 +879,7 @@ pair<shared_ptr<Frontend>, WWATPService::ConnectorSpecifier> WWATPService::creat
         updateServerWithChild(server, child_path, child_node.unsafe_get_just(), child_path == "/wwatp");
     }
 
-    prepare_stream_callback_fn theServerHandlerWrapper = [&server](const Request &req) {
+    prepare_stream_callback_fn theServerHandlerWrapper = [server](const Request &req) {
         return server->getResponseCallback(req);
     };
 
@@ -809,14 +914,6 @@ QuicListener& WWATPService::obtainQuicListener(const YAML::Node& config) {
 void WWATPService::start(Communication&, double time, size_t sleep_milli) { 
     if (!initialized_) {
         throw std::runtime_error("WWATPService not initialized");
-    }
-    // Loop through the quic_listeners_ and start each listener
-    for (auto& [conspec, listener] : quic_listeners_) {
-        listener.listen(get<0>(conspec), get<1>(conspec), get<2>(conspec));
-    }
-    // Loop through the quic_connectors_ and start each connector
-    for (auto& [conspec, connector] : quic_connectors_) {
-        connector.connect(get<0>(conspec), get<1>(conspec), get<2>(conspec));
     }
     // Loop through the frontends_ and start each frontend
     for (auto& [name, frontend_pair ] : frontends_) {
@@ -858,20 +955,44 @@ void WWATPService::stop() {
         auto [frontend, conspec] = frontend_pair;
         frontend->stop();
     }
-    // loop through the quic_connectors_ and stop each connector
-    for (auto& [__, connector] : quic_connectors_) {
-        connector.close();
-    }
-    // loop through the quic_listeners_ and stop each listener
-    for (auto& [__, listener] : quic_listeners_) {
-        listener.close();
-    }
     std::cout << "WWATPService stopped successfully" << std::endl;
     running_ = false;
 }
 
 bool WWATPService::isRunning() const {
     return running_;
+}
+
+void WWATPService::responseCycle(string message, size_t wait_loops, size_t millis, double &time_secs)
+{
+    
+    // Service the client communication for a while to allow the client to send the request.
+    if (!message.empty())
+        cerr << "In Main: Waiting for " << message << endl << flush;
+    for(size_t i = 0; i < wait_loops; i++) {
+        // Process all HTTP3 client updaters
+        for (auto& [conspec, updater] : http3_client_updaters_) {
+            auto connector_it = quic_connectors_.find(conspec);
+            if (connector_it != quic_connectors_.end()) {
+                updater.maintainRequestHandlers(connector_it->second, time_secs);
+            }
+        }
+        
+        // Process all connectors (client communication)
+        for (auto& [conspec, connector] : quic_connectors_) {
+            connector.processRequestStream();
+        }
+        
+        // Process all listeners (server communication)
+        for (auto& [conspec, listener] : quic_listeners_) {
+            listener.processResponseStream();
+        }
+        
+        this_thread::sleep_for(chrono::milliseconds(millis));
+        time_secs += 0.001 * millis;
+    }
+    if (!message.empty())
+        cerr << "In Main: Waited for " << message << endl << flush;
 }
 
 std::vector<Backend*> WWATPService::getBackends() {

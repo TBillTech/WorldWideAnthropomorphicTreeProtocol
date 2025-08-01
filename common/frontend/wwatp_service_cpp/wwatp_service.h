@@ -127,6 +127,8 @@ public:
 
     bool isRunning() const override;
 
+    void responseCycle(string message, size_t wait_loops, size_t millis, double &time_secs);
+
     std::vector<Backend*> getBackends() override; 
 
 private:
@@ -252,3 +254,6 @@ private:
  * @return Shared pointer to the created configuration backend
  */
 std::shared_ptr<Backend> createConfigBackendFromYAML(const std::string& config_yaml);
+
+
+vector<shared_span<>> readFileChunks(string const& file_path);

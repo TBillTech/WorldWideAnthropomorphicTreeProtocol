@@ -2956,7 +2956,8 @@ void QuicConnector::initializeConfig(const YAML::Node& yaml_config) {
         "blocking_mode",
         "ip",
         "name",
-        "path"
+        "path",
+        "type"
     };
 
     // Initialize the optional_fields set by looping through the YAML config node, assuming it is a map

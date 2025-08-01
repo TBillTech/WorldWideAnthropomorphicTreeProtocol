@@ -420,7 +420,7 @@ void TreeNode::setPropertyValueSpan(const string& name, const shared_span<>&& da
     }
     auto size_span = remaining_data.restrict(pair(0, sizeof(uint64_t)));
     auto prior_span = property_data.restrict(pair(0, total_size + sizeof(uint64_t)));
-    *size_span.begin<uint64_t>() = data.size();
+    size_span.begin<uint64_t>().set(data.size());
     auto following_span = property_data.restrict(pair(total_size + cur_size, property_data.size() - total_size - cur_size));
     vector<shared_span<>> spans({prior_span, move(data), following_span});
     shared_span<> concatted(spans.begin(), spans.end());
