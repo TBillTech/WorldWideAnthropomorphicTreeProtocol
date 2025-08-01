@@ -131,6 +131,21 @@ public:
 
     std::vector<Backend*> getBackends() override; 
 
+    // Help strings for configuration documentation
+    static const std::string top_level_help;
+    static const std::string backends_help;
+    static const std::string frontends_help;
+    static const std::string simple_help;
+    static const std::string transactional_help;
+    static const std::string threadsafe_help;
+    static const std::string composite_help;
+    static const std::string redirected_help;
+    static const std::string http3_client_help;
+    static const std::string file_help;
+    static const std::string cloning_mediator_help;
+    static const std::string yaml_mediator_help;
+    static const std::string http3_server_help;
+
 private:
     // Configuration
     std::string name_;
@@ -226,25 +241,99 @@ private:
      * Helper to get a string property from a TreeNode
      */
     std::string getStringProperty(const TreeNode& node, const std::string& property_name, 
-                                 const std::string& default_value = "") const;
+                                 const std::string& default_value) const;
 
     /**
      * Helper to get an integer property from a TreeNode
      */
     int64_t getInt64Property(const TreeNode& node, const std::string& property_name, 
-                      int64_t default_value = 0) const;
+                      int64_t default_value) const;
 
     /**
      * Helper to get an unsigned integer property from a TreeNode
      */
     uint64_t getUint64Property(const TreeNode& node, const std::string& property_name, 
-                      uint64_t default_value = 0) const;
+                      uint64_t default_value) const;
 
-                      /**
+    /**
      * Helper to get a boolean property from a TreeNode
      */
     bool getBoolProperty(const TreeNode& node, const std::string& property_name, 
-                        bool default_value = false) const;
+                        bool default_value) const;
+
+    /**
+     * Helper to get a required string property from a TreeNode (throws if missing)
+     */
+    std::string requireStringProperty(const TreeNode& node, const std::string& property_name) const;
+
+    /**
+     * Helper to get a required integer property from a TreeNode (throws if missing)
+     */
+    int64_t requireInt64Property(const TreeNode& node, const std::string& property_name) const;
+
+    /**
+     * Helper to get a required unsigned integer property from a TreeNode (throws if missing)
+     */
+    uint64_t requireUint64Property(const TreeNode& node, const std::string& property_name) const;
+
+    /**
+     * Helper to get a required boolean property from a TreeNode (throws if missing)
+     */
+    bool requireBoolProperty(const TreeNode& node, const std::string& property_name) const;
+
+    /**
+     * Helper to check if a TreeNode has a config property
+     */
+    bool hasConfigProperty(const TreeNode& node) const;
+
+    /**
+     * Helper to get config YAML from a TreeNode and return parsed YAML::Node
+     */
+    YAML::Node getConfigProperty(const TreeNode& node) const;
+
+    /**
+     * Helper to get a string property from config YAML in a TreeNode
+     */
+    std::string getConfigStringProperty(const TreeNode& node, const std::string& property_name, 
+                                       const std::string& default_value) const;
+
+    /**
+     * Helper to get an integer property from config YAML in a TreeNode
+     */
+    int64_t getConfigInt64Property(const TreeNode& node, const std::string& property_name, 
+                                  int64_t default_value) const;
+
+    /**
+     * Helper to get an unsigned integer property from config YAML in a TreeNode
+     */
+    uint64_t getConfigUint64Property(const TreeNode& node, const std::string& property_name, 
+                                    uint64_t default_value) const;
+
+    /**
+     * Helper to get a boolean property from config YAML in a TreeNode
+     */
+    bool getConfigBoolProperty(const TreeNode& node, const std::string& property_name, 
+                              bool default_value) const;
+
+    /**
+     * Helper to get a required string property from config YAML in a TreeNode (throws if missing)
+     */
+    std::string requireConfigStringProperty(const TreeNode& node, const std::string& property_name) const;
+
+    /**
+     * Helper to get a required integer property from config YAML in a TreeNode (throws if missing)
+     */
+    int64_t requireConfigInt64Property(const TreeNode& node, const std::string& property_name) const;
+
+    /**
+     * Helper to get a required unsigned integer property from config YAML in a TreeNode (throws if missing)
+     */
+    uint64_t requireConfigUint64Property(const TreeNode& node, const std::string& property_name) const;
+
+    /**
+     * Helper to get a required boolean property from config YAML in a TreeNode (throws if missing)
+     */
+    bool requireConfigBoolProperty(const TreeNode& node, const std::string& property_name) const;
 
 };
 
