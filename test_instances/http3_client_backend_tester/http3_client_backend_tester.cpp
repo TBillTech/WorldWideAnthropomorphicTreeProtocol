@@ -170,43 +170,6 @@ string yaml_config = R"(config:
       randombytes.bin: ../test_instances/data/randombytes.bin
 )";
 
-unique_ptr<Communication> createServerCommunication(const string& protocol, boost::asio::io_context& io_context) {
-    if (protocol == "QUIC") {
-        auto private_key_file = "../test_instances/data/private_key.pem";
-        auto cert_file = "../test_instances/data/cert.pem";
-        YAML::Node config;
-        config["private_key_file"] = private_key_file;
-        config["cert_file"] = cert_file;
-        config["quiet"] = true;
-        config["send_trailers"] = send_trailers;
-        config["log_path"] = "../test_instances/sandbox/"; // Ensure sandbox path is set
-        return make_unique<QuicListener>(io_context, config);
-    } else if (protocol == "TCP") {
-        return make_unique<TcpCommunication>(io_context);
-    } else {
-        throw invalid_argument("Unsupported protocol");
-    }
-}
-
-unique_ptr<Communication> createClientCommunication(const string& protocol, boost::asio::io_context& io_context) {
-    if (protocol == "QUIC") {
-        auto private_key_file = "../test_instances/data/private_key.pem";
-        auto cert_file = "../test_instances/data/cert.pem";
-        YAML::Node config;
-        config["private_key_file"] = private_key_file;
-        config["cert_file"] = cert_file;
-        config["quiet"] = true;
-        config["send_trailers"] = send_trailers;
-        config["log_path"] = "../test_instances/sandbox/"; // Ensure sandbox path is set
-        return make_unique<QuicConnector>(io_context, config);
-    } else if (protocol == "TCP") {
-        return make_unique<TcpCommunication>(io_context);
-    } else {
-        throw invalid_argument("Unsupported protocol");
-    }
-}
-
-
 void verifyStaticData(TreeNode const& withContents, chunks const& originalStaticData, bool allow_trailers) {
     auto property_data = withContents.getPropertyData();
     // We cannot directly compare property_data chunks with originalStaticData chunks, since the chunk lengths may differ.
@@ -323,21 +286,6 @@ int main() {
     // Create a WWATPService instance
     WWATPService wwatp_service("http3_client_tester", yaml_config);
     
-    //string protocol = "QUIC";
-    //boost::asio::io_context io_context;
-
-    //auto server_communication = createServerCommunication(protocol, io_context);
-    //server_communication->listen("localhost", "127.0.0.1", 12345);
-
-    // Add a named_prepare_fn for theServerHandler to the server_communication
-    //HTTP3Server theServer("theServer", {});
-    //prepare_stream_callback_fn theServerHandlerWrapper = [&theServer](const Request &req) {
-    //    return theServer.getResponseCallback(req);
-    //};
-    //server_communication->registerRequestHandler(make_pair("test", theServerHandlerWrapper));
-
-    //auto init_memory_tree = make_shared<MemoryTree>();
-    //SimpleBackend initialized_backend(init_memory_tree);
     auto initialized_backend = wwatp_service.getBackend("initialized_simple");
     assert(initialized_backend != nullptr && "Initialized backend should not be null");
     {
@@ -345,89 +293,44 @@ int main() {
         initialized.addAnimalsToBackend();
         initialized.addNotesPageTree();
     }
-    //theServer.addBackendRoute(initialized_backend, 1000, "/init/wwatp/");
-    //auto uninitialized_memory_tree = make_shared<MemoryTree>();
-    //SimpleBackend uninitialized_backend(uninitialized_memory_tree);
     auto uninitialized_backend = wwatp_service.getBackend("uninitialized_simple");
     assert(uninitialized_backend != nullptr && "Uninitialized backend should not be null");
-    //theServer.addBackendRoute(uninitialized_backend, 1000, "/uninit/wwatp/");
-    //auto blocking_test_memory_tree = make_shared<MemoryTree>();
-    //SimpleBackend blocking_test_backend(blocking_test_memory_tree);
     auto blocking_test_backend = wwatp_service.getBackend("blocking_simple");
     assert(blocking_test_backend != nullptr && "Blocking backend should not be null");
-    //theServer.addBackendRoute(blocking_test_backend, 1000, "/blocking/wwatp/");
     auto index_chunks = readFileChunks("../test_instances/data/libtest_index.html");
-    //theServer.addStaticAsset("/index.html", index_chunks);
     auto random_chunks = readFileChunks("../test_instances/data/randombytes.bin");
-    //theServer.addStaticAsset("/randombytes.bin", random_chunks);
 
-    //this_thread::sleep_for(chrono::microseconds(100));
-    //timesecs += 0.1;
-    //cout << "In Main: Server should have registered request handler" << endl;
-
-    //auto client_communication = createClientCommunication(protocol, io_context);
-    //client_communication->connect("localhost", "127.0.0.1", 12345);
-
-    // Add a delay to ensure the server has time to start
-    //this_thread::sleep_for(chrono::milliseconds(100));
-    //timesecs += 0.1;
-    //cout << "In Main: Client should be started up" << endl;
-
-    //Request staticHtmlRequest{.scheme = "https", .authority = "localhost", .path = "/index.html", .method = "GET", .pri = {0, 0}};
     Request staticBlockingHtmlRequest{.scheme = "https", .authority = "localhost", .path = "/index.html", .method = "GET", .pri = {1, 0}};
-    //Request randomBytesRequest{.scheme = "https", .authority = "localhost", .path = "/randombytes.bin", .method = "GET", .pri = {0, 0}};
-    //auto static_tree = make_shared<MemoryTree>();
-    //SimpleBackend static_backend(static_tree);
     auto static_backend = wwatp_service.getBackend("static_simple");
     assert(static_backend != nullptr && "Static backend should not be null");
 
-    //Request theReaderRequest{.scheme = "https", .authority = "localhost", .path = "/init/wwatp/", .method = "POST", .pri = {0, 0}};
-    //auto local_reader_tree = make_shared<MemoryTree>();
-    //SimpleBackend local_reader_backend(local_reader_tree);
     auto local_reader_backend = wwatp_service.getBackend("local_reader_simple");
     assert(local_reader_backend != nullptr && "Local reader backend should not be null");
 
-    //Request theWriterRequest{.scheme = "https", .authority = "localhost", .path = "/uninit/wwatp/", .method = "POST", .pri = {0, 0}};
-    //auto local_writer_tree = make_shared<MemoryTree>();
-    //SimpleBackend local_writer_backend(local_writer_tree);
     auto local_writer_backend = wwatp_service.getBackend("local_writer_simple");
     assert(local_writer_backend != nullptr && "Local writer backend should not be null");
-    //auto reader_of_writer_tree = make_shared<MemoryTree>();
-    //SimpleBackend reader_of_writer_backend(reader_of_writer_tree);
     auto reader_of_writer_backend = wwatp_service.getBackend("reader_of_writer_simple");
     assert(reader_of_writer_backend != nullptr && "Reader of writer backend should not be null");
 
-    //Request theBlockingRequest{.scheme = "https", .authority = "localhost", .path = "/blocking/wwatp/", .method = "POST", .pri = {0, 0}};
-    //auto local_blocking_tree = make_shared<MemoryTree>();
-    //SimpleBackend local_blocking_backend(local_blocking_tree);
     auto local_blocking_backend = wwatp_service.getBackend("local_blocking_threadsafe");
     assert(local_blocking_backend != nullptr && "Local blocking backend should not be null");
-    //ThreadsafeBackend local_blocking_backend_threadsafe(local_blocking_backend);
     auto local_blocking_backend_threadsafe = wwatp_service.getBackend("local_blocking_threadsafe");
     assert(local_blocking_backend_threadsafe != nullptr && "Local blocking backend threadsafe should not be null");
 
-    //Http3ClientBackendUpdater client_backend_updater("client_backend_updater", "127.0.0.1", 12345);
-    //Http3ClientBackend& static_html_client = client_backend_updater.addBackend(static_backend, false, staticHtmlRequest, 0, fplus::just(staticHtmlNode));
     auto static_html_client = dynamic_cast<Http3ClientBackend*>(wwatp_service.getBackend("static_html_client").get());
     assert(static_html_client != nullptr && "Static HTML client should not be null");
-    //Http3ClientBackend& random_bytes_client = client_backend_updater.addBackend(static_backend, false, randomBytesRequest, 0, fplus::just(randomBytesNode));
     auto random_bytes_client = dynamic_cast<Http3ClientBackend*>(wwatp_service.getBackend("random_bytes_client").get());
     assert(random_bytes_client != nullptr && "Random bytes client should not be null");
-    //Http3ClientBackend& static_blocking_html_client = client_backend_updater.addBackend(static_backend, true, staticBlockingHtmlRequest, 0, fplus::just(staticHtmlNode));
     auto static_blocking_html_client = dynamic_cast<Http3ClientBackend*>(wwatp_service.getBackend("static_blocking_html_client").get());
     assert(static_blocking_html_client != nullptr && "Static blocking HTML client should not be null");
 
-    //Http3ClientBackend& reader_client = client_backend_updater.addBackend(local_reader_backend, false, theReaderRequest);
     auto reader_client = dynamic_cast<Http3ClientBackend*>(wwatp_service.getBackend("reader_client").get());
     assert(reader_client != nullptr && "Reader client should not be null");
     
-    //Http3ClientBackend& writer_client = client_backend_updater.addBackend(local_writer_backend, false, theWriterRequest);
     auto writer_client = dynamic_cast<Http3ClientBackend*>(wwatp_service.getBackend("writer_client").get());
     assert(writer_client != nullptr && "Writer client should not be null");
-    //Http3ClientBackend& reader_of_writer_client = client_backend_updater.addBackend(reader_of_writer_backend, false, theWriterRequest);
     auto reader_of_writer_client = dynamic_cast<Http3ClientBackend*>(wwatp_service.getBackend("reader_of_writer_client").get());
     assert(reader_of_writer_client != nullptr && "Reader of writer client should not be null");
-    //Http3ClientBackend& blocking_client = client_backend_updater.addBackend(local_blocking_backend_threadsafe, true, theBlockingRequest, 60);
     auto blocking_client = dynamic_cast<Http3ClientBackend*>(wwatp_service.getBackend("blocking_client").get());
     assert(blocking_client != nullptr && "Blocking client should not be null");
 
@@ -445,16 +348,6 @@ int main() {
     reader_client->requestFullTreeSync();
 
     auto response_cycle = [&wwatp_service, &wait_loops, &timesecs](string label = "") {
-        // // Service the client communication for a while to allow the client to send the request.
-        // cerr << "In Main: Waiting for " << label << endl << flush;
-        // for(int i = 0; i < wait_loops; i++) {
-        //     client_backend_updater.maintainRequestHandlers(*client_communication, timesecs);
-        //     client_communication->processRequestStream();
-        //     server_communication->processResponseStream();
-        //     this_thread::sleep_for(chrono::milliseconds(20));
-        //     timesecs += 0.02;
-        // }
-        // cerr << "In Main: Waited for " << label << endl << flush;
         wwatp_service.responseCycle(label, wait_loops, 20, timesecs);
     };
 
@@ -485,8 +378,6 @@ int main() {
         reader_tester.testAnimalNodesNoElephant();
     }
 
-    //client_backend_updater.start(*client_communication, timesecs, 100);
-    //theServer.start(*server_communication, 0, 100);
     wwatp_service.run();
 
     {
@@ -501,11 +392,7 @@ int main() {
         blocking_tester.testBackendLogically();
     }
     cout << "In Main:  All tests passed" << endl << flush; 
-    //client_backend_updater.stop();
-    //theServer.stop();
 
-    //client_communication->close();
-    //server_communication->close();
     wwatp_service.stop();
     cout << "In Main: Client and server should be closed" << endl;
 
