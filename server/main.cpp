@@ -5,6 +5,7 @@
 #include <cstring>
 #include <csignal>
 #include <atomic>
+#include <map>
 
 #include "wwatp_service.h"
 #include "shared_chunk.h"
@@ -21,6 +22,61 @@ void signalHandler(int signal) {
     }
 }
 
+// Help directory strings for navigation
+map<string, string> help_directories = {
+    {"top_level_help_directory", R"(
+WWATP Server Help System
+
+For detailed configuration help, use:
+  --help backends    - Show backend configuration help
+  --help frontends   - Show frontend configuration help
+  
+Available help topics:
+  - backends: Information about data storage backends
+  - frontends: Information about communication frontends
+)"},
+    
+    {"backends_help_directory", R"(
+Backend Configuration Help
+
+To get specific help for individual backend types, use:
+  --help simple         - Simple in-memory backend
+  --help transactional  - Transactional backend with rollback
+  --help threadsafe     - Thread-safe backend wrapper
+  --help composite      - Composite backend for mounting
+  --help redirected     - Redirected backend wrapper
+  --help http3_client   - HTTP3 client backend
+  --help file           - File system backend
+)"},
+    
+    {"frontends_help_directory", R"(
+Frontend Configuration Help
+
+To get specific help for individual frontend types, use:
+  --help cloning_mediator  - Cloning mediator frontend
+  --help yaml_mediator     - YAML mediator frontend  
+  --help http3_server      - HTTP3 server frontend
+)"},
+    
+    // Individual backend help directories - redirect back to backends_help
+    {"simple_help_directory", "For backend configuration help, use: --help backends"},
+    {"transactional_help_directory", "For backend configuration help, use: --help backends"},
+    {"threadsafe_help_directory", "For backend configuration help, use: --help backends"},
+    {"composite_help_directory", "For backend configuration help, use: --help backends"},
+    {"redirected_help_directory", "For backend configuration help, use: --help backends"},
+    {"http3_client_help_directory", R"(For backend configuration help, use: --help backends
+  For QUIC Connector configuration help, use: --help quic_connector)"},
+    {"file_help_directory", "For backend configuration help, use: --help backends"},
+    {"quic_connector_help_directory", "For http3_client configuration help, use: --help http3_client"},
+    
+    // Individual frontend help directories - redirect back to frontends_help
+    {"cloning_mediator_help_directory", "For frontend configuration help, use: --help frontends"},
+    {"yaml_mediator_help_directory", "For frontend configuration help, use: --help frontends"},
+    {"http3_server_help_directory", R"(For frontend configuration help, use: --help frontends"
+For QUIC Listener configuration help, use: --help quic_listener)"},
+    {"quic_listener_help_directory", "For http3_server configuration help, use: --help http3_server"},
+};
+
 void printUsage(const char* program_name) {
     cout << "Usage: " << program_name << " [OPTIONS] <config_yaml_path>" << endl;
     cout << endl;
@@ -30,7 +86,7 @@ void printUsage(const char* program_name) {
     cout << "  config_yaml_path    Path to YAML configuration file (required)" << endl;
     cout << endl;
     cout << "Options:" << endl;
-    cout << "  -h, --help         Show this help message and exit" << endl;
+    cout << "  -h, --help [TOPIC] Show help message and exit" << endl;
     cout << "  --usage            Show usage information and exit" << endl;
     cout << "  --pool-size SIZE   Set memory pool size in GB (default: 1)" << endl;
     cout << "  --check-only       Validate configuration without starting server" << endl;
@@ -39,6 +95,53 @@ void printUsage(const char* program_name) {
     cout << "  " << program_name << " config.yaml" << endl;
     cout << "  " << program_name << " --pool-size 2 config.yaml" << endl;
     cout << "  " << program_name << " --check-only config.yaml" << endl;
+    cout << "  " << program_name << " --help backends" << endl;
+}
+
+void printHelp(const string& help_topic = "") {
+    string topic = help_topic.empty() ? "top_level" : help_topic;
+    
+    // Get help strings directly from static method
+    try {
+        const auto help_strings = WWATPService::getHelpStrings();
+        
+        // Try the topic as-is first, then with _help suffix
+        string lookup_topic = topic;
+        if (help_strings.find(lookup_topic) == help_strings.end()) {
+            if (!lookup_topic.ends_with("_help")) {
+                lookup_topic += "_help";
+            }
+        }
+        
+        // Print help string content if found
+        if (help_strings.find(lookup_topic) != help_strings.end()) {
+            cout << help_strings.at(lookup_topic) << endl;
+        }
+        
+        // Check if there's a directory help request
+        string directory_key;
+        if (topic.ends_with("_help")) {
+            directory_key = topic + "_directory";
+        } else {
+            directory_key = topic + "_help_directory";
+        }
+        
+        // Print directory navigation if found
+        if (help_directories.find(directory_key) != help_directories.end()) {
+            cout << help_directories[directory_key] << endl;
+        }
+        
+        // If neither help string nor directory was found, show error
+        if (help_strings.find(lookup_topic) == help_strings.end() && 
+            help_directories.find(directory_key) == help_directories.end()) {
+            cout << "Unknown help topic: " << help_topic << endl;
+            cout << "Use --help for available topics." << endl;
+        }
+        
+    } catch (const exception& e) {
+        cout << "Error accessing help: " << e.what() << endl;
+        cout << "Use --help for available topics." << endl;
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -51,7 +154,13 @@ int main(int argc, char* argv[]) {
         string arg = argv[i];
         
         if (arg == "-h" || arg == "--help") {
-            printUsage(argv[0]);
+            // Check if there's a help topic following the help flag
+            if (i + 1 < argc && !string(argv[i + 1]).starts_with("--")) {
+                string help_topic = argv[++i];
+                printHelp(help_topic);
+            } else {
+                printHelp();
+            }
             return 0;
         }
         else if (arg == "--usage") {
@@ -109,10 +218,9 @@ int main(int argc, char* argv[]) {
         cout << "Memory pool size: " << pool_size_gb << " GB" << endl;
 
         // Create WWATPService with config file path
-        auto service = make_unique<WWATPService>(config_path);
-        service->initialize();
+        auto service = make_unique<WWATPService>(config_path, check_only);
 
-        cout << "Service initialized successfully" << endl;
+        cout << "Service constructed successfully" << endl;
 
         if (check_only) {
             cout << "Configuration validation completed successfully" << endl;

@@ -324,6 +324,65 @@ public:
     void clearStaticRequest(Request &req);
     
     const ClientConfig& getConfig() const { return config; }
+    
+    /**
+     * Get help string for QuicConnector configuration
+     * @return Help string describing ClientConfig settings
+     */
+    static std::string getHelpString() {
+        return R"(
+QuicConnector (QUIC Client) Configuration
+
+The QuicConnector uses ClientConfig with the following key settings:
+
+Required YAML Configuration:
+  private_key_file: Path to client private key file
+  cert_file: Path to client certificate file
+
+Common ClientConfig Options:
+  port: Client port number (default varies)
+  timeout: Idle timeout for QUIC connections (nanoseconds)
+  quiet: Suppress non-error output (boolean)
+  show_secret: Print transport secrets for debugging (boolean)
+  early_response: Accept early response from server (boolean)
+  
+Session Management:
+  session_file: Path to TLS session file for resumption
+  tp_file: Path to QUIC transport parameters file
+  token_file: Path to NEW_TOKEN frame token file
+  sni: TLS SNI value (overrides DNS name)
+  
+Connection Behavior:
+  change_local_addr: Duration before changing local address
+  key_update: Duration before initiating key update
+  delay_stream: Duration before sending first 1-RTT stream
+  nat_rebinding: Enable simulated NAT rebinding (boolean)
+  no_preferred_addr: Ignore server preferred address (boolean)
+  disable_early_data: Disable 0-RTT early data (boolean)
+  
+Flow Control Settings:
+  max_data: Initial connection-level flow control window
+  max_stream_data_bidi_local: Bidirectional stream window (local)
+  max_stream_data_bidi_remote: Bidirectional stream window (remote)
+  max_stream_data_uni: Unidirectional stream window
+  max_streams_bidi: Concurrent bidirectional streams
+  max_streams_uni: Concurrent unidirectional streams
+  
+Advanced Options:
+  version: QUIC version to use
+  groups: Supported cryptographic groups
+  cc_algo: Congestion control algorithm
+  initial_rtt: Initial RTT estimate
+  max_udp_payload_size: Maximum UDP payload size
+  handshake_timeout: QUIC handshake timeout
+  
+Debugging/Logging:
+  qlog_file: Path for qlog file
+  qlog_dir: Directory for qlog files (mutually exclusive with qlog_file)
+  quic_dump: Enable QUIC data hexdump (boolean)
+  http_dump: Enable HTTP data hexdump (boolean)
+)";
+    }
 
 private:
     void terminate() {

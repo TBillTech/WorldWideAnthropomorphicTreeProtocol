@@ -294,6 +294,53 @@ public:
     }
     
     const ServerConfig& getConfig() const { return config; }
+    
+    /**
+     * Get help string for QuicListener configuration
+     * @return Help string describing ServerConfig settings
+     */
+    static std::string getHelpString() {
+        return R"(
+QuicListener (QUIC Server) Configuration
+
+The QuicListener uses ServerConfig with the following key settings:
+
+Required YAML Configuration:
+  private_key_file: Path to server private key file
+  cert_file: Path to server certificate file
+
+Common ServerConfig Options:
+  port: Server port number (default varies)
+  timeout: Idle timeout for QUIC connections (nanoseconds)
+  quiet: Suppress non-error output (boolean)
+  show_secret: Print transport secrets for debugging (boolean)
+  validate_addr: Require address validation (boolean)
+  early_response: Start response before full request received (boolean)
+  verify_client: Verify client with X.509 certificates (boolean)
+  
+Flow Control Settings:
+  max_data: Initial connection-level flow control window
+  max_stream_data_bidi_local: Bidirectional stream window (local)
+  max_stream_data_bidi_remote: Bidirectional stream window (remote)  
+  max_stream_data_uni: Unidirectional stream window
+  max_streams_bidi: Concurrent bidirectional streams
+  max_streams_uni: Concurrent unidirectional streams
+  
+Advanced Options:
+  version: QUIC version to use
+  groups: Supported cryptographic groups
+  cc_algo: Congestion control algorithm
+  initial_rtt: Initial RTT estimate
+  max_udp_payload_size: Maximum UDP payload size
+  handshake_timeout: QUIC handshake timeout
+  
+Debugging/Logging:
+  keylog_filename: Path for TLS key logging
+  qlog_dir: Directory for qlog files
+  quic_dump: Enable QUIC data hexdump (boolean)
+  http_dump: Enable HTTP data hexdump (boolean)
+)";
+    }
 
 private:
     uint16_t getNextStaticLogicalId() {

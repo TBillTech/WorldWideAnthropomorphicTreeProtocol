@@ -98,7 +98,7 @@ WWATPService::WWATPService(string name, const std::string& yaml_config)
     initialize();
 }
 
-WWATPService::WWATPService(const std::string& path)
+WWATPService::WWATPService(const std::string& path, bool test_only)
     : config_label_("config") {
     // Get the name from the final directory in the path
     std::filesystem::path fs_path(path);
@@ -151,7 +151,7 @@ WWATPService::WWATPService(const std::string& path)
     //     });
     
     // Initialize the service
-    initialize();
+    initialize(test_only);
 }
 
 WWATPService::~WWATPService() {
@@ -167,7 +167,7 @@ WWATPService::~WWATPService() {
     }
 }
 
-void WWATPService::initialize() {
+void WWATPService::initialize(bool test_only) {
     if (initialized_) {
         return; // Already initialized
     }
@@ -181,6 +181,11 @@ void WWATPService::initialize() {
 
         // Then construct frontends
         constructFrontends();
+
+        if (test_only) {
+            std::cout << "WWATPService in test mode; skipping listener/connector setup; not initialized" << std::endl;
+            return;
+        }
 
         // Loop through the quic_listeners_ and start each listener
         for (auto& [conspec, listener] : quic_listeners_) {
@@ -227,47 +232,58 @@ bool WWATPService::hasBackend(const std::string& backend_name) const {
 }
 
 void WWATPService::initializeFactories() {
+
     // Initialize backend factories
-    backend_factories_["simple"] = [this](const TreeNode& config) {
-        return this->createSimpleBackend(config);
-    };
+    backend_factories_["simple"] = std::make_pair(
+        [this](const TreeNode& config) { return this->createSimpleBackend(config); },
+        "simple_help"
+    );
     
-    backend_factories_["transactional"] = [this](const TreeNode& config) {
-        return this->createTransactionalBackend(config);
-    };
+    backend_factories_["transactional"] = std::make_pair(
+        [this](const TreeNode& config) { return this->createTransactionalBackend(config); },
+        "transactional_help"
+    );
     
-    backend_factories_["threadsafe"] = [this](const TreeNode& config) {
-        return this->createThreadsafeBackend(config);
-    };
+    backend_factories_["threadsafe"] = std::make_pair(
+        [this](const TreeNode& config) { return this->createThreadsafeBackend(config); },
+        "threadsafe_help"
+    );
     
-    backend_factories_["composite"] = [this](const TreeNode& config) {
-        return this->createCompositeBackend(config);
-    };
+    backend_factories_["composite"] = std::make_pair(
+        [this](const TreeNode& config) { return this->createCompositeBackend(config); },
+        "composite_help"
+    );
     
-    backend_factories_["redirected"] = [this](const TreeNode& config) {
-        return this->createRedirectedBackend(config);
-    };
+    backend_factories_["redirected"] = std::make_pair(
+        [this](const TreeNode& config) { return this->createRedirectedBackend(config); },
+        "redirected_help"
+    );
     
-    backend_factories_["http3_client"] = [this](const TreeNode& config) {
-        return this->createHttp3ClientBackend(config);
-    };
+    backend_factories_["http3_client"] = std::make_pair(
+        [this](const TreeNode& config) { return this->createHttp3ClientBackend(config); },
+        "http3_client_help"
+    );
     
-    backend_factories_["file"] = [this](const TreeNode& config) {
-        return this->createFileBackend(config);
-    };
+    backend_factories_["file"] = std::make_pair(
+        [this](const TreeNode& config) { return this->createFileBackend(config); },
+        "file_help"
+    );
 
     // Initialize frontend factories
-    frontend_factories_["cloning_mediator"] = [this](const TreeNode& config) {
-        return this->createCloningMediator(config);
-    };
+    frontend_factories_["cloning_mediator"] = std::make_pair(
+        [this](const TreeNode& config) { return this->createCloningMediator(config); },
+        "cloning_mediator_help"
+    );
     
-    frontend_factories_["yaml_mediator"] = [this](const TreeNode& config) {
-        return this->createYAMLMediator(config);
-    };
+    frontend_factories_["yaml_mediator"] = std::make_pair(
+        [this](const TreeNode& config) { return this->createYAMLMediator(config); },
+        "yaml_mediator_help"
+    );
     
-    frontend_factories_["http3_server"] = [this](const TreeNode& config) {
-        return this->createHTTP3Server(config);
-    };
+    frontend_factories_["http3_server"] = std::make_pair(
+        [this](const TreeNode& config) { return this->createHTTP3Server(config); },
+        "http3_server_help"
+    );
 }
 
 void WWATPService::constructBackends() {
@@ -319,11 +335,11 @@ void WWATPService::constructBackends() {
         }
 
         try {
-            auto backend = factory_it->second(backend_config);
+            auto backend = factory_it->second.first(backend_config);
             backends_[backend_name] = backend;
             std::cout << "Created backend '" << backend_name << "' of type '" << backend_type << "'" << endl << flush;
         } catch (const std::exception& e) {
-            accumulated_errors << " Failed to create backend '" << backend_name << "': " << e.what() << "." << endl;
+            accumulated_errors << " Failed to create backend '" << backend_name << "': " << e.what() << ". See " << factory_it->second.second << endl;
             continue;
         }
     }
@@ -365,11 +381,11 @@ void WWATPService::constructFrontends() {
         }
 
         try {
-            auto frontend = factory_it->second(frontend_node.unsafe_get_just());
+            auto frontend = factory_it->second.first(frontend_node.unsafe_get_just());
             frontends_[frontend_name] = frontend;
             std::cout << "Created frontend '" << frontend_name << "' of type '" << frontend_type << "'" << endl << flush;
         } catch (const std::exception& e) {
-            accumulated_errors << " Failed to create frontend '" << frontend_name << "': " << e.what() << "." << endl;
+            accumulated_errors << " Failed to create frontend '" << frontend_name << "': " << e.what() << ". See " << factory_it->second.second << endl;
             continue;
         }
     }
@@ -1353,9 +1369,6 @@ WWATP Service Configuration:
             wwatp:
               backend: file_store
           index.html: ../test_instances/data/libtest_index.html
-
-  For detailed help on specific components, refer to the individual help strings
-  for backends_help, frontends_help, and specific type help (e.g., simple_help).
 )";
 
 const std::string WWATPService::backends_help = R"(

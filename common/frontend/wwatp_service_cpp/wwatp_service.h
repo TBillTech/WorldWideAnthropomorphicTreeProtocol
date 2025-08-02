@@ -61,7 +61,7 @@ public:
      * @param path Path to YAML configuration file
      * This constructor recursively creates a config service to load the file, then initializes this service
      */
-    WWATPService(const std::string& path);
+    WWATPService(const std::string& path, bool test_only = false);
     
     /**
      * Destructor - cleanup all constructed components
@@ -72,7 +72,7 @@ public:
      * Initialize the service by parsing config and constructing all components
      * This must be called after construction before using the service
      */
-    void initialize();
+    void initialize(bool test_only = false);
 
     /**
      * Get a backend by name
@@ -146,6 +146,30 @@ public:
     static const std::string yaml_mediator_help;
     static const std::string http3_server_help;
 
+    /**
+     * Get the help string map for factory types
+     * @return Map of help string names to help string content
+     */
+    static std::map<std::string, std::string> getHelpStrings() { 
+        std::map<std::string, std::string> help_strings_;
+        help_strings_["top_level_help"] = top_level_help;
+        help_strings_["backends_help"] = backends_help;
+        help_strings_["frontends_help"] = frontends_help;
+        help_strings_["simple_help"] = simple_help;
+        help_strings_["transactional_help"] = transactional_help;
+        help_strings_["threadsafe_help"] = threadsafe_help;
+        help_strings_["composite_help"] = composite_help;
+        help_strings_["redirected_help"] = redirected_help;
+        help_strings_["http3_client_help"] = http3_client_help;
+        help_strings_["file_help"] = file_help;
+        help_strings_["cloning_mediator_help"] = cloning_mediator_help;
+        help_strings_["yaml_mediator_help"] = yaml_mediator_help;
+        help_strings_["http3_server_help"] = http3_server_help;
+        help_strings_["quic_listener_help"] = QuicListener::getHelpString();
+        help_strings_["quic_connector_help"] = QuicConnector::getHelpString();
+        return help_strings_; 
+    }
+
 private:
     // Configuration
     std::string name_;
@@ -169,11 +193,11 @@ private:
 
     // Backend factory function type
     using BackendFactory = std::function<std::shared_ptr<Backend>(const TreeNode&)>;
-    std::map<std::string, BackendFactory> backend_factories_;
+    std::map<std::string, std::pair<BackendFactory, std::string>> backend_factories_;
 
     // Frontend factory function type
     using FrontendFactory = std::function<std::pair<std::shared_ptr<Frontend>, ConnectorSpecifier>(const TreeNode&)>;
-    std::map<std::string, FrontendFactory> frontend_factories_;
+    std::map<std::string, std::pair<FrontendFactory, std::string>> frontend_factories_;
 
     /**
      * Initialize backend and frontend factories
