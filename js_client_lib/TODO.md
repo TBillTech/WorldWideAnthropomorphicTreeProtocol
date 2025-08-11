@@ -146,24 +146,25 @@ Browser runtime constraints
 
 4) Backend Testbed (JS parity suite)
 
- - [ ] Location: place JS testbed under `js_client_lib/test/backend_testbed/`:
-   - [ ] `backend_testbed.js`: reusable helpers mirroring C++ testbed utilities.
-   - [ ] `backend_testbed.test.js`: Vitest suite that runs the helpers against a Backend implementation.
- - [ ] Port testbed helpers inspired by C++ `test_instances/catch2_unit_tests/backend_testbed.h`:
-   - [ ] `createNoContentTreeNode(labelRule, description, propertyInfos, version, childNames, queryHowTo?, qaSequence?)`
-   - [ ] `createAnimalNode(animal, description, propertyInfos, version, childNames, propertyDataStrings[], queryHowTo, qaSequence)`
-   - [ ] `createAnimalDossiers(animalNode)`; `createLionNodes()`; `createElephantNodes()`; `createParrotNodes()`
-   - [ ] `collectAllNotes()`; `createNotesPageTree()`; `prefixNodeLabels(prefix, nodes)`
-   - [ ] `checkGetNode(backend, labelRule, expectedNode)`; `checkMultipleGetNode(backend, expectedNodes)`
-   - [ ] `checkDeletedNode(backend, labelRule)`; `checkMultipleDeletedNode(backend, expectedNodes)`
+ - [x] Location: place JS testbed under `js_client_lib/test/backend_testbed/`:
+   - [x] `backend_testbed.js`: reusable helpers mirroring C++ testbed utilities.
+   - [x] `backend_testbed.test.js`: Vitest suite that runs the helpers against a Backend implementation.
+ - [x] Port testbed helpers inspired by C++ `test_instances/catch2_unit_tests/backend_testbed.h`:
+   - [x] `createNoContentTreeNode(labelRule, description, propertyInfos, version, childNames, queryHowTo?, qaSequence?)`
+   - [x] `createAnimalNode(animal, description, propertyInfos, version, childNames, propertyDataStrings[], queryHowTo, qaSequence)`
+   - [x] `createAnimalDossiers(animalNode)`; `createLionNodes()`; `createElephantNodes()`; `createParrotNodes()`
+   - [x] `collectAllNotes()`; `createNotesPageTree()`; `prefixNodeLabels(prefix, nodes)`
+   - [x] `checkGetNode(backend, labelRule, expectedNode)`; `checkMultipleGetNode(backend, expectedNodes)`
+   - [x] `checkDeletedNode(backend, labelRule)`; `checkMultipleDeletedNode(backend, expectedNodes)`
  - [ ] Implement `BackendTestbed` class for JS with methods analogous to C++:
-   - [ ] constructor(backend, { shouldTestNotifications = true, shouldTestChanges = true })
-   - [ ] `addAnimalsToBackend()`; `addNotesPageTree()`; `stressTestConstructions(count)`
+   - [x] constructor(backend, { shouldTestNotifications = true, shouldTestChanges = true })
+   - [x] `addAnimalsToBackend()`; [x] `addNotesPageTree()`; [ ] `stressTestConstructions(count)`
    - [ ] `testAnimalNodesNoElephant(labelPrefix = "")`;
-   - [ ] `testBackendLogically(labelPrefix = "")`;
+   - [x] `testBackendLogically(labelPrefix = "")`;
    - [ ] `testPeerNotification(toBeModified, notificationDelayMs, labelPrefix = "")`
+   - Note: `stressTestConstructions` and `testPeerNotification` are deferred for now due to low utility in typical web-browser environments (no real multithreading, timing semantics differ). Can be added later if needed.
  - [ ] Write a Vitest suite that runs the testbed against:
-   - [ ] `SimpleBackend` (B.3) to validate local behavior.
+   - [x] `SimpleBackend` (B.3) to validate local behavior.
    - [ ] Later: `Http3ClientBackend` once transport/messages are available (same suite should run unchanged for parity).
  - [ ] Align expected behaviors to C++ semantics:
    - [ ] Listener notifications fire after version changes or deletions; for `childNotify`, use partial label matches.
@@ -379,19 +380,23 @@ Decisions
 - Include a SimpleBackend JS port to support Http3ClientBackend caching and local operations in the browser.
 
 Artifacts created/updated (this iteration)
-- js_client_lib/interface/simple_backend.js: in-memory Backend implementation (CRUD, queries, page tree, transactions, listeners).
-- js_client_lib/test/simple_backend.test.js: unit tests for SimpleBackend behaviors; all passing.
-- js_client_lib/index.js: export SimpleBackend alongside interfaces and TreeNode helpers.
+- js_client_lib/test/backend_testbed/backend_testbed.js: JS parity testbed helpers + BackendTestbed core methods (animals/notes/logical checks).
+- js_client_lib/test/backend_testbed/backend_testbed.test.js: Vitest suite running the core idiom against SimpleBackend; passing.
+- js_client_lib/interface/simple_backend.js: deleteNode now cascades to descendants (parity with C++ expectations); existing behaviors retained.
 - Prior artifacts retained: tree_node.js + tests; ESLint flat config; package.json scripts.
 
 Status updates
 - Section A: complete.
 - Section B.1 (Backend interface) and Maybe<T>: complete.
 - Section B.2 (TreeNode & related types): complete with tests.
-- Section B.3 (SimpleBackend): complete with tests.
+- Section B.3 (SimpleBackend): complete with tests; cascade-delete added.
+- Section B.4 (Backend Testbed): core helpers and logical test flow implemented; suite runs against SimpleBackend and passes.
+
+Notes / deferrals
+- `stressTestConstructions` and `testPeerNotification` are intentionally deferred for now due to low utility in browser-first context; can be implemented later if needed.
 
 Open items (next steps candidates)
 - Start on http3_tree_message_helpers encoders/decoders.
 - Define Request/StreamIdentifier shapes for transport abstraction.
-- Backend testbed (B.4) for broader parity validation.
+- Add optional notification-focused tests in the testbed when transport/journaling paths are available.
 - Broaden unit tests (encoders/decoders, message round-trips).

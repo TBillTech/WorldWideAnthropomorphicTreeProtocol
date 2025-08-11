@@ -43,8 +43,18 @@ export default class SimpleBackend extends Backend {
 
   deleteNode(labelRule) {
     const label = String(labelRule);
-    const existed = this.nodes.delete(label);
-    if (existed) this.notifyListeners(label, Nothing);
+    const toDelete = [];
+    for (const key of this.nodes.keys()) {
+      if (key === label || key.startsWith(label + '/')) toDelete.push(key);
+    }
+    let existed = false;
+    for (const key of toDelete) {
+      const removed = this.nodes.delete(key);
+      if (removed) {
+        existed = true;
+        this.notifyListeners(key, Nothing);
+      }
+    }
     return existed;
   }
 
