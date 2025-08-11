@@ -173,7 +173,7 @@ Browser runtime constraints
 
 5) HTTP3TreeMessage & helpers
 - Helpers (`js_client_lib/interface/http3_tree_message_helpers.js`)
-  - [ ] Implement chunk model compatible with `shared_chunk.h`:
+  - [x] Implement chunk model compatible with `shared_chunk.h`:
     - payload_chunk_header (signal_type=2, fields: signal, request_id, data_length)
     - signal_chunk_header (signal_type=1)
     - no_chunk_header (signal_type=0)
@@ -182,7 +182,7 @@ Browser runtime constraints
       - flatten with signal
       - provide size, get/set signal, request_id
     - chunks = shared_span[]
-  - [ ] Implement encoders/decoders and can_decode_* for:
+  - [x] Implement encoders/decoders and can_decode_* for:
     - label (small string)
     - long_string (multi-chunk string)
     - Maybe<TreeNode>
@@ -192,19 +192,19 @@ Browser runtime constraints
     - SubTransaction
     - Transaction
     - Vector<TreeNode>
-  - [ ] Ensure byte order and sizes match C++ (uint8, uint16, etc.).
-  - [ ] Unit tests for each encoder/decoder.
-  - [ ] Use Uint8Array/DataView, not Buffer, to support browsers. Add thin Buffer shim only in Node tests if needed.
+  - [x] Ensure byte order and sizes match C++ (uint8, uint16, etc.).
+  - [x] Unit tests for each encoder/decoder.
+  - [x] Use Uint8Array/DataView, not Buffer, to support browsers. Add thin Buffer shim only in Node tests if needed.
 
 - Message (`js_client_lib/interface/http3_tree_message.js`)
-  - [ ] Implement class with state:
+  - [x] Implement class with state:
     - requestId, signal, isInitialized, isJournalRequest, requestComplete, responseComplete, processingFinished
     - requestChunks: chunk list, responseChunks: chunk list
   - [ ] Methods per C++ header:
     - encode/decode pairs for all backend methods; getJournal; static node request
     - pop/push Request/Response chunks
     - reset; setters; is* queries
-  - [ ] Constructor, move-like resets, minimal validations.
+  - [x] Constructor, move-like resets, minimal validations.
   - [ ] Tests to validate round-trips.
 
 ## C. Transport abstraction (`js_client_lib/transport`)
@@ -295,19 +295,19 @@ Browser runtime constraints
 
 ## F. Serialization details and binary safety
 
-- [ ] Use Uint8Array/DataView throughout; add small compatibility layer in tests when running under Node.
-- [ ] Implement headers with exact field sizes (uint8, uint16 little-endian as per C++ layout); document endianness.
-- [ ] Implement chunk size policy (1200 default); split long strings accordingly.
-- [ ] Implement flatten_with_signal behavior for propertyData spans like C++ `flatten_with_signal`.
+- [x] Use Uint8Array/DataView throughout; add small compatibility layer in tests when running under Node.
+- [x] Implement headers with exact field sizes (uint8, uint16 little-endian as per C++ layout); document endianness.
+- [x] Implement chunk size policy (1200 default); split long strings accordingly.
+- [x] Implement flatten_with_signal behavior for propertyData spans like C++ `flatten_with_signal`.
 - [ ] Validate with golden vectors or cross-language fixture when available.
 
 ## G. Tests
 
 - Unit tests for:
-  - [ ] http3_tree_message_helpers encoders/decoders round trip
+  - [x] http3_tree_message_helpers encoders/decoders round trip
   - [ ] HTTP3TreeMessage request/response sequences (including journal)
-  - [ ] TreeNode property operations and version comparisons
-  - [ ] Backend interface conformance with a simple in-memory backend used as localBackend
+  - [x] TreeNode property operations and version comparisons
+  - [x] Backend interface conformance with a simple in-memory backend used as localBackend
   - [ ] Http3ClientBackend behavior: pending queue, blocking waits, journal rate-limiting, static node fetching, listener notifications
   - [ ] Updater maintainRequestHandlers flow with a mock Communication
   - [ ] Transport mock: stream identifier management, response handler routing
@@ -372,7 +372,7 @@ Date: 2025-08-11
 
 What we analyzed
 - C++ headers shaping the JS port: backend.h, tree_node.h, http3_tree_message.h, http3_tree_message_helpers.h, http3_client_backend.h, frontend_base.h, transport/include/shared_chunk.h, transport/include/request.h, and memory/include/simple_backend.h.
-- Existing JS files discovered: interface/*.js (maybe.js, backend.js) and transport scaffolding; added tree_node.js implementation and tests.
+- Existing JS files discovered: interface/*.js (maybe.js, backend.js), transport scaffolding; tree_node.js implementation and tests in place.
 
 Decisions
 - Browser-first implementation: use Uint8Array/DataView, avoid Node-only APIs; design Communication adapters for WebTransport/WebSocket/fetch. Node QUIC stays optional and is stubbed as Node-only.
@@ -380,10 +380,12 @@ Decisions
 - Include a SimpleBackend JS port to support Http3ClientBackend caching and local operations in the browser.
 
 Artifacts created/updated (this iteration)
-- js_client_lib/test/backend_testbed/backend_testbed.js: JS parity testbed helpers + BackendTestbed core methods (animals/notes/logical checks).
-- js_client_lib/test/backend_testbed/backend_testbed.test.js: Vitest suite running the core idiom against SimpleBackend; passing.
-- js_client_lib/interface/simple_backend.js: deleteNode now cascades to descendants (parity with C++ expectations); existing behaviors retained.
-- Prior artifacts retained: tree_node.js + tests; ESLint flat config; package.json scripts.
+- js_client_lib/interface/http3_tree_message_helpers.js: Implemented chunk model (headers + SpanChunk) and encoders/decoders for label, long_string, Maybe<TreeNode>, SequentialNotification, Vector<SequentialNotification>, NewNodeVersion, SubTransaction, Transaction, and Vector<TreeNode>; added flattenWithSignal utilities.
+- js_client_lib/interface/http3_tree_message.js: Added initial HTTP3TreeMessage with state, chunk push/pop, reset/setters, and basic getNode/upsertNode request handling.
+- js_client_lib/test/http3_tree_message_helpers.test.js: Ported parity tests from C++ for helpers (labels, long strings, Maybe<TreeNode>, transactions, vector<TreeNode>, sequential notifications, and chunk split/collect).
+- js_client_lib/test/http3_tree_message.test.js: Basic message encode smoke tests (getNode, upsertNode).
+- js_client_lib/test/backend_testbed/backend_testbed.js and *.test.js: Core helpers and logical test flow against SimpleBackend.
+- Prior artifacts retained: tree_node.js + tests; ESLint config; package.json scripts; index.js exports updated.
 
 Status updates
 - Section A: complete.
@@ -391,12 +393,14 @@ Status updates
 - Section B.2 (TreeNode & related types): complete with tests.
 - Section B.3 (SimpleBackend): complete with tests; cascade-delete added.
 - Section B.4 (Backend Testbed): core helpers and logical test flow implemented; suite runs against SimpleBackend and passes.
+- Section B.5 (HTTP3TreeMessage & helpers): helpers complete with tests; HTTP3TreeMessage class scaffolded with initial methods; more encode/decode pairs pending.
 
 Notes / deferrals
 - `stressTestConstructions` and `testPeerNotification` are intentionally deferred for now due to low utility in browser-first context; can be implemented later if needed.
+- HTTP3TreeMessage full method coverage and round-trip tests remain.
 
 Open items (next steps candidates)
-- Start on http3_tree_message_helpers encoders/decoders.
+- Expand HTTP3TreeMessage to support all backend method encode/decode pairs; add round-trip tests including journal flows.
 - Define Request/StreamIdentifier shapes for transport abstraction.
 - Add optional notification-focused tests in the testbed when transport/journaling paths are available.
-- Broaden unit tests (encoders/decoders, message round-trips).
+- Broaden unit tests (message round-trips, transport mock, integration).
