@@ -16,7 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",
-    "lint": "eslint . --ext .js,.mjs,.cjs",
+  "lint": "eslint . --ext .js,.mjs,.cjs",
     "format": "prettier -w .",
     "build": "echo 'no build step needed'"
   },

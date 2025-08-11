@@ -38,7 +38,7 @@ Browser runtime constraints
 - [x] Decide unit test framework (Jest or Vitest). Prefer Vitest for speed and ESM, or Jest for ubiquity.
 - [x] Node version target; ensure Buffer/TypedArray APIs used consistently.
 
-## B. Core interfaces (mirroring C++)
+## B. Core interfaces and SimpleBackend (mirroring C++)
 
 1) Backend interface (`js_client_lib/interface/backend.js`)
  - [x] Define abstract class Backend with methods:
@@ -62,21 +62,115 @@ Browser runtime constraints
   - [x] Ensure no Node-only dependencies in interface code (browser-safe).
 
 2) TreeNode & related types (`js_client_lib/interface/tree_node.js`)
-- [ ] Implement TreeNodeVersion with fields, comparisons, ++, defaults.
-- [ ] Implement TreeNode with fields and methods similar to C++:
-  - labelRule, description, propertyInfos [{type,name}], version, childNames, propertyData (byte buffer), queryHowTo?, qaSequence?
-  - getters/setters; getNodeName/getNodePath
-  - property helpers: getPropertyValue<T>, setPropertyValue<T>, insertProperty<T>, string/span variants.
-  - prefixLabels/shortenLabels
-  - YAML conversion helpers (optional if not immediately needed); at least stubs to maintain parity.
-- [ ] Define Transaction-related typedefs:
-  - NewNodeVersion = [Maybe<uint16>, [string, Maybe<TreeNode>]]
-  - SubTransaction = [NewNodeVersion, NewNodeVersion[]]
-  - Transaction = SubTransaction[]
-  - Helpers to prefix/shorten transaction labels.
-  - [ ] Confirm TreeNode propertyData is represented by Uint8Array for browser safety (avoid Node Buffer).
 
-3) HTTP3TreeMessage & helpers
+ - [x] File scaffold and exports:
+   - [x] Create `interface/tree_node.js` exporting: TreeNodeVersion, TreeNode, fixedSizeTypes, fromYAMLNode (stub), toYAML (stub), and Transaction helpers.
+   - [x] Import Maybe helpers from `interface/maybe.js` and re-export types used by other modules when helpful.
+
+ - [x] TreeNodeVersion (C++ parity):
+   - [x] Fields: versionNumber:uint16 (default 0), maxVersionSequence:uint16 (default 256), policy:string (default "default"), authorialProof:Maybe<string>, authors:Maybe<string>, readers:Maybe<string>, collisionDepth:Maybe<number>.
+   - [x] Methods:
+     - [x] increment() to wrap with modulo maxVersionSequence.
+     - [x] isDefault() check as per C++ defaults.
+     - [x] Comparison operators with wrap-around semantics: lt/le/gt/ge/eq using the half-range rule from C++.
+   - [x] Serialization helpers (optional): toJSON()/fromJSON() and YAML stubs; validate policy non-empty on encode.
+   - [x] Tests: eq/lt/gt around wrap boundaries; isDefault; increment wrap.
+
+ - [x] TreeNode API and data model:
+   - [x] Fields:
+     - [x] labelRule:string; description:string; propertyInfos:Array<{type:string,name:string}>.
+     - [x] version:TreeNodeVersion; childNames:string[].
+     - [x] propertyData:Uint8Array (browser-safe, no Buffer).
+     - [x] queryHowTo:Maybe<string>; qaSequence:Maybe<string>.
+   - [x] Getters/setters for all fields.
+   - [x] Path helpers: getNodeName() (last segment after '/'), getNodePath() (prefix path before last '/'), getAbsoluteChildNames() (resolve children to absolute paths relative to node path).
+   - [x] Operator++ equivalent: bump version via version.increment().
+   - [x] Equality: deep comparison of all fields including byte-wise equality of propertyData.
+   - [x] Label prefix helpers: prefixLabels(prefix), shortenLabels(prefix) applied to labelRule and childNames.
+
+ - [x] Property data layout and helpers (binary correctness):
+   - [x] fixedSizeTypes = {"int64","uint64","double","float","bool"} to mirror C++ set.
+   - [x] Encoding policy in propertyData:
+     - [x] For fixed-size types, use little-endian DataView encodings: int64/uint64 via get/setBig(Int)64, double via get/setFloat64, float via get/setFloat32, bool as 1-byte 0/1.
+     - [x] For variable-size types (e.g., "string","text","yaml","png"), store 32-bit little-endian length prefix followed by raw bytes.
+     - [x] Compute offsets by scanning propertyInfos in order, summing fixed sizes or reading length prefixes for variable sizes.
+   - [x] Implement helpers:
+     - [x] getPropertyValue<T>(name): returns [size:number, value:T, raw:Uint8Array].
+     - [x] getPropertyString(name): [size:number, value:string] using UTF-8.
+     - [x] getPropertyValueSpan(name): [size:number, header:Uint8Array, data:Uint8Array] for variable-size blobs.
+     - [x] setPropertyValue<T>(name, value): in-place rebuild of propertyData maintaining property order; throw if name not found.
+     - [x] setPropertyString(name, value) and setPropertyValueSpan(name, data:Uint8Array).
+     - [x] insertProperty(index, name, value<T>), insertPropertyString(index, name, type, value), insertPropertySpan(index, name, type, data:Uint8Array) with append-on-out-of-range behavior; throw if name already exists.
+     - [x] deleteProperty(name) updates propertyInfos and compacts propertyData.
+   - [x] UTF-8 helpers for string<->Uint8Array round trips; do not use Node Buffer.
+   - [x] Tests: construct several property layouts, round-trip reads, updates, inserts at head/middle/tail, deletes; verify sizes and byte layout.
+
+ - [x] YAML parity (optional now):
+   - [x] toYAML/fromYAML stubs mirroring signatures; no external YAML dependency required initially.
+   - [x] Document that binary property layout is maintained; YAML conversion for properties may be deferred.
+
+ - [x] Transaction types and helpers (tuple parity with C++):
+   - [x] Type aliases (documented shapes):
+     - [x] NewNodeVersion = [Maybe<number /*uint16*/>, [string /*labelRule*/, Maybe<TreeNode>]]
+     - [x] SubTransaction = [NewNodeVersion, NewNodeVersion[]]
+     - [x] Transaction = SubTransaction[]
+   - [x] Helper functions:
+     - [x] prefixNewNodeVersionLabels(prefix, nnv); shortenNewNodeVersionLabels(prefix, nnv)
+     - [x] prefixSubTransactionLabels(prefix, st); shortenSubTransactionLabels(prefix, st)
+     - [x] prefixTransactionLabels(prefix, tx); shortenTransactionLabels(prefix, tx)
+   - [x] Tests: create sample transactions, run prefix/shorten helpers, validate label changes on parents and descendants; ensure immutability or clearly document mutation.
+
+ - [x] Browser-safety and interop:
+   - [x] Confirm all APIs are ESM and browser friendly; no Node Buffer/fs/net.
+   - [x] Use Uint8Array/DataView exclusively; gate BigInt64/BigUint64 usage with feature checks and fallback to polyfills in tests if needed.
+
+3) SimpleBackend (`js_client_lib/interface/simple_backend.js`)
+
+ - [ ] Implement class SimpleBackend that conforms to Backend (sync methods are acceptable; callers may `await` sync returns).
+ - [ ] Data model: Map<string, TreeNode> keyed by labelRule; maintain child relationships for queries and notifications.
+ - [ ] Query semantics:
+   - [ ] Implement partial/overlap label-rule matching helpers analogous to C++ `partialLabelRuleMatch` and `checkLabelRuleOverlap`.
+   - [ ] Implement `queryNodes(labelRule)` using these helpers; include relativeQueryNodes.
+ - [ ] Page tree semantics:
+   - [ ] Implement `getPageTree(pageNodeLabelRule)` and `relativeGetPageTree(node, pageNodeLabelRule)`.
+   - [ ] Decide minimal interoperable representation for page nodes’ list of label rules in `propertyData` (UTF-8 JSON array for tests is acceptable); document it in code comments.
+ - [ ] Transactions:
+   - [ ] `openTransactionLayer` and `closeTransactionLayers` throw UnsupportedOperation (mirroring C++ SimpleBackend behavior).
+   - [ ] `applyTransaction(tx)` applies subtransactions atomically in-memory; validate before mutate, then commit.
+ - [ ] Listeners:
+   - [ ] Implement `registerNodeListener(listenerName, labelRule, childNotify, cb)` and `deregisterNodeListener`.
+   - [ ] Implement `notifyListeners(labelRule, maybeNode)`; when `childNotify` is true, notify on children that partially match listener label-rule (use the helpers above).
+   - [ ] `processNotifications()` is a noop for this backend.
+ - [ ] Serialization: ensure `TreeNode.propertyData` is Uint8Array; provide UTF-8 encode/decode helpers for tests.
+ - [ ] Acceptance tests (see B.4): CRUD, queries, page tree, transactions, and listener notifications must match C++ SimpleBackend intent.
+
+4) Backend Testbed (JS parity suite)
+
+ - [ ] Location: place JS testbed under `js_client_lib/test/backend_testbed/`:
+   - [ ] `backend_testbed.js`: reusable helpers mirroring C++ testbed utilities.
+   - [ ] `backend_testbed.test.js`: Vitest suite that runs the helpers against a Backend implementation.
+ - [ ] Port testbed helpers inspired by C++ `test_instances/catch2_unit_tests/backend_testbed.h`:
+   - [ ] `createNoContentTreeNode(labelRule, description, propertyInfos, version, childNames, queryHowTo?, qaSequence?)`
+   - [ ] `createAnimalNode(animal, description, propertyInfos, version, childNames, propertyDataStrings[], queryHowTo, qaSequence)`
+   - [ ] `createAnimalDossiers(animalNode)`; `createLionNodes()`; `createElephantNodes()`; `createParrotNodes()`
+   - [ ] `collectAllNotes()`; `createNotesPageTree()`; `prefixNodeLabels(prefix, nodes)`
+   - [ ] `checkGetNode(backend, labelRule, expectedNode)`; `checkMultipleGetNode(backend, expectedNodes)`
+   - [ ] `checkDeletedNode(backend, labelRule)`; `checkMultipleDeletedNode(backend, expectedNodes)`
+ - [ ] Implement `BackendTestbed` class for JS with methods analogous to C++:
+   - [ ] constructor(backend, { shouldTestNotifications = true, shouldTestChanges = true })
+   - [ ] `addAnimalsToBackend()`; `addNotesPageTree()`; `stressTestConstructions(count)`
+   - [ ] `testAnimalNodesNoElephant(labelPrefix = "")`;
+   - [ ] `testBackendLogically(labelPrefix = "")`;
+   - [ ] `testPeerNotification(toBeModified, notificationDelayMs, labelPrefix = "")`
+ - [ ] Write a Vitest suite that runs the testbed against:
+   - [ ] `SimpleBackend` (B.3) to validate local behavior.
+   - [ ] Later: `Http3ClientBackend` once transport/messages are available (same suite should run unchanged for parity).
+ - [ ] Align expected behaviors to C++ semantics:
+   - [ ] Listener notifications fire after version changes or deletions; for `childNotify`, use partial label matches.
+   - [ ] Transactions apply atomically; invalid subtransactions must not partially mutate state.
+   - [ ] Page-tree expansion must resolve all listed label rules and aggregate results deterministically for assertions.
+
+5) HTTP3TreeMessage & helpers
 - Helpers (`js_client_lib/interface/http3_tree_message_helpers.js`)
   - [ ] Implement chunk model compatible with `shared_chunk.h`:
     - payload_chunk_header (signal_type=2, fields: signal, request_id, data_length)
@@ -277,29 +371,27 @@ Date: 2025-08-11
 
 What we analyzed
 - C++ headers shaping the JS port: backend.h, tree_node.h, http3_tree_message.h, http3_tree_message_helpers.h, http3_client_backend.h, frontend_base.h, transport/include/shared_chunk.h, transport/include/request.h, and memory/include/simple_backend.h.
-- Existing JS files discovered: interface/*.js (now includes maybe.js and backend.js), transport/communication.js and quic_communication.js (Node-specific), and placeholders for http3_client.js and http3_client_updater.js.
+- Existing JS files discovered: interface/*.js (maybe.js, backend.js) and transport scaffolding; added tree_node.js implementation and tests.
 
 Decisions
 - Browser-first implementation: use Uint8Array/DataView, avoid Node-only APIs; design Communication adapters for WebTransport/WebSocket/fetch. Node QUIC stays optional and is stubbed as Node-only.
-- Switch to ESM for js_client_lib (type: module) to align with browser bundlers and modern Node; avoid CommonJS for runtime code.
+- ESM for js_client_lib (type: module) to align with browser bundlers and modern Node; avoid CommonJS for runtime code.
 - Include a SimpleBackend JS port to support Http3ClientBackend caching and local operations in the browser.
 
-Artifacts created/updated
-- js_client_lib/TODO.md: plan updated; Section A complete; Section B.1 and Maybe<T> complete; session summary refreshed.
-- js_client_lib/package.json: ESM (type: module), scripts for test/coverage/lint/format, engines set (>=18.19).
-- js_client_lib/.editorconfig: shared editor settings (LF, 2 spaces, UTF-8).
-- js_client_lib/.gitignore: Node/test/build ignores, env files, caches.
-- js_client_lib/.eslintrc.json + .prettierrc: lightweight lint/format configuration.
-- js_client_lib/vitest.config.mjs: Vitest v3 config using default reporter with summary disabled.
-- js_client_lib/index.js: exports Communication, Maybe helpers, Backend, Notification, SequentialNotification.
-- js_client_lib/interface/maybe.js: Maybe<T> implementation with Just/Nothing/fromNullable.
-- js_client_lib/interface/backend.js: Backend abstract interface; Notification and SequentialNotification helpers.
-- js_client_lib/test/maybe.test.js: unit tests for Maybe.
-- js_client_lib/test/backend_interface.test.js: tests for Backend abstract behavior and notification shapes.
+Artifacts created/updated (this iteration)
+- js_client_lib/interface/tree_node.js: TreeNodeVersion, TreeNode, property helpers, transaction label helpers, YAML stubs.
+- js_client_lib/index.js: re-exports for TreeNode APIs.
+- Tests: tree_node_version, tree_node_properties, transactions_helpers (all passing under Vitest).
+- ESLint: added flat config (eslint.config.js) for ESLint v9; lint passes (warnings only).
+- package.json: lint script adjusted for flat config.
+
+Status updates
+- Section A: complete.
+- Section B.1 (Backend interface) and Maybe<T>: complete.
+- Section B.2 (TreeNode & related types): complete with tests.
 
 Open items (next steps candidates)
-- Request and StreamIdentifier shapes in JS (transport abstraction work).
-- Start http3_tree_message_helpers with headers layout and label encoder/decoder, then build up.
-- Sketch Communication adapters for WebTransport and WebSocket (browser-first).
-- TreeNode and Transaction scaffolding to unblock more tests.
-- Add more unit tests (encoders/decoders, message round-trips).
+- B.3 SimpleBackend implementation using TreeNode helpers.
+- Start on http3_tree_message_helpers encoders/decoders.
+- Define Request/StreamIdentifier shapes for transport abstraction.
+- Broaden unit tests (encoders/decoders, message round-trips).
