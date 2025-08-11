@@ -1,0 +1,39 @@
+{
+  "name": "wwatp-js-client-lib",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JavaScript client library for WWATP (HTTP/3 client backend, browser-first)",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18.19"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "lint": "eslint . --ext .js,.mjs,.cjs",
+    "format": "prettier -w .",
+    "build": "echo 'no build step needed'"
+  },
+  "keywords": [
+    "wwatp",
+    "http3",
+    "quic",
+    "webtransport",
+    "tree"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+  "@vitest/coverage-v8": "^3.0.0",
+  "eslint": "^9.7.0",
+  "eslint-config-prettier": "^9.1.0",
+  "prettier": "^3.3.3",
+  "vitest": "^3.0.0"
+  }
+}
