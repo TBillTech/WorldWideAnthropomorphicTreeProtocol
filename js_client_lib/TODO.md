@@ -171,7 +171,7 @@ Browser runtime constraints
    - [ ] Transactions apply atomically; invalid subtransactions must not partially mutate state.
    - [ ] Page-tree expansion must resolve all listed label rules and aggregate results deterministically for assertions.
 
-5) HTTP3TreeMessage & helpers
+5) HTTP3TreeMessage helpers
 - Helpers (`js_client_lib/interface/http3_tree_message_helpers.js`)
   - [x] Implement chunk model compatible with `shared_chunk.h`:
     - payload_chunk_header (signal_type=2, fields: signal, request_id, data_length)
@@ -196,14 +196,30 @@ Browser runtime constraints
   - [x] Unit tests for each encoder/decoder.
   - [x] Use Uint8Array/DataView, not Buffer, to support browsers. Add thin Buffer shim only in Node tests if needed.
 
-- Message (`js_client_lib/interface/http3_tree_message.js`)
+- HTTP3TreeMessage (`js_client_lib/interface/http3_tree_message.js`)
   - [x] Implement class with state:
     - requestId, signal, isInitialized, isJournalRequest, requestComplete, responseComplete, processingFinished
     - requestChunks: chunk list, responseChunks: chunk list
-  - [ ] Methods per C++ header:
+  - [ ] Methods per C++ header (updated):
     - encode/decode pairs for all backend methods; getJournal; static node request
     - pop/push Request/Response chunks
     - reset; setters; is* queries
+  - [x] Operation encode/decode coverage (aligned with tests):
+    - [x] encode/decode getNodeRequest
+    - [x] encode/decode upsertNodeRequest
+  - [ ] Operation encode/decode remaining (copied from test TODOs):
+    - [ ] encode and decode deleteNodeRequest
+    - [ ] encode and decode getPageTreeRequest
+    - [ ] encode and decode getQueryNodesRequest
+    - [ ] encode and decode openTransactionLayerRequest
+    - [ ] encode and decode closeTransactionLayersRequest
+    - [ ] encode and decode applyTransactionRequest
+    - [ ] encode and decode getFullTreeRequest
+    - [ ] encode and decode registerNodeListenerRequest
+    - [ ] encode and decode deregisterNodeListenerRequest
+    - [ ] encode and decode notifyListenersRequest
+    - [ ] encode and decode processNotificationRequest
+    - [ ] encode and decode getJournalRequest
   - [x] Constructor, move-like resets, minimal validations.
   - [ ] Tests to validate round-trips.
 
@@ -306,7 +322,7 @@ Browser runtime constraints
 - Unit tests for:
   - [x] http3_tree_message_helpers encoders/decoders round trip
   - [ ] HTTP3TreeMessage request/response sequences (including journal)
-  - [x] TreeNode property operations and version comparisons
+Decisions (updated)
   - [x] Backend interface conformance with a simple in-memory backend used as localBackend
   - [ ] Http3ClientBackend behavior: pending queue, blocking waits, journal rate-limiting, static node fetching, listener notifications
   - [ ] Updater maintainRequestHandlers flow with a mock Communication
@@ -383,7 +399,7 @@ Artifacts created/updated (this iteration)
 - js_client_lib/interface/http3_tree_message_helpers.js: Implemented chunk model (headers + SpanChunk) and encoders/decoders for label, long_string, Maybe<TreeNode>, SequentialNotification, Vector<SequentialNotification>, NewNodeVersion, SubTransaction, Transaction, and Vector<TreeNode>; added flattenWithSignal utilities.
 - js_client_lib/interface/http3_tree_message.js: Added initial HTTP3TreeMessage with state, chunk push/pop, reset/setters, and basic getNode/upsertNode request handling.
 - js_client_lib/test/http3_tree_message_helpers.test.js: Ported parity tests from C++ for helpers (labels, long strings, Maybe<TreeNode>, transactions, vector<TreeNode>, sequential notifications, and chunk split/collect).
-- js_client_lib/test/http3_tree_message.test.js: Basic message encode smoke tests (getNode, upsertNode).
+- js_client_lib/test/http3_tree_message.test.js: Ported C++ tests for getNode and upsertNode round-trips; added TODO scaffolds for remaining operations (deleteNode, getPageTree, queryNodes, openTransactionLayer, closeTransactionLayers, applyTransaction, getFullTree, register/deregister listener, notifyListeners, processNotification, getJournal).
 - js_client_lib/test/backend_testbed/backend_testbed.js and *.test.js: Core helpers and logical test flow against SimpleBackend.
 - Prior artifacts retained: tree_node.js + tests; ESLint config; package.json scripts; index.js exports updated.
 
@@ -393,7 +409,7 @@ Status updates
 - Section B.2 (TreeNode & related types): complete with tests.
 - Section B.3 (SimpleBackend): complete with tests; cascade-delete added.
 - Section B.4 (Backend Testbed): core helpers and logical test flow implemented; suite runs against SimpleBackend and passes.
-- Section B.5 (HTTP3TreeMessage & helpers): helpers complete with tests; HTTP3TreeMessage class scaffolded with initial methods; more encode/decode pairs pending.
+- Section B.5 (HTTP3TreeMessage & helpers): helpers complete with tests; HTTP3TreeMessage now has getNode and upsertNode encode/decode with passing round-trip tests; explicit checklist added for remaining operations mirrored from tests.
 
 Notes / deferrals
 - `stressTestConstructions` and `testPeerNotification` are intentionally deferred for now due to low utility in browser-first context; can be implemented later if needed.
