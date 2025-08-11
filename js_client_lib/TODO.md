@@ -31,17 +31,17 @@ Browser runtime constraints
 
 ## A. Project structure and scaffolding
 
-- [ ] Decide module format (CommonJS vs ESM). Prefer ESM for modern Node; interop noted.
-- [ ] Add `package.json` with minimal scripts: lint, test, build (if using TS later), coverage.
-- [ ] Add `.editorconfig`, `.gitignore` for JS artifacts.
-- [ ] Choose and configure linter/formatter (ESLint + Prettier) – optional initially.
-- [ ] Decide unit test framework (Jest or Vitest). Prefer Vitest for speed and ESM, or Jest for ubiquity.
-- [ ] Node version target; ensure Buffer/TypedArray APIs used consistently.
+- [x] Decide module format (CommonJS vs ESM). Prefer ESM for modern Node; interop noted.
+- [x] Add `package.json` with minimal scripts: lint, test, build (if using TS later), coverage.
+- [x] Add `.editorconfig`, `.gitignore` for JS artifacts.
+- [x] Choose and configure linter/formatter (ESLint + Prettier) – optional initially.
+- [x] Decide unit test framework (Jest or Vitest). Prefer Vitest for speed and ESM, or Jest for ubiquity.
+- [x] Node version target; ensure Buffer/TypedArray APIs used consistently.
 
 ## B. Core interfaces (mirroring C++)
 
 1) Backend interface (`js_client_lib/interface/backend.js`)
-- [ ] Define abstract class Backend with methods:
+ - [x] Define abstract class Backend with methods:
   - getNode(labelRule): Promise<Maybe<TreeNode>> or sync for local wrappers
   - upsertNode(nodes: TreeNode[]): Promise<boolean>
   - deleteNode(labelRule: string): Promise<boolean>
@@ -57,9 +57,9 @@ Browser runtime constraints
   - deregisterNodeListener(listenerName: string, labelRule: string): void
   - notifyListeners(labelRule: string, maybeNode: Maybe<TreeNode>): void
   - processNotifications(): void
-- [ ] Define Maybe<T> shape and helpers (Just/Nothing): simple tagged union.
-- [ ] Define Notification, SequentialNotification shapes.
-  - [ ] Ensure no Node-only dependencies in interface code (browser-safe).
+ - [x] Define Maybe<T> shape and helpers (Just/Nothing): simple tagged union.
+ - [x] Define Notification, SequentialNotification shapes.
+  - [x] Ensure no Node-only dependencies in interface code (browser-safe).
 
 2) TreeNode & related types (`js_client_lib/interface/tree_node.js`)
 - [ ] Implement TreeNodeVersion with fields, comparisons, ++, defaults.
@@ -277,19 +277,29 @@ Date: 2025-08-11
 
 What we analyzed
 - C++ headers shaping the JS port: backend.h, tree_node.h, http3_tree_message.h, http3_tree_message_helpers.h, http3_client_backend.h, frontend_base.h, transport/include/shared_chunk.h, transport/include/request.h, and memory/include/simple_backend.h.
-- Existing JS files discovered: interface/*.js (empty stubs), transport/communication.js and quic_communication.js (Node-specific), and placeholders for http3_client.js and http3_client_updater.js.
+- Existing JS files discovered: interface/*.js (now includes maybe.js and backend.js), transport/communication.js and quic_communication.js (Node-specific), and placeholders for http3_client.js and http3_client_updater.js.
 
 Decisions
-- Browser-first implementation: use Uint8Array/DataView, avoid Node-only APIs; design Communication adapters for WebTransport/WebSocket/fetch. Node QUIC stays optional.
-- Keep current code as CommonJS initially; compatible with bundlers; revisit ESM if/when refactoring.
+- Browser-first implementation: use Uint8Array/DataView, avoid Node-only APIs; design Communication adapters for WebTransport/WebSocket/fetch. Node QUIC stays optional and is stubbed as Node-only.
+- Switch to ESM for js_client_lib (type: module) to align with browser bundlers and modern Node; avoid CommonJS for runtime code.
 - Include a SimpleBackend JS port to support Http3ClientBackend caching and local operations in the browser.
 
 Artifacts created/updated
-- js_client_lib/TODO.md: exhaustive plan with sections A–J, browser constraints integrated, SimpleBackend section added.
-- js_client_lib/package.json: minimal scaffold with vitest and basic scripts.
+- js_client_lib/TODO.md: plan updated; Section A complete; Section B.1 and Maybe<T> complete; session summary refreshed.
+- js_client_lib/package.json: ESM (type: module), scripts for test/coverage/lint/format, engines set (>=18.19).
+- js_client_lib/.editorconfig: shared editor settings (LF, 2 spaces, UTF-8).
+- js_client_lib/.gitignore: Node/test/build ignores, env files, caches.
+- js_client_lib/.eslintrc.json + .prettierrc: lightweight lint/format configuration.
+- js_client_lib/vitest.config.mjs: Vitest v3 config using default reporter with summary disabled.
+- js_client_lib/index.js: exports Communication, Maybe helpers, Backend, Notification, SequentialNotification.
+- js_client_lib/interface/maybe.js: Maybe<T> implementation with Just/Nothing/fromNullable.
+- js_client_lib/interface/backend.js: Backend abstract interface; Notification and SequentialNotification helpers.
+- js_client_lib/test/maybe.test.js: unit tests for Maybe.
+- js_client_lib/test/backend_interface.test.js: tests for Backend abstract behavior and notification shapes.
 
 Open items (next steps candidates)
-- Add Vitest config (optional) and first unit test for encoding helpers using Uint8Array/DataView.
-- Implement Maybe helper, Request type, and StreamIdentifier in JS.
+- Request and StreamIdentifier shapes in JS (transport abstraction work).
 - Start http3_tree_message_helpers with headers layout and label encoder/decoder, then build up.
-- Sketch Communication interfaces for WebTransport and WebSocket adapters.
+- Sketch Communication adapters for WebTransport and WebSocket (browser-first).
+- TreeNode and Transaction scaffolding to unblock more tests.
+- Add more unit tests (encoders/decoders, message round-trips).
