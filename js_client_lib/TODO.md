@@ -126,23 +126,23 @@ Browser runtime constraints
 
 3) SimpleBackend (`js_client_lib/interface/simple_backend.js`)
 
- - [ ] Implement class SimpleBackend that conforms to Backend (sync methods are acceptable; callers may `await` sync returns).
- - [ ] Data model: Map<string, TreeNode> keyed by labelRule; maintain child relationships for queries and notifications.
- - [ ] Query semantics:
-   - [ ] Implement partial/overlap label-rule matching helpers analogous to C++ `partialLabelRuleMatch` and `checkLabelRuleOverlap`.
-   - [ ] Implement `queryNodes(labelRule)` using these helpers; include relativeQueryNodes.
- - [ ] Page tree semantics:
-   - [ ] Implement `getPageTree(pageNodeLabelRule)` and `relativeGetPageTree(node, pageNodeLabelRule)`.
-   - [ ] Decide minimal interoperable representation for page nodes’ list of label rules in `propertyData` (UTF-8 JSON array for tests is acceptable); document it in code comments.
- - [ ] Transactions:
-   - [ ] `openTransactionLayer` and `closeTransactionLayers` throw UnsupportedOperation (mirroring C++ SimpleBackend behavior).
-   - [ ] `applyTransaction(tx)` applies subtransactions atomically in-memory; validate before mutate, then commit.
- - [ ] Listeners:
-   - [ ] Implement `registerNodeListener(listenerName, labelRule, childNotify, cb)` and `deregisterNodeListener`.
-   - [ ] Implement `notifyListeners(labelRule, maybeNode)`; when `childNotify` is true, notify on children that partially match listener label-rule (use the helpers above).
-   - [ ] `processNotifications()` is a noop for this backend.
- - [ ] Serialization: ensure `TreeNode.propertyData` is Uint8Array; provide UTF-8 encode/decode helpers for tests.
- - [ ] Acceptance tests (see B.4): CRUD, queries, page tree, transactions, and listener notifications must match C++ SimpleBackend intent.
+ - [x] Implement class SimpleBackend that conforms to Backend (sync methods are acceptable; callers may `await` sync returns).
+ - [x] Data model: Map<string, TreeNode> keyed by labelRule; maintain child relationships for queries and notifications.
+ - [x] Query semantics:
+   - [x] Implement partial/overlap label-rule matching helpers analogous to C++ `partialLabelRuleMatch` and `checkLabelRuleOverlap`.
+   - [x] Implement `queryNodes(labelRule)` using these helpers; include relativeQueryNodes.
+ - [x] Page tree semantics:
+   - [x] Implement `getPageTree(pageNodeLabelRule)` and `relativeGetPageTree(node, pageNodeLabelRule)`.
+   - [x] Decide minimal interoperable representation for page nodes’ list of label rules in `propertyData` (UTF-8 JSON array for tests is acceptable); document it in code comments.
+ - [x] Transactions:
+   - [x] `openTransactionLayer` and `closeTransactionLayers` throw UnsupportedOperation (mirroring C++ SimpleBackend behavior).
+   - [x] `applyTransaction(tx)` applies subtransactions atomically in-memory; validate before mutate, then commit.
+ - [x] Listeners:
+   - [x] Implement `registerNodeListener(listenerName, labelRule, childNotify, cb)` and `deregisterNodeListener`.
+   - [x] Implement `notifyListeners(labelRule, maybeNode)`; when `childNotify` is true, notify on children that partially match listener label-rule (use the helpers above).
+   - [x] `processNotifications()` is a noop for this backend.
+ - [x] Serialization: ensure `TreeNode.propertyData` is Uint8Array; provide UTF-8 encode/decode helpers for tests.
+ - [x] Acceptance tests (see B.4): CRUD, queries, page tree, transactions, and listener notifications must match C++ SimpleBackend intent.
 
 4) Backend Testbed (JS parity suite)
 
@@ -355,13 +355,13 @@ Browser runtime constraints
 
 Port the C++ SimpleBackend to support the Http3ClientBackend locally in the browser.
 
-- [ ] File: `js_client_lib/interface/simple_backend.js`
-- [ ] Purpose: a basic in-memory tree backend implementing Backend for caching and offline ops; no transactions.
-- [ ] API: implements all Backend methods; throws for openTransactionLayer/closeTransactionLayers if unsupported (like C++), applyTransaction modifies tree atomically in-memory.
-- [ ] Data structures: Map<string, TreeNode> keyed by labelRule; child relationships maintained; query and page tree helpers.
-- [ ] Listener registry: map of {listenerName+labelRule -> {childNotify, callback}} and notify semantics mirrored from C++.
-- [ ] Serialization: not required (memory-only), but must handle TreeNode.propertyData Uint8Array consistently.
-- [ ] Tests: cover CRUD, query, page tree, notifications, and transaction application behavior.
+ - [x] File: `js_client_lib/interface/simple_backend.js`
+ - [x] Purpose: a basic in-memory tree backend implementing Backend for caching and offline ops; no transaction layers; applyTransaction supported.
+ - [x] API: implements all Backend methods; throws for openTransactionLayer/closeTransactionLayers if unsupported (like C++), applyTransaction modifies tree atomically in-memory.
+ - [x] Data structures: Map<string, TreeNode> keyed by labelRule; child relationships maintained; query and page tree helpers.
+ - [x] Listener registry: map of {listenerName+labelRule -> {childNotify, callback}} and notify semantics mirrored from C++.
+ - [x] Serialization: not required (memory-only), but must handle TreeNode.propertyData Uint8Array consistently.
+ - [x] Tests: cover CRUD, query, page tree, notifications, and transaction application behavior.
 
 ---
 
@@ -379,19 +379,19 @@ Decisions
 - Include a SimpleBackend JS port to support Http3ClientBackend caching and local operations in the browser.
 
 Artifacts created/updated (this iteration)
-- js_client_lib/interface/tree_node.js: TreeNodeVersion, TreeNode, property helpers, transaction label helpers, YAML stubs.
-- js_client_lib/index.js: re-exports for TreeNode APIs.
-- Tests: tree_node_version, tree_node_properties, transactions_helpers (all passing under Vitest).
-- ESLint: added flat config (eslint.config.js) for ESLint v9; lint passes (warnings only).
-- package.json: lint script adjusted for flat config.
+- js_client_lib/interface/simple_backend.js: in-memory Backend implementation (CRUD, queries, page tree, transactions, listeners).
+- js_client_lib/test/simple_backend.test.js: unit tests for SimpleBackend behaviors; all passing.
+- js_client_lib/index.js: export SimpleBackend alongside interfaces and TreeNode helpers.
+- Prior artifacts retained: tree_node.js + tests; ESLint flat config; package.json scripts.
 
 Status updates
 - Section A: complete.
 - Section B.1 (Backend interface) and Maybe<T>: complete.
 - Section B.2 (TreeNode & related types): complete with tests.
+- Section B.3 (SimpleBackend): complete with tests.
 
 Open items (next steps candidates)
-- B.3 SimpleBackend implementation using TreeNode helpers.
 - Start on http3_tree_message_helpers encoders/decoders.
 - Define Request/StreamIdentifier shapes for transport abstraction.
+- Backend testbed (B.4) for broader parity validation.
 - Broaden unit tests (encoders/decoders, message round-trips).

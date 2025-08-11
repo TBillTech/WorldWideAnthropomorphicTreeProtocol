@@ -17,3 +17,4 @@ export {
 	shortenTransactionLabels,
 } from './interface/tree_node.js';
 // export * from './interface/backend.js'; // to be implemented
+export { default as SimpleBackend } from './interface/simple_backend.js';
