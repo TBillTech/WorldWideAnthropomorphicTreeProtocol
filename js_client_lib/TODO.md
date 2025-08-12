@@ -275,7 +275,7 @@ Browser runtime constraints
   - requestFullTreeSync(), setMutablePageTreeLabelRule(label="MutableNodes"), getMutablePageTree()
   - needToSendJournalRequest(time), setJournalRequestComplete()
 - [ ] Internal helpers:
-  - [ ] requestStaticNodeData(): create request for static URL and send it; when response arrives, load returned asset into staticNode_ and update local cache. (Currently incorrect; see task below.)
+  - [x] requestStaticNodeData(): create request for static URL and send it; when response arrives, load returned asset into staticNode_ and update local cache.
   - [ ] setNodeChunks(chunks) (if needed for chunk-level flows)
   - [ ] getMutablePageTreeInMode(blockingMode, isJournalRequest=false)
   - [x] awaitBoolResponse()/awaitTreeResponse()/awaitVectorTreeResponse() (minimal promise-based)
@@ -288,11 +288,11 @@ Browser runtime constraints
   - [x] Ensure all code paths are browser-safe (no Node-specific APIs); timers and queues use Web APIs.
 
 - [ ] processHTTP3Response coverage tasks (remaining cases to implement/verify):
-  - [ ] Handle RESPONSE_CONTINUE/RESPONSE_FINAL chunk sequencing and partial payload assembly where applicable (multi-chunk responses).
+  - [x] Handle RESPONSE_CONTINUE/RESPONSE_FINAL chunk sequencing and partial payload assembly where applicable (multi-chunk responses).
   - [ ] Handle empty/signal-only responses uniformly (e.g., processNotification returning no payload) and resolve waits accordingly.
   - [ ] Handle unexpected/unknown signals with a clear error/log path without breaking the wait map.
   - [ ] Journal edge case: when server returns the mutable page tree as the response to a journal request due to client being out of sync; wire this into local cache and lastNotification_ correctly.
-  - [ ] Static asset response path: route static URL responses to update staticNode_ and optionally notify local listeners.
+  - [x] Static asset response path: route static URL responses to update staticNode_ and optionally notify local listeners.
 
 2) Http3ClientBackendUpdater (`js_client_lib/http3_client_updater.js`)
 - [x] Constructor(name, ipAddr, port); name/type getters
@@ -334,7 +334,7 @@ Decisions (updated)
   - [x] Backend interface conformance with a simple in-memory backend used as localBackend
   - [ ] Http3ClientBackend behavior: pending queue, blocking waits, journal rate-limiting, static node fetching, listener notifications
   - [x] Updater maintainRequestHandlers flow with a mock Communication
-  - [ ] Transport mock: stream identifier management, response handler routing
+    - [x] Transport mock: stream identifier management, response handler routing
 - [ ] Minimal integration test: issue getFullTree or queryNodes over mock transport and observe localBackend updates.
  
 ### System-level tests
@@ -420,30 +420,33 @@ Port the C++ SimpleBackend to support the Http3ClientBackend locally in the brow
 Date: 2025-08-12
 
 What we analyzed
-- Revisited D.1 Http3ClientBackend design and C++ parity constraints; verified message helper signals and transport abstractions.
+- Tightened D.1 Http3ClientBackend behavior around static asset fetching and multi-chunk responses; validated transport routing and journaling cadence with the mock server.
 
 Decisions
-- Proceed with a browser-safe, promise-based blocking mode and a simple pendingRequests_ queue to be flushed by the Updater.
-- Update local cache (SimpleBackend) upon responses and journal notifications for parity with C++ intent.
+- Keep browser-safe, promise-based blocking semantics with a simple pendingRequests_ queue flushed by the Updater.
+- Update local cache upon node/full-tree/page responses and journal notifications for parity with C++ intent.
+- Treat non-WWATP static URLs via REQUEST_FINAL/RESPONSE_FINAL path carrying a TreeNode payload.
 
 Artifacts created/updated (this iteration)
-- js_client_lib/http3_client_updater.js: Implemented Http3ClientBackendUpdater (start/stop, maintainRequestHandlers, stream dispatch, response routing, journal solicitation).
-- js_client_lib/index.js: Export Http3ClientBackendUpdater.
-- js_client_lib/test/http3_client_updater.test.js: Added test using MockCommunication verifying request flush and response routing for getNode.
+- js_client_lib/http3_client.js: Implemented requestStaticNodeData, RESPONSE_CONTINUE/FINAL handling, static asset response routing, and improved journal timing helpers.
+- js_client_lib/http3_client_updater.js: Ensured last-chunk signal tracking and passed logical time to setJournalRequestComplete.
+- js_client_lib/test/http3_client_static_asset.test.js: New test validating static asset flow over mock transport.
+- js_client_lib/test/system/server_mock.js: Added backend-diff journaling to synthesize notifications from authoritative state.
 
 Status updates
 - D.1 Http3ClientBackend core methods and response handling: implemented; tests pass.
-- D.1 journaling helpers (solicit, rate-limit predicate): implemented.
-- D.1 `requestStaticNodeData` requires correction (see new task) to issue a static URL request and load staticNode_ from response.
-- D.2 Updater: Implemented and tested with MockCommunication; pending advanced features (explicit journaling requests map and completeRequests queue) are not required for current tests.
+- D.1 journaling helpers: implemented; first poll fires immediately; logical time wired from updater.
+- D.1 requestStaticNodeData: implemented; static asset loaded into staticNode_ and local cache on FINAL.
+- D.1 processHTTP3Response: CONTINUE/FINAL and static asset paths implemented; remaining edge cases tracked.
+- D.2 Updater: maintain/dispatch/routing working; explicit journaling maps deferred as not required for current tests.
 
 Notes / deferrals
-- processHTTP3Response still needs handling for RESPONSE_CONTINUE/FINAL, static asset responses, and out-of-sync journal mutable page tree cases (tracked above).
+- Still pending: uniform handling for empty/signal-only responses; journal mutable page tree edge-case; optional server sync flags helpers.
 
 Open items (next steps candidates)
 - Extend Updater with explicit journalingRequests/completeRequests tracking if needed for richer transport behaviors.
-- Complete remaining processHTTP3Response cases.
-- Implement/fix requestStaticNodeData static fetch flow and integrate staticNode_ update.
+- Complete remaining processHTTP3Response cases (empty responses, out-of-sync journal -> mutable page tree).
+- Add README and browser usage docs; consider TypeScript typings.
 
 ---
 

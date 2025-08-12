@@ -40,6 +40,7 @@ class NotificationStore {
   constructor() {
     this.signalCount = 0;
     this.notifications = []; // Array<{ signalCount, notification: { labelRule, maybeNode } }>
+    this.snapshot = new Set(); // last seen set of labelRules
   }
   record(labelRule, maybeNode) {
     this.signalCount += 1;
@@ -48,11 +49,36 @@ class NotificationStore {
   getSince(count) {
     return this.notifications.filter((n) => n.signalCount > count);
   }
+  // Compute notifications by diffing current backend state vs snapshot.
+  syncFromBackend(serverBackend) {
+    try {
+      const vec = serverBackend.getFullTree?.() || [];
+      const current = new Set(vec.map((n) => n.getLabelRule()));
+      // Additions or updates: for simplicity, treat all new labels as creations
+      for (const n of vec) {
+        const lab = n.getLabelRule();
+        if (!this.snapshot.has(lab)) {
+          this.record(lab, Just(n));
+        }
+      }
+      // Deletions
+      for (const lab of Array.from(this.snapshot)) {
+        if (!current.has(lab)) {
+          this.record(lab, Nothing);
+        }
+      }
+      this.snapshot = current;
+    } catch (_) {
+      // ignore
+    }
+  }
 }
 
 // Build a handler bound to a server backend implementing the Backend interface (SimpleBackend is fine)
 export function createWWATPHandler(serverBackend) {
   const store = new NotificationStore();
+  // Initialize snapshot from current server state
+  try { store.syncFromBackend(serverBackend); } catch (_) {}
 
   return function handler(_request, dataBytes) {
     const { signal, requestId, payload } = parseRequest(dataBytes);
@@ -142,7 +168,9 @@ export function createWWATPHandler(serverBackend) {
         // Request encodes a SequentialNotification where only signalCount is meaningful
         const { value: seq } = decode_sequential_notification(payload, 0);
         const since = seq.signalCount >>> 0;
-        const vec = store.getSince(since);
+  // Before answering, sync with the authoritative backend so direct changes are observed
+  store.syncFromBackend(serverBackend);
+  const vec = store.getSince(since);
         const enc = encode_vec_sequential_notification(vec);
         return respond(enc, WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE);
       }

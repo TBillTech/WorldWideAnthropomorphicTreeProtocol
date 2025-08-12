@@ -102,12 +102,12 @@ export default class Http3ClientBackendUpdater {
 					// Parse wire bytes into chunks
 					const bytes = evt.data;
 					let o = 0;
-						let first = true;
 					while (o < bytes.byteLength) {
 						const { chunk, read } = chunkFromWire(bytes.slice(o));
 							// Normalize request id to align with the original message id used for waiters
 							try { if (chunk?.header && 'request_id' in chunk.header) chunk.header.request_id = msg.requestId; } catch (_) {}
-							if (first) { try { msg.signal = chunk.header?.signal ?? msg.signal; } catch (_) {} first = false; }
+							// Track the most recent signal (e.g., FINAL)
+							try { msg.signal = chunk.header?.signal ?? msg.signal; } catch (_) {}
 							msg.pushResponseChunk(chunk);
 						o += read;
 					}
@@ -117,7 +117,7 @@ export default class Http3ClientBackendUpdater {
 			} finally {
 				connector.deregisterResponseHandler(sid);
 				this.ongoingRequests_.delete(sidKey);
-				if (isJournal) backend.setJournalRequestComplete();
+				if (isJournal) backend.setJournalRequestComplete(this.lastTime_);
 			}
 		});
 

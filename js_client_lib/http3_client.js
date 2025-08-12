@@ -8,7 +8,7 @@
 import { Backend } from './interface/backend.js';
 import { Maybe, Just, Nothing } from './interface/maybe.js';
 import HTTP3TreeMessage from './interface/http3_tree_message.js';
-import { WWATP_SIGNAL, encodeToChunks, decodeFromChunks } from './interface/http3_tree_message_helpers.js';
+import { WWATP_SIGNAL, encodeToChunks, decodeFromChunks, decode_maybe_tree_node, decode_tree_node } from './interface/http3_tree_message_helpers.js';
 import { TreeNode } from './interface/tree_node.js';
 import Request from './transport/request.js';
 
@@ -26,6 +26,7 @@ export default class Http3ClientBackend extends Backend {
 
 		this.pendingRequests_ = []; // queue of HTTP3TreeMessage
 		this.waits_ = new Map(); // requestId -> { resolve, reject, type }
+		this.staticRequestId_ = 0; // request id used for static asset fetch, if any
 
 		// journaling state
 		this.lastNotification_ = { signalCount: 0, notification: { labelRule: '', maybeNode: Nothing } };
@@ -195,6 +196,42 @@ export default class Http3ClientBackend extends Backend {
 		const completeBool = () => { const bytes = decodeFromChunks(http3TreeMessage.responseChunks); finish(bytes[0] !== 0); };
 
 		switch (signal) {
+			case WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_CONTINUE: {
+				// Accumulate payload; wait for FINAL before acting.
+				return false;
+			}
+			case WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL: {
+				// Final chunk for non-WWATP flows (e.g., static asset). Only act if this matches our static request.
+				if (!this.staticRequestId_ || reqId !== this.staticRequestId_) {
+					// Not a static asset response we initiated; nothing to do here.
+					if (waiter) finish(true);
+					return true;
+				}
+				try {
+					const bytes = decodeFromChunks(http3TreeMessage.responseChunks);
+					// Try Maybe<TreeNode> first, then TreeNode
+					let nodeMaybe = null;
+					try {
+						const maybe = decode_maybe_tree_node(bytes, 0);
+						nodeMaybe = maybe.value;
+					} catch (_) {
+						// Fallback to plain TreeNode
+						const one = decode_tree_node(bytes, 0);
+						nodeMaybe = Just(one.value);
+					}
+					if (nodeMaybe && nodeMaybe.isJust && nodeMaybe.isJust()) {
+						const node = nodeMaybe.getOrElse(null);
+						this.staticNode_ = nodeMaybe;
+						try { this.localBackend_.upsertNode([node]); } catch (_) {}
+					}
+				} catch (_) {
+					// ignore parse errors
+				} finally {
+					this.staticRequestId_ = 0;
+				}
+				if (waiter) finish(true);
+				return true;
+			}
 			case WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_RESPONSE: {
 				const val = http3TreeMessage.decodeGetNodeResponse();
 				// Update local cache on Just
@@ -264,10 +301,14 @@ export default class Http3ClientBackend extends Backend {
 		if (this.journalRequestsPerMinute_ <= 0) return false;
 		if (this.journalRequestWaiting_) return false;
 		const interval = 60.0 / this.journalRequestsPerMinute_;
+		if (this.lastJournalRequestTime_ === 0) return true; // fire first poll
 		return (time - this.lastJournalRequestTime_) >= interval;
 	}
 
-	setJournalRequestComplete() { this.lastJournalRequestTime_ = Date.now() / 1000.0; this.journalRequestWaiting_ = false; }
+	setJournalRequestComplete(time = null) {
+		this.lastJournalRequestTime_ = (typeof time === 'number' && Number.isFinite(time)) ? time : (Date.now() / 1000.0);
+		this.journalRequestWaiting_ = false;
+	}
 
 	// ---- Mutable page tree helpers (minimal) ----
 	requestFullTreeSync() {
@@ -279,11 +320,15 @@ export default class Http3ClientBackend extends Backend {
 
 	// ---- Static node fetch for non-blocking mode ----
 	requestStaticNodeData() {
-		// TODO: Implement correct behavior:
-		// - Create an HTTP3TreeMessage for a static asset request (non-WWATP path in Request)
-		// - Enqueue/send it via the Updater/transport
-		// - When response arrives (processHTTP3Response static path), parse and set this.staticNode_
-		// - Optionally upsert the static data into localBackend_ if appropriate
-		// Current placeholder is incorrect (direct local upsert without fetching); tracked in TODO.md
+		// Only for non-WWATP paths; sends a minimal REQUEST_FINAL and expects RESPONSE_FINAL with a TreeNode payload.
+		if (this.requestUrlInfo_.isWWATP()) return;
+		const msg = new HTTP3TreeMessage().setRequestId(this._nextRequestId());
+		// Empty payload; use REQUEST_FINAL to denote request completion
+		msg.requestChunks = encodeToChunks(new Uint8Array(0), { signal: WWATP_SIGNAL.SIGNAL_WWATP_REQUEST_FINAL, requestId: msg.requestId });
+		msg.isInitialized = true;
+		msg.requestComplete = true;
+		this.staticRequestId_ = msg.requestId;
+		// Do not wait; updater will deliver response and processHTTP3Response will handle FINAL
+		this.pendingRequests_.push(msg);
 	}
 }
