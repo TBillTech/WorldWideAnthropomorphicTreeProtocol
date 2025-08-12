@@ -161,8 +161,8 @@ Browser runtime constraints
    - [x] `addAnimalsToBackend()`; [x] `addNotesPageTree()`; [ ] `stressTestConstructions(count)`
    - [ ] `testAnimalNodesNoElephant(labelPrefix = "")`;
    - [x] `testBackendLogically(labelPrefix = "")`;
-   - [ ] `testPeerNotification(toBeModified, notificationDelayMs, labelPrefix = "")`
-   - Note: `stressTestConstructions` and `testPeerNotification` are deferred for now due to low utility in typical web-browser environments (no real multithreading, timing semantics differ). Can be added later if needed.
+  - [ ] `testPeerNotification(toBeModified, notificationDelayMs, labelPrefix = "")`
+  - Note: `stressTestConstructions` remains deferred for browser-first contexts. For peer notifications, we will prioritize a system-level test using two Http3ClientBackend instances (see section G) even if the unit-level testbed method stays deferred.
  - [ ] Write a Vitest suite that runs the testbed against:
    - [x] `SimpleBackend` (B.3) to validate local behavior.
    - [ ] Later: `Http3ClientBackend` once transport/messages are available (same suite should run unchanged for parity).
@@ -247,11 +247,11 @@ Browser runtime constraints
 ## D. HTTP3 client backend in JS
 
 1) Http3ClientBackend (`js_client_lib/http3_client.js`)
-- [ ] Class constructor signature mirrors C++:
+- [x] Class constructor signature mirrors C++:
   - constructor(localBackend, blockingMode, request, journalRequestsPerMinute = 0, staticNode = Nothing)
   - validations per C++ (staticNode with WWATP check, journaling with static node check)
-  - if staticNode present and !blockingMode -> requestStaticNodeData()
-- [ ] Implement methods:
+  - if staticNode present and !blockingMode -> requestStaticNodeData() [present; see fix task below]
+- [x] Implement methods:
   - getStaticNode(): Maybe<TreeNode>
   - getNode(labelRule)
   - upsertNode(nodes)
@@ -275,16 +275,24 @@ Browser runtime constraints
   - requestFullTreeSync(), setMutablePageTreeLabelRule(label="MutableNodes"), getMutablePageTree()
   - needToSendJournalRequest(time), setJournalRequestComplete()
 - [ ] Internal helpers:
-  - requestStaticNodeData(), setNodeChunks(chunks)
-  - getMutablePageTreeInMode(blockingMode, isJournalRequest=false)
-  - awaitResponse()/awaitBoolResponse()/awaitTreeResponse()/awaitVectorTreeResponse()/awaitChunksResponse()
-  - responseSignal()
-  - processOneNotification(notification), updateLastNotification(notification)
-  - enable/disable server sync flags, notification blocking flag
-  - queues: pendingRequests_ (list)
-  - state: needMutablePageTreeSync_, lastNotification_, mutablePageTreeLabelRule_, serverSyncOn_, blockingMutex/condition -> JS equivalents (Promises + deferreds)
-  - journaling: lastJournalRequestTime, journalRequestWaiting, rate-limiting per minute
-  - [ ] Ensure all code paths are browser-safe (no Node-specific APIs); timers and queues use Web APIs.
+  - [ ] requestStaticNodeData(): create request for static URL and send it; when response arrives, load returned asset into staticNode_ and update local cache. (Currently incorrect; see task below.)
+  - [ ] setNodeChunks(chunks) (if needed for chunk-level flows)
+  - [ ] getMutablePageTreeInMode(blockingMode, isJournalRequest=false)
+  - [x] awaitBoolResponse()/awaitTreeResponse()/awaitVectorTreeResponse() (minimal promise-based)
+  - [ ] awaitResponse()/awaitChunksResponse() and responseSignal() handling
+  - [x] processOneNotification(notification), updateLastNotification(notification)
+  - [ ] enable/disable server sync flags, notification blocking flag helpers
+  - [x] queues: pendingRequests_ (list)
+  - [x] state: needMutablePageTreeSync_, lastNotification_, mutablePageTreeLabelRule_, serverSyncOn_ (flag), promise-based waits
+  - [x] journaling: lastJournalRequestTime, journalRequestWaiting, rate-limiting per minute
+  - [x] Ensure all code paths are browser-safe (no Node-specific APIs); timers and queues use Web APIs.
+
+- [ ] processHTTP3Response coverage tasks (remaining cases to implement/verify):
+  - [ ] Handle RESPONSE_CONTINUE/RESPONSE_FINAL chunk sequencing and partial payload assembly where applicable (multi-chunk responses).
+  - [ ] Handle empty/signal-only responses uniformly (e.g., processNotification returning no payload) and resolve waits accordingly.
+  - [ ] Handle unexpected/unknown signals with a clear error/log path without breaking the wait map.
+  - [ ] Journal edge case: when server returns the mutable page tree as the response to a journal request due to client being out of sync; wire this into local cache and lastNotification_ correctly.
+  - [ ] Static asset response path: route static URL responses to update staticNode_ and optionally notify local listeners.
 
 2) Http3ClientBackendUpdater (`js_client_lib/http3_client_updater.js`)
 - [ ] Constructor(name, ipAddr, port); name/type getters
@@ -328,6 +336,30 @@ Decisions (updated)
   - [ ] Updater maintainRequestHandlers flow with a mock Communication
   - [ ] Transport mock: stream identifier management, response handler routing
 - [ ] Minimal integration test: issue getFullTree or queryNodes over mock transport and observe localBackend updates.
+ 
+### System-level tests
+
+- [ ] Two-Backend peer notifications (Http3ClientBackend x2)
+  - Purpose: Validate end-to-end listener notification propagation between two JavaScript Http3ClientBackend instances connected to the same transport layer, mirroring C++ `testPeerNotification` logic.
+  - Reference: C++ `test_instances/catch2_unit_tests/backend_testbed.cpp::testPeerNotification`.
+  - Setup:
+    - Instantiate two local backends (SimpleBackend) A_local and B_local.
+    - Create two Http3ClientBackend instances A and B that synchronize with a shared mock transport/updater (or a shared in-memory server backend) so mutations from one are journaled/notified to the other.
+    - Register a node listener on A for label "lion" (no childNotify), like in C++.
+  - Flow:
+    1) Ensure labelPrefix handling parity (optional argument) and start with "lion" deleted from remote to force a create.
+    2) From B: upsert lion nodes; process notifications; confirm A received creation notification.
+    3) From B: delete "lion"; process notifications; confirm A received deletion notification.
+    4) Deregister listener on A; repeat create/delete in B; confirm A receives no further notifications.
+    5) The actual notification delays are not important, but are there only to allow the notification loops and asynchronous messaging to catch up with the intended state.  But the delays may indeed be necessary.
+  - Acceptance criteria:
+    - Listener callback on A is invoked with correct labelRule and Maybe<TreeNode> states (Just on upsert, Nothing on delete).
+    - Ordering is respected: create notification observed before delete in the above sequence.
+    - After deregistration, no callbacks fire for the same label.
+    - The labelPrefix concept is used for testing the redirected and composite backends, and these probably will not be implemented in javascript.
+  - Notes:
+    - This test runs at the system level using the real Http3ClientBackend queueing + journal handling with a mock transport. The existing unit-level `BackendTestbed.testPeerNotification` in JS can remain deferred.
+    - Once it is operational and tested with the mock transport, a testing cpp service should be run (server.exe with a proper config.yaml) and the javascript HTTP3Client can test against that.
 - [ ] Browser-run tests (e.g., via Vitest + jsdom or Karma) for adapters; Node-only tests acceptable for heavier unit coverage.
 
 ## H. Docs and examples
@@ -383,49 +415,30 @@ Port the C++ SimpleBackend to support the Http3ClientBackend locally in the brow
 ---
 
 ## K. Session summary (context)
-
-Date: 2025-08-11
+Date: 2025-08-12
 
 What we analyzed
-- C++ headers shaping the JS port: backend.h, tree_node.h, http3_tree_message.h, http3_tree_message_helpers.h, http3_client_backend.h, frontend_base.h, transport/include/shared_chunk.h, transport/include/request.h, and memory/include/simple_backend.h.
-- Existing JS files discovered: interface/*.js (maybe.js, backend.js), transport scaffolding; tree_node.js implementation and tests in place.
+- Revisited D.1 Http3ClientBackend design and C++ parity constraints; verified message helper signals and transport abstractions.
 
 Decisions
-- Browser-first implementation: use Uint8Array/DataView, avoid Node-only APIs; design Communication adapters for WebTransport/WebSocket/fetch. Node QUIC stays optional and is stubbed as Node-only.
-- ESM for js_client_lib (type: module) to align with browser bundlers and modern Node; avoid CommonJS for runtime code.
-- Include a SimpleBackend JS port to support Http3ClientBackend caching and local operations in the browser.
+- Proceed with a browser-safe, promise-based blocking mode and a simple pendingRequests_ queue to be flushed by the Updater.
+- Update local cache (SimpleBackend) upon responses and journal notifications for parity with C++ intent.
 
 Artifacts created/updated (this iteration)
-- js_client_lib/interface/http3_tree_message_helpers.js: Implemented chunk model (headers + SpanChunk) and encoders/decoders for label, long_string, Maybe<TreeNode>, SequentialNotification, Vector<SequentialNotification>, NewNodeVersion, SubTransaction, Transaction, and Vector<TreeNode>; added flattenWithSignal utilities.
-- js_client_lib/interface/http3_tree_message.js: Implemented full HTTP3TreeMessage encoders/decoders for all operations (getNode, upsertNode, deleteNode, getPageTree, queryNodes, open/close transaction layers, applyTransaction, getFullTree, register/deregister/notify listeners, processNotification, getJournal), with state and chunk helpers.
-- js_client_lib/test/http3_tree_message_helpers.test.js: Parity tests for helpers (labels, long strings, Maybe<TreeNode>, transactions, vector<TreeNode>, sequential notifications, and chunk split/collect).
-- js_client_lib/test/http3_tree_message.test.js: Added full round-trip parity tests for all HTTP3TreeMessage operations, including journal flows.
-- js_client_lib/test/backend_testbed/backend_testbed.js and *.test.js: Core helpers and logical test flow against SimpleBackend.
-- Prior artifacts retained: tree_node.js + tests; ESLint config; package.json scripts; index.js exports updated.
-
-Transport abstraction (new this iteration)
-- js_client_lib/transport/communication.js: Abstract base with stream identifiers, handler registration, lifecycle, and sendRequest hook.
-- js_client_lib/transport/stream_identifier.js: StreamIdentifier helper with equals/compare/toString.
-- js_client_lib/transport/request.js: Request shape mirroring C++ with isWWATP/equality/compare.
-- js_client_lib/transport/fetch_communication.js: Fetch-based adapter (lets browser negotiate HTTP/3 automatically when supported).
-- js_client_lib/transport/webtransport_communication.js: WebTransport adapter (bidirectional streams; browser-only).
-- js_client_lib/transport/mock_communication.js: In-memory adapter for tests.
-- js_client_lib/test/transport.test.js: Unit tests for transport primitives and mock adapter.
+- js_client_lib/http3_client.js: Added Http3ClientBackend with queueing, blocking waits, response processing, journaling scaffolding, and minimal mutable page tree helpers.
+- js_client_lib/index.js: Export Http3ClientBackend.
+- js_client_lib/test/http3_client_backend.test.js: Basic test validating request queue + blocking-mode response resolution and local cache update.
 
 Status updates
-- Section A: complete.
-- Section B.1 (Backend interface) and Maybe<T>: complete.
-- Section B.2 (TreeNode & related types): complete with tests.
-- Section B.3 (SimpleBackend): complete with tests; cascade-delete added.
-- Section B.4 (Backend Testbed): core helpers and logical test flow implemented; suite runs against SimpleBackend and passes.
-- Section B.5 (HTTP3TreeMessage & helpers): helpers complete with tests; HTTP3TreeMessage now has full encode/decode coverage with passing round-trip tests across all operations.
-- Section C (Transport abstraction): core done (Communication, Request, StreamIdentifier, fetch/WebTransport adapters, mock) with unit tests. WebSocket fallback deferred.
+- D.1 Http3ClientBackend core methods and response handling: implemented; tests pass.
+- D.1 journaling helpers (solicit, rate-limit predicate): implemented.
+- D.1 `requestStaticNodeData` requires correction (see new task) to issue a static URL request and load staticNode_ from response.
+- D.2 Updater: not implemented yet; will flush pendingRequests_ and wire transport IO.
 
 Notes / deferrals
-- `stressTestConstructions` and `testPeerNotification` are intentionally deferred for now due to low utility in browser-first context; can be implemented later if needed.
-- HTTP3TreeMessage full method coverage and round-trip tests remain.
+- processHTTP3Response still needs handling for RESPONSE_CONTINUE/FINAL, static asset responses, and out-of-sync journal mutable page tree cases (tracked above).
 
 Open items (next steps candidates)
-- Define Request/StreamIdentifier shapes for transport abstraction.
-- Add optional notification-focused tests in the testbed when transport/journaling paths are available.
-- Broaden unit tests (message round-trips, transport mock, integration).
+- Implement Http3ClientBackendUpdater to flush pendingRequests_ via Communication adapters and route responses back to the correct backend instances.
+- Complete remaining processHTTP3Response cases.
+- Implement/fix requestStaticNodeData static fetch flow and integrate staticNode_ update.
