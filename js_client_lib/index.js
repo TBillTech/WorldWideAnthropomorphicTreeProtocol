@@ -26,3 +26,4 @@ export { default as SimpleBackend } from './interface/simple_backend.js';
 export * as Http3Helpers from './interface/http3_tree_message_helpers.js';
 export { default as HTTP3TreeMessage } from './interface/http3_tree_message.js';
 export { default as Http3ClientBackend } from './http3_client.js';
+export { default as Http3ClientBackendUpdater } from './http3_client_updater.js';

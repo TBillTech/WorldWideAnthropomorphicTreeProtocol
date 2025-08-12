@@ -295,18 +295,18 @@ Browser runtime constraints
   - [ ] Static asset response path: route static URL responses to update staticNode_ and optionally notify local listeners.
 
 2) Http3ClientBackendUpdater (`js_client_lib/http3_client_updater.js`)
-- [ ] Constructor(name, ipAddr, port); name/type getters
-- [ ] addBackend(localBackend, blockingMode, request, journalRequestsPerMinute=0, staticNode)
-- [ ] getBackend(url) and getBackends()
-- [ ] maintainRequestHandlers(connector, time):
-  - while backends have pending requests, request new stream identifiers
-  - create HTTP3TreeMessage handlers for each request; map StreamIdentifier -> message
-  - periodically solicit journal requests from each backend; map journaling streams separately
-- [ ] start(connector, time, sleepMilli=100) -> spawn loop equivalent (setInterval or worker thread)
-- [ ] stop(), isRunning(), size()
-- [ ] Track: ongoingRequests (Map), journalingRequests (Map), lastTime, completeRequests queue
-- [ ] Integration with Communication.processRequestStream()
- - [ ] For browser, use setInterval/requestAnimationFrame loops; ensure stop() clears timers.
+- [x] Constructor(name, ipAddr, port); name/type getters
+- [x] addBackend(localBackend, blockingMode, request, journalRequestsPerMinute=0, staticNode)
+- [x] getBackend(url) and getBackends()
+- [x] maintainRequestHandlers(connector, time):
+  - [x] while backends have pending requests, request new stream identifiers
+  - [x] create HTTP3TreeMessage handlers for each request; map StreamIdentifier -> message
+  - [x] periodically solicit journal requests from each backend; map journaling streams separately
+- [x] start(connector, time, sleepMilli=100) -> spawn loop equivalent (setInterval or worker thread)
+- [x] stop(), isRunning(), size()
+- [x] Track: ongoingRequests (Map), lastTime (journalingRequests/completeRequests optional; tracked implicitly)
+- [x] Integration with Communication.processRequestStream()
+ - [x] For browser, use setInterval loops; ensure stop() clears timers.
 
 ## E. Concurrency and blocking semantics
 
@@ -333,7 +333,7 @@ Browser runtime constraints
 Decisions (updated)
   - [x] Backend interface conformance with a simple in-memory backend used as localBackend
   - [ ] Http3ClientBackend behavior: pending queue, blocking waits, journal rate-limiting, static node fetching, listener notifications
-  - [ ] Updater maintainRequestHandlers flow with a mock Communication
+  - [x] Updater maintainRequestHandlers flow with a mock Communication
   - [ ] Transport mock: stream identifier management, response handler routing
 - [ ] Minimal integration test: issue getFullTree or queryNodes over mock transport and observe localBackend updates.
  
@@ -425,20 +425,35 @@ Decisions
 - Update local cache (SimpleBackend) upon responses and journal notifications for parity with C++ intent.
 
 Artifacts created/updated (this iteration)
-- js_client_lib/http3_client.js: Added Http3ClientBackend with queueing, blocking waits, response processing, journaling scaffolding, and minimal mutable page tree helpers.
-- js_client_lib/index.js: Export Http3ClientBackend.
-- js_client_lib/test/http3_client_backend.test.js: Basic test validating request queue + blocking-mode response resolution and local cache update.
+- js_client_lib/http3_client_updater.js: Implemented Http3ClientBackendUpdater (start/stop, maintainRequestHandlers, stream dispatch, response routing, journal solicitation).
+- js_client_lib/index.js: Export Http3ClientBackendUpdater.
+- js_client_lib/test/http3_client_updater.test.js: Added test using MockCommunication verifying request flush and response routing for getNode.
 
 Status updates
 - D.1 Http3ClientBackend core methods and response handling: implemented; tests pass.
 - D.1 journaling helpers (solicit, rate-limit predicate): implemented.
 - D.1 `requestStaticNodeData` requires correction (see new task) to issue a static URL request and load staticNode_ from response.
-- D.2 Updater: not implemented yet; will flush pendingRequests_ and wire transport IO.
+- D.2 Updater: Implemented and tested with MockCommunication; pending advanced features (explicit journaling requests map and completeRequests queue) are not required for current tests.
 
 Notes / deferrals
 - processHTTP3Response still needs handling for RESPONSE_CONTINUE/FINAL, static asset responses, and out-of-sync journal mutable page tree cases (tracked above).
 
 Open items (next steps candidates)
-- Implement Http3ClientBackendUpdater to flush pendingRequests_ via Communication adapters and route responses back to the correct backend instances.
+- Extend Updater with explicit journalingRequests/completeRequests tracking if needed for richer transport behaviors.
 - Complete remaining processHTTP3Response cases.
 - Implement/fix requestStaticNodeData static fetch flow and integrate staticNode_ update.
+
+---
+
+## How to run tests (npm)
+
+From the JS library folder:
+
+1) Run the full suite
+  - change directory to `js_client_lib`
+  - run: `npm test`
+
+2) Run a focused test
+  - `npm test -- -t http3_client_updater`
+
+If invoking from repo root, you can also run: `cd js_client_lib && npm test`
