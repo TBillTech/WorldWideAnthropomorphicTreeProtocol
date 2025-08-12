@@ -225,7 +225,7 @@ Browser runtime constraints
 
 ## C. Transport abstraction (`js_client_lib/transport`)
 
-- [ ] Define Communication base (`communication.js`) mirroring C++ responsibilities:
+- [x] Define Communication base (`communication.js`) mirroring C++ responsibilities:
   - getNewRequestStreamIdentifier(req): StreamIdentifier
   - registerResponseHandler(sid, cb)
   - hasResponseHandler(sid)
@@ -235,14 +235,14 @@ Browser runtime constraints
   - deregisterRequestHandler(name)
   - processResponseStream(): boolean
   - listen(), close(), connect()
-- [ ] Define StreamIdentifier shape: { cid, logicalId } with equality and ordering helpers if needed.
-- [ ] Request shape mirroring `request.h` with isWWATP().
-- [ ] Browser-first transports:
-  - WebTransport adapter (preferred when available in the environment)
-  - WebSocket adapter as fallback (frame WWATP chunks into binary messages)
-  - Fetch/XHR fallback for request/response patterns that can be emulated (non-streaming)
-- [ ] Optional Node-only adapters kept out of browser bundle (e.g., `quic_communication.js`) guarded by environment.
-- [ ] Provide a mock/in-memory transport for unit tests that exercises chunk framing.
+- [x] Define StreamIdentifier shape: { cid, logicalId } with equality and ordering helpers if needed.
+- [x] Request shape mirroring `request.h` with isWWATP().
+- [x] Browser-first transports:
+  - [x] WebTransport adapter (preferred when available in the environment)
+  - [ ] WebSocket adapter as fallback (frame WWATP chunks into binary messages)
+  - [x] Fetch/XHR fallback for request/response patterns that can be emulated (non-streaming)
+- [x] Optional Node-only adapters kept out of browser bundle (e.g., `quic_communication.js`) guarded by environment.
+- [x] Provide a mock/in-memory transport for unit tests that exercises chunk framing.
 
 ## D. HTTP3 client backend in JS
 
@@ -403,6 +403,15 @@ Artifacts created/updated (this iteration)
 - js_client_lib/test/backend_testbed/backend_testbed.js and *.test.js: Core helpers and logical test flow against SimpleBackend.
 - Prior artifacts retained: tree_node.js + tests; ESLint config; package.json scripts; index.js exports updated.
 
+Transport abstraction (new this iteration)
+- js_client_lib/transport/communication.js: Abstract base with stream identifiers, handler registration, lifecycle, and sendRequest hook.
+- js_client_lib/transport/stream_identifier.js: StreamIdentifier helper with equals/compare/toString.
+- js_client_lib/transport/request.js: Request shape mirroring C++ with isWWATP/equality/compare.
+- js_client_lib/transport/fetch_communication.js: Fetch-based adapter (lets browser negotiate HTTP/3 automatically when supported).
+- js_client_lib/transport/webtransport_communication.js: WebTransport adapter (bidirectional streams; browser-only).
+- js_client_lib/transport/mock_communication.js: In-memory adapter for tests.
+- js_client_lib/test/transport.test.js: Unit tests for transport primitives and mock adapter.
+
 Status updates
 - Section A: complete.
 - Section B.1 (Backend interface) and Maybe<T>: complete.
@@ -410,6 +419,7 @@ Status updates
 - Section B.3 (SimpleBackend): complete with tests; cascade-delete added.
 - Section B.4 (Backend Testbed): core helpers and logical test flow implemented; suite runs against SimpleBackend and passes.
 - Section B.5 (HTTP3TreeMessage & helpers): helpers complete with tests; HTTP3TreeMessage now has full encode/decode coverage with passing round-trip tests across all operations.
+- Section C (Transport abstraction): core done (Communication, Request, StreamIdentifier, fetch/WebTransport adapters, mock) with unit tests. WebSocket fallback deferred.
 
 Notes / deferrals
 - `stressTestConstructions` and `testPeerNotification` are intentionally deferred for now due to low utility in browser-first context; can be implemented later if needed.
