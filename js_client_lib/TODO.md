@@ -339,27 +339,29 @@ Decisions (updated)
  
 ### System-level tests
 
-- [ ] Two-Backend peer notifications (Http3ClientBackend x2)
-  - Purpose: Validate end-to-end listener notification propagation between two JavaScript Http3ClientBackend instances connected to the same transport layer, mirroring C++ `testPeerNotification` logic.
-  - Reference: C++ `test_instances/catch2_unit_tests/backend_testbed.cpp::testPeerNotification`.
-  - Setup:
-    - Instantiate two local backends (SimpleBackend) A_local and B_local.
-    - Create two Http3ClientBackend instances A and B that synchronize with a shared mock transport/updater (or a shared in-memory server backend) so mutations from one are journaled/notified to the other.
-    - Register a node listener on A for label "lion" (no childNotify), like in C++.
-  - Flow:
-    1) Ensure labelPrefix handling parity (optional argument) and start with "lion" deleted from remote to force a create.
-    2) From B: upsert lion nodes; process notifications; confirm A received creation notification.
-    3) From B: delete "lion"; process notifications; confirm A received deletion notification.
-    4) Deregister listener on A; repeat create/delete in B; confirm A receives no further notifications.
-    5) The actual notification delays are not important, but are there only to allow the notification loops and asynchronous messaging to catch up with the intended state.  But the delays may indeed be necessary.
-  - Acceptance criteria:
-    - Listener callback on A is invoked with correct labelRule and Maybe<TreeNode> states (Just on upsert, Nothing on delete).
-    - Ordering is respected: create notification observed before delete in the above sequence.
-    - After deregistration, no callbacks fire for the same label.
-    - The labelPrefix concept is used for testing the redirected and composite backends, and these probably will not be implemented in javascript.
-  - Notes:
-    - This test runs at the system level using the real Http3ClientBackend queueing + journal handling with a mock transport. The existing unit-level `BackendTestbed.testPeerNotification` in JS can remain deferred.
-    - Once it is operational and tested with the mock transport, a testing cpp service should be run (server.exe with a proper config.yaml) and the javascript HTTP3Client can test against that.
+Group A – Mock transport (implemented)
+
+- [x] End-to-end with mock transport and in-memory server:
+  - Files: `test/system/server_mock.js`, `test/system/system_mock_transport.test.js`
+  - Validates the idiom: add animals + add notes + test backend logically using a shared SimpleBackend server and two JS clients.
+  - Covers two-client peer notification via periodic journal polling. A registers a listener on 'lion', B modifies server; A observes create and delete notifications in order; after deregistration A sees no more notifications.
+
+Group B – Real WWATPService server (scaffolded)
+
+- [ ] Spawn real server binary and run tests against it:
+  - Files: `test/system/system_real_server.test.js` (skipped by default), `test/resources/wwatp_server_config.yaml`.
+  - How it will work:
+    1) Build the C++ server (`build/wwatp_server`).
+    2) Launch it with the provided YAML.
+    3) Connect JS Http3ClientBackend(s) to the HTTP/3 endpoint and run: add animals + add notes + test backend logically, and peer notification with two clients.
+  - Current status: test file is scaffolded and skipped unless `WWATP_E2E=1` is set. A functional HTTP/3 transport adapter for Node/browser to the C++ server remains to be wired (WebTransport or QUIC binding). Once available, remove the skip and assert real responses.
+
+How to run
+
+- Run mock system tests (default): from `js_client_lib`, run `npm test`.
+- Run only system tests (mock): `npm test -- -t "System (mock transport)"`.
+- Run real server e2e (after building server and enabling QUIC transport): set `WWATP_E2E=1` and run tests. Ensure `build/wwatp_server` exists and certificates under `test_instances/data` are present.
+
 - [ ] Browser-run tests (e.g., via Vitest + jsdom or Karma) for adapters; Node-only tests acceptable for heavier unit coverage.
 
 ## H. Docs and examples
@@ -457,3 +459,5 @@ From the JS library folder:
   - `npm test -- -t http3_client_updater`
 
 If invoking from repo root, you can also run: `cd js_client_lib && npm test`
+
+
