@@ -29,7 +29,9 @@ Generating dev TLS certs
 Run readiness tests
 - From `js_client_lib`:
 	- Enable Group B tests: set `WWATP_E2E=1`.
-	- Run: `npm test -- -t "System (real server)"`.
+	- Run just the real-server suite (Vitest grep filters suites/tests):
+	  - `npm test -- --grep "System \\("` or more specific `npm test -- --grep "System \\("` with the full suite text `System \(real server\) – integration readiness`.
+	  - Alternatively, run by file: `npm test -- test/system/system_real_server.test.js`
 	- The suite performs:
 		1) `--check-only` config validation and expects the message "Configuration validation completed successfully".
 		2) Smoke start/stop: launch server, wait for UDP QUIC port bind, then stop.
@@ -75,11 +77,50 @@ Limitations
 Quick start
 1) Build server and ensure certs exist (or set `WWATP_GEN_CERTS=1`).
 2) From `js_client_lib`:
-	- `WWATP_E2E=1 WWATP_TRANSPORT=curl npm test -- -t "System (real server)"`
+	- `WWATP_E2E=1 WWATP_TRANSPORT=curl npm test -- --grep "System \\("` (or target the file: `npm test -- test/system/system_real_server.test.js`)
 3) If curl lacks HTTP/3, install a build with HTTP/3 support or skip this path.
+
+Filtering specific tests (Vitest)
+- Filter by suite/test title: `npm test -- --grep "System \\("` (matches suite names too).
+- Filter by file: `npm test -- test/system/system_mock_transport.test.js`.
+- Run a single test by exact name with -t (matches test cases, not suite names):
+	- Example: `npm test -- -t "server starts, binds UDP port, and stops cleanly (smoke)" test/system/system_real_server.test.js`
+	- Note: `-t "System (real server)"` won’t match because that’s a suite title; use `--grep` for suites.
 
 Expected outcome
 - The test will run a minimal getFullTree request over the curl bridge and assert that the protocol path works end-to-end. The returned vector may be empty depending on server content; the goal is transport verification.
+
+## Architecture notes: heartbeats and QUIC connection reuse
+
+- The WWATP server may buffer responses and only release them after it receives a follow-up heartbeat message associated with the same logical request id.
+- Critically, that heartbeat must arrive on the same QUIC connection. A later stream on the same connection is acceptable; a separate QUIC connection is not.
+- Implication for clients:
+	- Per-process curl CLI calls generally establish a fresh QUIC connection each time. Heartbeats sent via separate curl processes won’t flush the pending response.
+	- Appending a heartbeat in the same request stream may also not trigger a flush if the server expects the heartbeat on a subsequent stream.
+	- A client that can reuse one QUIC connection (e.g., libcurl Multi or WebTransport session) is required for reliable WWATP flows.
+
+### Libcurl HTTP/3 transport (single-connection reuse)
+
+If you have libcurl with HTTP/3 available, you can use a Node-only transport that reuses a single QUIC connection and opens new streams for follow-ups (e.g., heartbeats).
+
+Status
+- Implemented as `transport/libcurl_transport.js` (Node-only). Exported as `LibcurlTransport` from `index.js`.
+
+Install
+- Add node-libcurl (prebuilt binaries exist for common platforms):
+	- `npm install node-libcurl` (or it will be installed automatically as an optional dependency on fresh installs)
+- Ensure your system curl/libcurl supports HTTP/3 (nghttp3/ngtcp2). `curl -V` should list `HTTP3` under Features.
+
+TLS/mTLS
+- Same env vars as the curl bridge: `WWATP_CERT`, `WWATP_KEY`, `WWATP_CA`, `WWATP_INSECURE=1`.
+
+Usage (tests/dev)
+- Import dynamically to avoid bundling in browser:
+	- `const { LibcurlTransport } = await import('../index.js');`
+	- Instantiate and pass to `Http3ClientBackendUpdater.maintainRequestHandlers()` similar to the curl bridge.
+
+Notes
+- This transport keeps a single HTTP/3 connection and is better aligned with server behavior that requires heartbeats on the same QUIC connection.
 
 ## Mock transport tests
 

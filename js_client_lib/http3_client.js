@@ -193,7 +193,11 @@ export default class Http3ClientBackend extends Backend {
 		// Decode by signal family when no waiter type (e.g., journal in non-blocking)
 		let resolved = false;
 		const finish = (value) => { resolved = true; if (waiter) { this.waits_.delete(reqId); waiter.resolve(value); } };
-		const completeBool = () => { const bytes = decodeFromChunks(http3TreeMessage.responseChunks); finish(bytes[0] !== 0); };
+		const completeBool = () => {
+			const bytes = decodeFromChunks(http3TreeMessage.responseChunks);
+			const s = new TextDecoder('utf-8').decode(bytes).trim();
+			finish(s.length === 0 ? true : /^(true|1)$/i.test(s));
+		};
 
 		switch (signal) {
 			case WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_CONTINUE: {

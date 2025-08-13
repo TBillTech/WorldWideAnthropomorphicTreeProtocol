@@ -12,6 +12,9 @@ export const SIGNAL_TYPE = {
 	PAYLOAD: 2,
 };
 
+// Generic transport-level signals (mirror C++ shared_chunk.h)
+export const SIGNAL_HEARTBEAT = 0x02;
+
 export const WWATP_SIGNAL = {
 	SIGNAL_WWATP_REQUEST_CONTINUE: 0x03,
 	SIGNAL_WWATP_RESPONSE_CONTINUE: 0x04,
@@ -242,6 +245,377 @@ export function decode_long_string(bytes, offset = 0) {
 	const len = dv.getUint32(offset, true);
 	const value = utf8Decode(bytes.slice(offset + 4, offset + 4 + len));
 	return { value, read: 4 + len };
+}
+
+// ---- C++-parity encoders/decoders (chunk-based) ----
+
+// Helpers for 64-bit little-endian length prefix (size_t assumed 8)
+function le64Encode(n) {
+	// n can be number or bigint
+	let v = typeof n === 'bigint' ? n : BigInt(n >>> 0);
+	const out = new Uint8Array(8);
+	const dv = new DataView(out.buffer);
+	// write low 32 then high 32 to keep it simple
+	dv.setUint32(0, Number(v & 0xffffffffn) >>> 0, true);
+	dv.setUint32(4, Number((v >> 32n) & 0xffffffffn) >>> 0, true);
+	return out;
+}
+function le64Decode(u8, offset = 0) {
+	if (u8.byteLength < offset + 8) throw new Error('insufficient for u64');
+	const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+	const lo = BigInt(dv.getUint32(offset + 0, true));
+	const hi = BigInt(dv.getUint32(offset + 4, true));
+	return (hi << 32n) | lo;
+}
+
+// Encode a label as a single payload chunk (C++ encode_label)
+export function encodeChunks_label(requestId, signal, str) {
+	const b = utf8Encode(str);
+	if (b.byteLength > (DEFAULT_CHUNK_SIZE - 6)) throw new Error('label too long for single chunk');
+	return [new SpanChunk(new PayloadChunkHeader(requestId, signal, b.byteLength), b)];
+}
+export function canDecodeChunks_label(startChunk, chunks) {
+	if (startChunk >= chunks.length) return null;
+	const c = chunks[startChunk];
+	if (!(c.header instanceof PayloadChunkHeader)) return null;
+	// Always decodable from one chunk
+	return startChunk + 1;
+}
+export function decodeChunks_label(startChunk, chunks) {
+	const next = canDecodeChunks_label(startChunk, chunks);
+	if (!next) throw new Error('cannot decode label');
+	const c = chunks[startChunk];
+	return { nextChunk: next, value: utf8Decode(c.payload) };
+}
+
+// Encode a long_string across multiple chunks: 8-byte length + UTF-8, flattened
+export function encodeChunks_long_string(requestId, signal, str) {
+	const b = utf8Encode(str);
+	const bytes = u8Concat(le64Encode(b.byteLength), b);
+	return flattenWithSignal(bytes, signal, requestId);
+}
+
+export function canDecodeChunks_long_string(startChunk, chunks) {
+	if (startChunk >= chunks.length) return null;
+	// We need to ensure at least 8 bytes exist starting at startChunk across chunk payloads
+	let need = 8;
+	let idx = startChunk;
+	let o = 0;
+	let len = 0n;
+	let haveLen = false;
+	// First, collect 8 bytes
+	const tmp = new Uint8Array(8);
+	let to = 0;
+	while (idx < chunks.length && need > 0) {
+		const c = chunks[idx];
+		if (!(c.header instanceof PayloadChunkHeader)) return null;
+		const take = Math.min(need, c.payload.byteLength);
+		tmp.set(c.payload.slice(0, take), to);
+		to += take;
+		need -= take;
+		if (c.payload.byteLength > take) {
+			// remaining bytes in this chunk belong to string too
+		}
+		idx++;
+	}
+	if (need > 0) return null; // not enough for size yet
+	len = le64Decode(tmp, 0);
+	haveLen = true;
+	// Now ensure total bytes available across chunks cover 8 + len
+	const totalNeeded = 8n + len;
+	let available = 0n;
+	for (let i = startChunk; i < chunks.length; i++) {
+		const c = chunks[i]; if (!(c.header instanceof PayloadChunkHeader)) return null;
+		available += BigInt(c.payload.byteLength);
+		if (available >= totalNeeded) {
+			// compute how many chunks consumed to reach boundary
+			let acc = 0n;
+			for (let j = startChunk; j <= i; j++) {
+				acc += BigInt(chunks[j].payload.byteLength);
+				if (acc >= totalNeeded) return j + 1;
+			}
+		}
+	}
+	return null;
+}
+
+export function decodeChunks_long_string(startChunk, chunks) {
+	const endChunk = canDecodeChunks_long_string(startChunk, chunks);
+	if (!endChunk) throw new Error('cannot decode long_string');
+	// Concatenate payload bytes from startChunk to endChunk-1
+	const seg = chunks.slice(startChunk, endChunk);
+	const bytes = collectPayloadBytes(seg);
+	const len = le64Decode(bytes, 0);
+	const total = Number(8n + len);
+	const strBytes = bytes.slice(8, total);
+	return { nextChunk: endChunk, value: utf8Decode(strBytes) };
+}
+
+// TreeNode <-> C++ text format (hide_contents on encode)
+function maybeToText(m) {
+	if (!Maybe.isMaybe(m)) return `Just ${String(m)}`;
+	return m.isJust() ? `Just ${String(m.value)}` : 'Nothing';
+}
+function maybeStrToText(m) {
+	if (!Maybe.isMaybe(m)) return `Just ${String(m)}`;
+	return m.isJust() ? `Just ${String(m.value)}` : 'Nothing';
+}
+function textToMaybe(str) {
+	if (str === 'Nothing') return Nothing;
+	if (str.startsWith('Just ')) return Just(str.slice(5));
+	// Fallback: treat empty as Nothing
+	return str ? Just(str) : Nothing;
+}
+
+function formatTreeNodeText(node) {
+	// Mirrors C++ operator<< with hide_contents: property_data emitted as empty shared_span
+	const tn = node instanceof TreeNode ? node : new TreeNode(node || {});
+	let out = '';
+	out += 'TreeNode(\n';
+	out += `label_rule: ${tn.getLabelRule()}\n`;
+	const desc = tn.getDescription();
+	out += `description ${desc.length} :\n${desc}\n`;
+	// property_infos
+	out += 'property_infos: [ ';
+	const infos = tn.getPropertyInfos();
+	for (const { type, name } of infos) {
+		out += `${type} (${name}), `;
+	}
+	out += '], ';
+	// version
+	const v = tn.getVersion();
+	const ap = maybeStrToText(v.authorialProof);
+	const au = maybeStrToText(v.authors);
+	const rd = maybeStrToText(v.readers);
+	const cd = v.collisionDepth && Maybe.isMaybe(v.collisionDepth) ? (v.collisionDepth.isJust() ? `Just ${v.collisionDepth.value}` : 'Nothing') : 'Nothing';
+	out += `version: Version: ${v.versionNumber} Max_Version: ${v.maxVersionSequence} Policy: ${v.policy} Authorial_Proof: ${ap} Authors: ${au} Readers: ${rd} Collision_Depth: ${cd} , `;
+	// child_names
+	out += 'child_names: [ ';
+	for (const name of tn.getChildNames()) {
+		out += `${name}, `;
+	}
+	out += '], ';
+	// query_how_to
+	const qh = tn.getQueryHowTo();
+	const qhs = (Maybe.isMaybe(qh) && qh.isJust()) ? String(qh.value) : '';
+	out += `query_how_to ${qhs.length} :\n${qhs}\n`;
+	// qa_sequence
+	const qa = tn.getQaSequence();
+	const qas = (Maybe.isMaybe(qa) && qa.isJust()) ? String(qa.value) : '';
+	out += `qa_sequence ${qas.length} :\n${qas}\n`;
+	// empty shared_span
+	out += 'shared_span( ';
+	out += 'signal_type: 0 ';
+	out += 'signal_size: 0 ';
+	out += 'data_size: 0 ';
+	out += 'chunk_data: [\n';
+	out += '])\n';
+	out += ')\n';
+	return out;
+}
+
+function parseLengthString(src, cur, expectLabel) {
+	// src is JS string; cur is index
+	// format: `${label} ${len} :\n` then len chars then `\n`
+	const rem = src.slice(cur);
+	if (!rem.startsWith(expectLabel + ' ')) throw new Error('bad length string label');
+	let i = cur + expectLabel.length + 1;
+	// read integer
+	let num = '';
+	while (i < src.length && /[0-9]/.test(src[i])) { num += src[i++]; }
+	if (src.slice(i, i + 2) !== ' :') throw new Error('bad length string sep');
+	i += 2;
+	if (src[i] !== '\n') throw new Error('expected newline after length label');
+	i += 1;
+	const n = parseInt(num, 10) || 0;
+	const val = src.slice(i, i + n);
+	i += n;
+	if (src[i] !== '\n') throw new Error('expected newline after content');
+	i += 1;
+	return { next: i, value: val };
+}
+
+function parseTreeNodeText(text) {
+	let i = 0;
+	function expect(tok) {
+		if (text.slice(i, i + tok.length) !== tok) throw new Error(`expected ${tok}`);
+		i += tok.length;
+	}
+	function readUntilNewline(afterPrefix) {
+		const nl = text.indexOf('\n', i);
+		if (nl < 0) throw new Error('no newline');
+		const s = text.slice(i, nl);
+		i = nl + 1;
+		if (afterPrefix && !s.startsWith(afterPrefix)) throw new Error('prefix mismatch');
+		return afterPrefix ? s.slice(afterPrefix.length) : s;
+	}
+	expect('TreeNode(\n');
+	const label_rule = readUntilNewline('label_rule: ');
+	const d = parseLengthString(text, i, 'description'); i = d.next; const description = d.value;
+	// property_infos
+	expect('property_infos: [ ');
+	const propLine = text.slice(i, text.indexOf('], ', i));
+	const infos = [];
+	if (propLine && propLine.length > 0) {
+		const items = propLine.split(',').map(s => s.trim()).filter(Boolean);
+		for (const it of items) {
+			// format: TYPE (NAME)
+			const m = it.match(/^(\S+) \(([^)]+)\)$/);
+			if (m) infos.push({ type: m[1], name: m[2] });
+		}
+	}
+	i = text.indexOf('], ', i) + 3;
+	// version
+	expect('version: ');
+	const verEnd = text.indexOf(', ', i);
+	const verStr = text.slice(i, verEnd);
+	i = verEnd + 2;
+	// parse version fields
+	const vm = verStr.match(/^Version: (\d+) Max_Version: (\d+) Policy: (\S+) Authorial_Proof: (Nothing|Just\s+\S+) Authors: (Nothing|Just\s+\S+) Readers: (Nothing|Just\s+\S+) Collision_Depth: (Nothing|Just\s+\S+) $/);
+	if (!vm) throw new Error('bad version');
+	const version = new TreeNodeVersion({
+		versionNumber: parseInt(vm[1], 10) || 0,
+		maxVersionSequence: parseInt(vm[2], 10) || 256,
+		policy: vm[3],
+		authorialProof: textToMaybe(vm[4]),
+		authors: textToMaybe(vm[5]),
+		readers: textToMaybe(vm[6]),
+		collisionDepth: vm[7] === 'Nothing' ? Nothing : Just(parseInt(vm[7].slice(5).trim(), 10) || 0),
+	});
+	// child_names
+	expect('child_names: [ ');
+	const childLine = text.slice(i, text.indexOf('], ', i));
+	const childNames = [];
+	if (childLine && childLine.length > 0) {
+		const items = childLine.split(',').map(s => s.trim()).filter(Boolean);
+		for (const it of items) childNames.push(it);
+	}
+	i = text.indexOf('], ', i) + 3;
+	// query_how_to and qa_sequence
+	const qh = parseLengthString(text, i, 'query_how_to'); i = qh.next;
+	const qa = parseLengthString(text, i, 'qa_sequence'); i = qa.next;
+	// skip empty shared_span text
+	const sharedSpanPrefix = 'shared_span( signal_type: 0 signal_size: 0 data_size: 0 chunk_data: [\n])\n';
+	if (text.slice(i, i + sharedSpanPrefix.length) !== sharedSpanPrefix) throw new Error('expected empty shared_span');
+	i += sharedSpanPrefix.length;
+	expect(')\n');
+	// Build TreeNode without propertyData (to be attached by outer decoder)
+	return new TreeNode({
+		labelRule: label_rule,
+		description,
+		propertyInfos: infos,
+		version,
+		childNames,
+		propertyData: new Uint8Array(0),
+		queryHowTo: qh.value ? Just(qh.value) : Nothing,
+		qaSequence: qa.value ? Just(qa.value) : Nothing,
+	});
+}
+
+export function encodeChunks_MaybeTreeNode(requestId, signal, maybeNode) {
+	if (!Maybe.isMaybe(maybeNode)) {
+		// treat falsy as Nothing
+		if (!maybeNode) return encodeChunks_long_string(requestId, signal, 'Nothing');
+	}
+	if (Maybe.isMaybe(maybeNode) && maybeNode.isNothing()) {
+		return encodeChunks_long_string(requestId, signal, 'Nothing');
+	}
+	const node = Maybe.isMaybe(maybeNode) ? maybeNode.getOrElse(null) : maybeNode;
+	const text = 'Just ' + formatTreeNodeText(node) + '\n';
+	// Flatten property data to chunks with same signal/id
+	const contentsChunks = flattenWithSignal(node.getPropertyData ? node.getPropertyData() : (node.propertyData || new Uint8Array(0)), signal, requestId);
+	const hexCount = contentsChunks.length.toString(16).padStart(16, '0');
+	const fullText = text + hexCount;
+	const strChunks = encodeChunks_long_string(requestId, signal, fullText);
+	return [...strChunks, ...contentsChunks];
+}
+
+export function canDecodeChunks_MaybeTreeNode(startChunk, chunks) {
+	const afterStr = canDecodeChunks_long_string(startChunk, chunks);
+	if (!afterStr) return null;
+	// Peek last chunk of the string to see if trailing 16 hex chars exist; if not, it could be "Nothing"
+	const strSeg = chunks.slice(startChunk, afterStr);
+	const bytes = collectPayloadBytes(strSeg);
+	const len = Number(le64Decode(bytes, 0));
+	const textBytes = bytes.slice(8, 8 + len);
+	const text = utf8Decode(textBytes);
+	if (text === 'Nothing') return afterStr;
+	// Otherwise, must have hex on the end
+	// Safest is to accept and let decodeChunks_MaybeTreeNode compute next index using chunk count encoded; here we just ensure afterStr exists
+	// and there are enough subsequent chunks as indicated by hex. If hex isn't present yet, return null.
+	if (text.length < 16) return null;
+	const hex = text.slice(-16);
+	if (!/^[0-9a-fA-F]{16}$/.test(hex)) return null;
+	const count = parseInt(hex, 16) >>> 0;
+	const end = afterStr + count;
+	if (end > chunks.length) return null;
+	return end;
+}
+
+export function decodeChunks_MaybeTreeNode(startChunk, chunks) {
+	const afterStr = canDecodeChunks_long_string(startChunk, chunks);
+	if (!afterStr) throw new Error('cannot decode MaybeTreeNode');
+	const strSeg = chunks.slice(startChunk, afterStr);
+	const bytes = collectPayloadBytes(strSeg);
+	const len = Number(le64Decode(bytes, 0));
+	const text = utf8Decode(bytes.slice(8, 8 + len));
+	if (text === 'Nothing') {
+		return { nextChunk: afterStr, value: Nothing };
+	}
+	// Expect "Just " + node text + "\n" + 16 hex
+	if (!text.startsWith('Just ')) throw new Error('bad MaybeTreeNode text');
+	// Strip trailing 16-hex
+	if (text.length < 16) throw new Error('missing hex');
+	const hex = text.slice(-16);
+	const count = parseInt(hex, 16) >>> 0;
+	const nodeText = text.slice(5, text.length - 16); // remove 'Just ' prefix and hex suffix
+	const node = parseTreeNodeText(nodeText);
+	// Collect following property_data chunks
+	const end = afterStr + count;
+	if (end > chunks.length) throw new Error('insufficient chunks for property_data');
+	const propBytes = collectPayloadBytes(chunks.slice(afterStr, end));
+	// Attach
+	node.setPropertyData(propBytes);
+	return { nextChunk: end, value: Just(node) };
+}
+
+export function encodeChunks_VectorTreeNode(requestId, signal, nodes) {
+	const countStr = String(nodes.length >>> 0);
+	const out = encodeChunks_label(requestId, signal, countStr);
+	for (const n of nodes) {
+		const m = encodeChunks_MaybeTreeNode(requestId, signal, Just(n));
+		out.push(...m);
+	}
+	return out;
+}
+
+export function canDecodeChunks_VectorTreeNode(startChunk, chunks) {
+	const afterCount = canDecodeChunks_label(startChunk, chunks);
+	if (!afterCount) return null;
+	const { value: countStr } = decodeChunks_label(startChunk, chunks);
+	const count = parseInt(countStr, 10) >>> 0;
+	let idx = afterCount;
+	for (let i = 0; i < count; i++) {
+		const nxt = canDecodeChunks_MaybeTreeNode(idx, chunks);
+		if (!nxt) return null;
+		idx = nxt;
+	}
+	return idx;
+}
+
+export function decodeChunks_VectorTreeNode(startChunk, chunks) {
+	const afterCount = canDecodeChunks_label(startChunk, chunks);
+	if (!afterCount) throw new Error('cannot decode vector count');
+	const { value: countStr } = decodeChunks_label(startChunk, chunks);
+	const count = parseInt(countStr, 10) >>> 0;
+	const out = [];
+	let idx = afterCount;
+	for (let i = 0; i < count; i++) {
+		const { nextChunk, value } = decodeChunks_MaybeTreeNode(idx, chunks);
+		if (value && value.isJust && value.isJust()) out.push(value.getOrElse(null));
+		idx = nextChunk;
+	}
+	return { nextChunk: idx, value: out };
 }
 
 // TreeNode JSON encoding (browser-safe). propertyData stored as number array.

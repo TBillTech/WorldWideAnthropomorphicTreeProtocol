@@ -251,6 +251,12 @@ Browser runtime constraints
   - [x] Non-streaming only: treat responses as complete bodies (RESPONSE_FINAL); document limitation (no server push/streaming).
   - [x] Select via env `WWATP_TRANSPORT=curl`; documented to avoid bundling into browsers.
 
+- [x] Node-only libcurl HTTP/3 transport (single-connection reuse)
+  - [x] File: `js_client_lib/transport/libcurl_transport.js` implementing the Communication interface.
+  - [x] Force HTTP/3 and reuse a single QUIC connection via node-libcurl; open new streams for follow-ups (e.g., heartbeats).
+  - [x] Map TLS options from env: `WWATP_CERT`, `WWATP_KEY`, `WWATP_CA`, `WWATP_INSECURE=1`.
+  - [x] Prefer in real-server tests; skip gracefully if `node-libcurl` is not installed.
+
 ## D. HTTP3 client backend in JS
 
 1) Http3ClientBackend (`js_client_lib/http3_client.js`)
@@ -359,13 +365,13 @@ Group A – Mock transport (implemented)
 
 Group B – Real WWATPService server (scaffolded)
 
-- [ ] Spawn real server binary and run tests against it:
+- [x] Spawn real server binary and run tests against it:
   - Files: `test/system/system_real_server.test.js` (skipped by default), `test/resources/wwatp_server_config.yaml`.
   - How it will work:
     1) Build the C++ server (`build/wwatp_server`).
     2) Launch it with the provided YAML.
     3) Connect JS Http3ClientBackend(s) to the HTTP/3 endpoint and run: add animals + add notes + test backend logically, and peer notification with two clients.
-  - Current status: test file is scaffolded and skipped unless `WWATP_E2E=1` is set. A functional HTTP/3 transport adapter for Node/browser to the C++ server remains to be wired (WebTransport or QUIC binding). Once available, remove the skip and assert real responses.
+  - Current status: When `WWATP_E2E=1` and `node-libcurl` is available, the suite runs WWATP flows using the single-connection LibcurlTransport and passes. The curl CLI probe remains for static assets; tests skip gracefully if prerequisites are missing.
   - Documentation requirement: For every investigation and outcome in Group B below, record the answers and procedures in `js_client_lib/README.md` under a "Real server e2e" section so the setup is reproducible.
 
 Integration readiness and investigation tasks
@@ -397,7 +403,7 @@ Integration readiness and investigation tasks
   - [x] Document the exact TLS setup required (paths, env vars, curl commands, adapter config) in `js_client_lib/README.md`.
 
 - Transport adapter and connectivity experiments
-  - [ ] Survey Node options for HTTP/3/WebTransport:
+  - [x] Survey Node options for HTTP/3/WebTransport:
         - node-webtransport (status/compat), quiche bindings, nghttp3 wrappers; Undici/fetch do not support HTTP/3.
   - [x] Prototype a minimal "connect + GET /index.html" using selected approach; meanwhile, shell out to curl as a bridge until a native adapter lands.
   - [x] Confirm that server responds to static asset fetch at `/index.html` using certs from YAML.
@@ -416,6 +422,7 @@ Integration readiness and investigation tasks
   - [ ] Verify `--help http3_server` and `--help backends` run without error and print usage (sanity for CLI wiring).
   - [x] Document run instructions in `js_client_lib/README.md` for the real-server e2e path, including cert generation, env vars, and how to enable `WWATP_E2E=1`.
   - [x] Document `WWATP_TRANSPORT=curl` usage and limitations (no streaming) in README.
+  - [x] Add architecture note on heartbeats requiring the same QUIC connection; document why per-process curl heartbeats cannot flush WWATP responses and how LibcurlTransport solves it.
 
 - Post-research follow-up
   - [ ] After completing the investigations and writing up results in `js_client_lib/README.md`, perform an audit to identify any missing JS coding tasks required for full integration (e.g., transport adapter gaps, response handling edge cases, env-driven configuration). Add those concrete tasks back into this TODO under the relevant sections with owners/priorities.
@@ -424,8 +431,15 @@ Integration readiness and investigation tasks
 How to run
 
 - Run mock system tests (default): from `js_client_lib`, run `npm test`.
-- Run only system tests (mock): `npm test -- -t "System (mock transport)"`.
+- Run only system tests (mock):
+  - By file: `npm test -- test/system/system_mock_transport.test.js`
+  - By suite title (grep): `npm test -- --grep "System \\("` or `npm test -- --grep "System \\(mock transport\)"`
 - Run real server e2e (after building server and enabling QUIC transport): set `WWATP_E2E=1` and run tests. Ensure `build/wwatp_server` exists and certificates under `test_instances/data` are present.
+  - By file: `npm test -- test/system/system_real_server.test.js`
+  - By suite title (grep): `npm test -- --grep "System \\(real server\)"`
+  - With curl bridge: `WWATP_TRANSPORT=curl npm test -- --grep "System \\(real server\)"`
+  - Run a single test by exact name with -t (append file for reliability):
+    - `npm test -- -t "server starts, binds UDP port, and stops cleanly (smoke)" test/system/system_real_server.test.js`
 
 - [ ] Browser-run tests (e.g., via Vitest + jsdom or Karma) for adapters; Node-only tests acceptable for heavier unit coverage.
 
@@ -436,6 +450,7 @@ How to run
 - [ ] Notes on QUIC availability and using mock transport.
 - [ ] Browser usage: bundler example (Vite), WebTransport capability detection, fallbacks.
  - [x] Document curl bridge adapter usage, env vars, and fallback behavior.
+ - [x] Document libcurl HTTP/3 transport usage and same-connection heartbeat requirement in README.
 
 ## I. Stretch and future work
 
@@ -500,6 +515,11 @@ Artifacts created/updated
 - js_client_lib/README.md: added "Curl bridge transport" section and instructions.
 - js_client_lib/TODO.md: added and checked tasks for curl bridge and tests.
 
+Update (later in session)
+- Implemented a Node-only LibcurlTransport that reuses a single QUIC connection and allows server-required heartbeats to arrive on subsequent streams.
+- Switched real-server WWATP tests to prefer LibcurlTransport when available; kept curl CLI for static asset probe.
+- Added README architecture notes explaining same-connection heartbeat requirement.
+
 Status updates
 - Real-server E2E path can run a minimal request over curl when enabled; suite continues to gate on WWATP_E2E and skips if curl/H3 is unavailable.
 
@@ -540,5 +560,23 @@ From the JS library folder:
   - `npm test -- -t http3_client_updater`
 
 If invoking from repo root, you can also run: `cd js_client_lib && npm test`
+
+
+## M. Conversation summary (latest)
+Date: 2025-08-13
+
+Overview
+- Goal: reach the C++ WWATPService from JS, initially via a curl bridge, then a native HTTP/3 path; ensure message encoding matches C++ and handle the server’s heartbeat flush behavior.
+
+Key steps
+- Implemented curl-based transport that shells out to curl --http3 with mTLS; integrated into system tests (config, UDP bind, static probe, minimal WWATP flows).
+- Discovered server behavior: WWATP responses may flush only after heartbeats on the same QUIC connection; appending an inline heartbeat on the same stream didn’t unblock.
+- Implemented C++-parity chunk encoders/decoders in JS and aligned boolean responses to label-encoded "true"/"false".
+- Verified that separate curl processes don’t share a QUIC connection, so heartbeats sent that way can’t flush.
+- Built a Node-only LibcurlTransport that reuses one HTTP/3 connection and opens new streams for follow-up heartbeats; switched WWATP tests to use it.
+- Kept curl CLI for static asset/health checks. Real-server tests pass end-to-end with LibcurlTransport.
+
+What’s next
+- Move toward WebTransport for browsers; keep libcurl for Node/CI until WebTransport is ready. Parameterize ports/paths and close remaining response edge cases.
 
 

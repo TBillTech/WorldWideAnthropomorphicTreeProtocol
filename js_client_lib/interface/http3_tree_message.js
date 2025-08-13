@@ -7,14 +7,6 @@ import {
 	SignalChunkHeader,
 	chunkToWire,
 	chunkFromWire,
-	encode_label,
-	decode_label,
-	encode_vec_tree_node,
-	decode_vec_tree_node,
-	encode_tree_node,
-	decode_tree_node,
-	encode_maybe_tree_node,
-	decode_maybe_tree_node,
 	encode_transaction,
 	decode_transaction,
 	encode_sequential_notification,
@@ -25,6 +17,13 @@ import {
 	decodeFromChunks,
 	WWATP_SIGNAL,
 	SIGNAL_TYPE,
+	// Chunk-based C++-parity helpers
+	encodeChunks_label,
+	decodeChunks_label,
+	encodeChunks_MaybeTreeNode,
+	decodeChunks_MaybeTreeNode,
+	encodeChunks_VectorTreeNode,
+	decodeChunks_VectorTreeNode,
 } from './http3_tree_message_helpers.js';
 
 import { Maybe, Nothing, Just } from './maybe.js';
@@ -74,88 +73,82 @@ export default class HTTP3TreeMessage {
 	// Encode simple requests/responses. We'll expand coverage incrementally.
 	// getNode(labelRule)
 	encodeGetNodeRequest(labelRule) {
-		const payload = encode_label(labelRule);
-		this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_REQUEST, requestId: this.requestId });
+	this.requestChunks = encodeChunks_label(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_REQUEST, String(labelRule));
 		this.isInitialized = true;
 		this.requestComplete = true; // single-shot request
 		return this;
 	}
 	decodeGetNodeResponse() {
-		const bytes = decodeFromChunks(this.responseChunks);
-		const { value } = decode_maybe_tree_node(bytes, 0);
-		return value; // Maybe<TreeNode>
+	const { value } = decodeChunks_MaybeTreeNode(0, this.responseChunks);
+	return value;
 	}
 
 	// upsertNode(Vector<TreeNode>)
 	encodeUpsertNodeRequest(nodes) {
-		const payload = encode_vec_tree_node(nodes);
-		this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_REQUEST, requestId: this.requestId });
+	this.requestChunks = encodeChunks_VectorTreeNode(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_REQUEST, nodes);
 		this.isInitialized = true;
 		this.requestComplete = true;
 		return this;
 	}
 	decodeUpsertNodeResponse() {
 		const bytes = decodeFromChunks(this.responseChunks);
-		// boolean result encoded as u8 (0/1)
-		if (bytes.byteLength < 1) throw new Error('invalid upsert response');
-		return bytes[0] !== 0;
+		// C++ encodes bool responses as label strings ("true"/"false")
+		const s = new TextDecoder('utf-8').decode(bytes).trim();
+		if (s.length === 0) return true;
+		return /^(true|1)$/i.test(s);
 	}
 
 	// deleteNode(labelRule)
 	encodeDeleteNodeRequest(labelRule) {
-		const payload = encode_label(labelRule);
-		this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_DELETE_NODE_REQUEST, requestId: this.requestId });
+	this.requestChunks = encodeChunks_label(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_DELETE_NODE_REQUEST, String(labelRule));
 		this.isInitialized = true;
 		this.requestComplete = true;
 		return this;
 	}
 	decodeDeleteNodeResponse() {
 		const bytes = decodeFromChunks(this.responseChunks);
-		if (bytes.byteLength < 1) throw new Error('invalid delete response');
-		return bytes[0] !== 0;
+		const s = new TextDecoder('utf-8').decode(bytes).trim();
+		if (s.length === 0) return true;
+		return /^(true|1)$/i.test(s);
 	}
 
 	// getPageTree(page_node_label_rule)
 	encodeGetPageTreeRequest(labelRule) {
-		const payload = encode_label(labelRule);
-		this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_GET_PAGE_TREE_REQUEST, requestId: this.requestId });
+	this.requestChunks = encodeChunks_label(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_GET_PAGE_TREE_REQUEST, String(labelRule));
 		this.isInitialized = true;
 		this.requestComplete = true;
 		return this;
 	}
 	decodeGetPageTreeResponse() {
-		const bytes = decodeFromChunks(this.responseChunks);
-		const { value } = decode_vec_tree_node(bytes, 0);
-		return value;
+	const { value } = decodeChunks_VectorTreeNode(0, this.responseChunks);
+	return value;
 	}
 
 	// queryNodes(labelRule)
 	encodeGetQueryNodesRequest(labelRule) {
-		const payload = encode_label(labelRule);
-		this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_QUERY_NODES_REQUEST, requestId: this.requestId });
+	this.requestChunks = encodeChunks_label(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_QUERY_NODES_REQUEST, String(labelRule));
 		this.isInitialized = true;
 		this.requestComplete = true;
 		return this;
 	}
 	decodeGetQueryNodesResponse() {
-		const bytes = decodeFromChunks(this.responseChunks);
-		const { value } = decode_vec_tree_node(bytes, 0);
-		return value;
+	const { value } = decodeChunks_VectorTreeNode(0, this.responseChunks);
+	return value;
 	}
 
 	// openTransactionLayer(TreeNode)
 	encodeOpenTransactionLayerRequest(node) {
 		// encode as Maybe<TreeNode> with Just(node) for parity with C++
-		const payload = encode_maybe_tree_node(Just(node));
-		this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_REQUEST, requestId: this.requestId });
+	this.requestChunks = encodeChunks_MaybeTreeNode(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_REQUEST, Just(node));
 		this.isInitialized = true;
 		this.requestComplete = true;
 		return this;
 	}
 	decodeOpenTransactionLayerResponse() {
 		const bytes = decodeFromChunks(this.responseChunks);
-		if (bytes.byteLength < 1) throw new Error('invalid openTransactionLayer response');
-		return bytes[0] !== 0;
+		const s = new TextDecoder('utf-8').decode(bytes).trim();
+		if (s.length === 0) return true;
+		return /^(true|1)$/i.test(s);
 	}
 
 	// closeTransactionLayers()
@@ -168,8 +161,9 @@ export default class HTTP3TreeMessage {
 	}
 	decodeCloseTransactionLayersResponse() {
 		const bytes = decodeFromChunks(this.responseChunks);
-		if (bytes.byteLength < 1) throw new Error('invalid closeTransactionLayers response');
-		return bytes[0] !== 0;
+		const s = new TextDecoder('utf-8').decode(bytes).trim();
+		if (s.length === 0) return true;
+		return /^(true|1)$/i.test(s);
 	}
 
 	// applyTransaction(Transaction)
@@ -182,67 +176,77 @@ export default class HTTP3TreeMessage {
 	}
 	decodeApplyTransactionResponse() {
 		const bytes = decodeFromChunks(this.responseChunks);
-		if (bytes.byteLength < 1) throw new Error('invalid applyTransaction response');
-		return bytes[0] !== 0;
+		const s = new TextDecoder('utf-8').decode(bytes).trim();
+		if (s.length === 0) return true;
+		return /^(true|1)$/i.test(s);
 	}
 
 	// getFullTree()
 	encodeGetFullTreeRequest() {
-		this.requestChunks = encodeToChunks(new Uint8Array(0), { signal: WWATP_SIGNAL.SIGNAL_WWATP_GET_FULL_TREE_REQUEST, requestId: this.requestId });
+	this.requestChunks = encodeToChunks(new Uint8Array(0), { signal: WWATP_SIGNAL.SIGNAL_WWATP_GET_FULL_TREE_REQUEST, requestId: this.requestId });
 		this.isInitialized = true;
 		this.requestComplete = true;
 		return this;
 	}
 	decodeGetFullTreeResponse() {
-		const bytes = decodeFromChunks(this.responseChunks);
-		const { value } = decode_vec_tree_node(bytes, 0);
-		return value;
+	const { value } = decodeChunks_VectorTreeNode(0, this.responseChunks);
+	return value;
 	}
 
 	// registerNodeListener(listenerName, labelRule, childNotify)
 	encodeRegisterNodeListenerRequest(listenerName, labelRule, childNotify) {
-		const payload = concatBytes(
-			encode_label(listenerName),
-			encode_label(labelRule),
-			new Uint8Array([childNotify ? 1 : 0])
-		);
-		this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_REGISTER_LISTENER_REQUEST, requestId: this.requestId });
+		// Reuse label chunk encoder twice then a tiny payload for bool
+		const chunks = [
+			...encodeChunks_label(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_REGISTER_LISTENER_REQUEST, String(listenerName)),
+			...encodeChunks_label(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_REGISTER_LISTENER_REQUEST, String(labelRule)),
+			new SpanChunk(new PayloadChunkHeader(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_REGISTER_LISTENER_REQUEST, 1), new Uint8Array([childNotify ? 1 : 0]))
+		];
+		this.requestChunks = chunks;
 		this.isInitialized = true;
 		this.requestComplete = true;
 		return this;
 	}
 	decodeRegisterNodeListenerResponse() {
 		const bytes = decodeFromChunks(this.responseChunks);
-		if (bytes.byteLength < 1) throw new Error('invalid registerNodeListener response');
-		return bytes[0] !== 0;
+		const s = new TextDecoder('utf-8').decode(bytes).trim();
+		if (s.length === 0) return true;
+		return /^(true|1)$/i.test(s);
 	}
 
 	// deregisterNodeListener(listenerName, labelRule)
 	encodeDeregisterNodeListenerRequest(listenerName, labelRule) {
-		const payload = concatBytes(encode_label(listenerName), encode_label(labelRule));
-		this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_DEREGISTER_LISTENER_REQUEST, requestId: this.requestId });
+		const chunks = [
+			...encodeChunks_label(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_DEREGISTER_LISTENER_REQUEST, String(listenerName)),
+			...encodeChunks_label(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_DEREGISTER_LISTENER_REQUEST, String(labelRule))
+		];
+		this.requestChunks = chunks;
 		this.isInitialized = true;
 		this.requestComplete = true;
 		return this;
 	}
 	decodeDeregisterNodeListenerResponse() {
 		const bytes = decodeFromChunks(this.responseChunks);
-		if (bytes.byteLength < 1) throw new Error('invalid deregisterNodeListener response');
-		return bytes[0] !== 0;
+		const s = new TextDecoder('utf-8').decode(bytes).trim();
+		if (s.length === 0) return true;
+		return /^(true|1)$/i.test(s);
 	}
 
 	// notifyListeners(labelRule, maybeNode)
 	encodeNotifyListenersRequest(labelRule, maybeNode) {
-		const payload = concatBytes(encode_label(labelRule), encode_maybe_tree_node(maybeNode));
-		this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_NOTIFY_LISTENERS_REQUEST, requestId: this.requestId });
+		const chunks = [
+			...encodeChunks_label(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_NOTIFY_LISTENERS_REQUEST, String(labelRule)),
+			...encodeChunks_MaybeTreeNode(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_NOTIFY_LISTENERS_REQUEST, maybeNode)
+		];
+		this.requestChunks = chunks;
 		this.isInitialized = true;
 		this.requestComplete = true;
 		return this;
 	}
 	decodeNotifyListenersResponse() {
 		const bytes = decodeFromChunks(this.responseChunks);
-		if (bytes.byteLength < 1) throw new Error('invalid notifyListeners response');
-		return bytes[0] !== 0;
+		const s = new TextDecoder('utf-8').decode(bytes).trim();
+		if (s.length === 0) return true;
+		return /^(true|1)$/i.test(s);
 	}
 
 	// processNotification()
@@ -254,8 +258,8 @@ export default class HTTP3TreeMessage {
 	}
 	decodeProcessNotificationResponse() {
 		const bytes = decodeFromChunks(this.responseChunks);
-		// assume empty/true indicates processed; fallback to true if empty
-		return bytes.byteLength === 0 ? true : bytes[0] !== 0;
+		const s = new TextDecoder('utf-8').decode(bytes).trim();
+		return s.length === 0 ? true : /^(true|1)$/i.test(s);
 	}
 
 	// getJournal(last_notification: SequentialNotification)
@@ -265,8 +269,8 @@ export default class HTTP3TreeMessage {
 			signalCount: lastNotification.signalCount >>> 0,
 			notification: { labelRule: '', maybeNode: Nothing },
 		};
-		const payload = encode_sequential_notification(sanitized);
-		this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST, requestId: this.requestId });
+	const payload = encode_sequential_notification(sanitized);
+	this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST, requestId: this.requestId });
 		this.isInitialized = true;
 		this.requestComplete = true;
 		return this;

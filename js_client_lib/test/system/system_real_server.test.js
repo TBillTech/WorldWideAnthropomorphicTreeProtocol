@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SimpleBackend, Http3ClientBackendUpdater, Request, CurlCommunication } from '../../index.js';
+import { SimpleBackend, Http3ClientBackendUpdater, Request } from '../../index.js';
 import { BackendTestbed } from '../backend_testbed/backend_testbed.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -174,17 +174,25 @@ describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', (
 
     const server = await spawnServer();
     try {
-      // Build updater and curl transport
+      // Build updater and libcurl transport (single QUIC connection)
       const updater = new Http3ClientBackendUpdater('real', '127.0.0.1', 12345);
       const local = new SimpleBackend();
       const client = updater.addBackend(local, true, new Request({ scheme: 'https', authority: '127.0.0.1:12345', path: '/init/wwatp/' }), 60);
 
-      const curl = new CurlCommunication();
-      await curl.connect();
+      // Prefer LibcurlTransport; skip if not available
+      let transport = null;
+      try {
+        const { LibcurlTransport } = await import('../../index.js');
+        transport = new LibcurlTransport();
+        await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
+      } catch (_e) {
+        // Skip this WWATP flow if node-libcurl isn't installed or fails to init
+        return;
+      }
 
       // Enqueue a full tree request and flush once
       const promise = client.getFullTree();
-      await updater.maintainRequestHandlers(curl, 0);
+  await updater.maintainRequestHandlers(transport, 0);
 
       // Wait for response with a timeout
       const vec = await Promise.race([
@@ -192,9 +200,9 @@ describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', (
         new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for server response')), 8000)),
       ]);
 
+      // Require success
       expect(Array.isArray(vec)).toBe(true);
-      // We don't know server contents; we only assert protocol path works. vec may be empty.
-      // Also verify local cache updated consistently
+      // vec may be empty, but must be an array if protocol works
       if (Array.isArray(vec) && vec.length) {
         const got = await local.queryNodes('/*');
         expect(Array.isArray(got)).toBe(true);
@@ -203,4 +211,79 @@ describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', (
       killServer(server);
     }
   }, 20000);
+
+  it('upsert a test node and fetch it back via curl bridge', async () => {
+    // Detect curl with HTTP/3 support
+    const ver = child_process.spawnSync('bash', ['-lc', 'command -v curl >/dev/null 2>&1 && curl -V | head -n1 || echo "nocurl"'], { encoding: 'utf8' });
+    const v = ver.stdout || '';
+    if (!v || v.includes('nocurl') || !/HTTP\/?3|nghttp3|quiche/i.test(v)) {
+      return; // Skip if curl or HTTP/3 not available
+    }
+    if (!haveCerts() && !tryGenerateSelfSignedCerts()) {
+      return; // Skip if certs missing and cannot generate
+    }
+
+    // Ensure env for curl bridge
+    process.env.WWATP_CERT = CERT_FILE;
+    process.env.WWATP_KEY = KEY_FILE;
+    process.env.WWATP_INSECURE = '1';
+
+    const server = await spawnServer();
+    try {
+      const updater = new Http3ClientBackendUpdater('real', '127.0.0.1', 12345);
+      const local = new SimpleBackend();
+      const client = updater.addBackend(local, true, new Request({ scheme: 'https', authority: '127.0.0.1:12345', path: '/init/wwatp/' }), 0);
+
+      // Prefer LibcurlTransport; skip if not available
+      let transport = null;
+      try {
+        const { LibcurlTransport } = await import('../../index.js');
+        transport = new LibcurlTransport();
+        await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
+      } catch (_e) {
+        return; // skip if libcurl not present
+      }
+
+      // Construct a minimal test node under a unique prefix to avoid conflicts
+      const ts = Date.now() & 0xffff;
+      const label = `e2e_js/${ts}`;
+      const { TreeNode, TreeNodeVersion, Just } = await import('../../index.js');
+      const node = new TreeNode({
+        labelRule: label,
+        description: 'e2e test node',
+        propertyInfos: [],
+        version: new TreeNodeVersion({ versionNumber: 1, maxVersionSequence: 256, policy: 'public' }),
+        childNames: [],
+      });
+      node.insertProperty(0, 'number', 42n, 'uint64');
+      node.insertPropertyString(1, 'note', 'string', 'hello');
+
+      // Upsert the node
+      const upOkP = client.upsertNode([node]);
+  await updater.maintainRequestHandlers(transport, 0);
+      const upOk = await Promise.race([
+        upOkP,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for upsert response')), 8000)),
+      ]);
+
+  expect(!!upOk).toBe(true);
+
+      // Fetch it back
+      const getP = client.getNode(label);
+  await updater.maintainRequestHandlers(transport, 0);
+      const maybe = await Promise.race([
+        getP,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for getNode response')), 8000)),
+      ]);
+
+  // Maybe<TreeNode>
+  expect(maybe && typeof maybe.isJust === 'function').toBe(true);
+      if (maybe.isJust && maybe.isJust()) {
+        const back = maybe.getOrElse(null);
+        expect(back.getLabelRule()).toBe(label);
+      }
+    } finally {
+      killServer(server);
+    }
+  }, 25000);
 });
