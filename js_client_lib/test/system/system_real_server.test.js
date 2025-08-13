@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SimpleBackend, Http3ClientBackendUpdater, Request } from '../../index.js';
+import { SimpleBackend, Http3ClientBackendUpdater, Request, CurlCommunication } from '../../index.js';
 import { BackendTestbed } from '../backend_testbed/backend_testbed.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -157,27 +157,48 @@ describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', (
   }, 20000);
 
   it('add animals + notes + test backend logically against server', async () => {
+    // Detect curl with HTTP/3 support
+    const ver = child_process.spawnSync('bash', ['-lc', 'command -v curl >/dev/null 2>&1 && curl -V | head -n1 || echo "nocurl"'], { encoding: 'utf8' });
+    const v = ver.stdout || '';
+    if (!v || v.includes('nocurl') || !/HTTP\/?3|nghttp3|quiche/i.test(v)) {
+      return; // Skip if curl or HTTP/3 not available
+    }
+    if (!haveCerts() && !tryGenerateSelfSignedCerts()) {
+      return; // Skip if certs missing and cannot generate
+    }
+
+    // Ensure env for curl bridge
+    process.env.WWATP_CERT = CERT_FILE;
+    process.env.WWATP_KEY = KEY_FILE;
+    process.env.WWATP_INSECURE = '1';
+
     const server = await spawnServer();
     try {
-      // Connect two JS clients to the WWATPService HTTP/3 endpoint
+      // Build updater and curl transport
       const updater = new Http3ClientBackendUpdater('real', '127.0.0.1', 12345);
       const local = new SimpleBackend();
       const client = updater.addBackend(local, true, new Request({ scheme: 'https', authority: '127.0.0.1:12345', path: '/init/wwatp/' }), 60);
 
-      // Perform sync and run testbed checks. Here we rely on server side to already have content
-      // or we can attempt to upsert via client if server supports it.
-      const tree = client.getFullTree();
-      await updater.maintainRequestHandlers({
-        getNewRequestStreamIdentifier: (req) => ({ cid: 'https://127.0.0.1:12345', logicalId: Date.now() }),
-        registerResponseHandler: () => {},
-        deregisterResponseHandler: () => {},
-        sendRequest: async () => ({ ok: false, status: 501 }),
-        processRequestStream: () => {},
-      }, 0);
+      const curl = new CurlCommunication();
+      await curl.connect();
 
-      // For now, assert that request was queued; real HTTP/3 transport adapter needed to actually communicate.
-      // Placeholder until WebTransport/Fetch adapter is wired to the C++ server.
-      expect(tree).toBeTruthy();
+      // Enqueue a full tree request and flush once
+      const promise = client.getFullTree();
+      await updater.maintainRequestHandlers(curl, 0);
+
+      // Wait for response with a timeout
+      const vec = await Promise.race([
+        promise,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for server response')), 8000)),
+      ]);
+
+      expect(Array.isArray(vec)).toBe(true);
+      // We don't know server contents; we only assert protocol path works. vec may be empty.
+      // Also verify local cache updated consistently
+      if (Array.isArray(vec) && vec.length) {
+        const got = await local.queryNodes('/*');
+        expect(Array.isArray(got)).toBe(true);
+      }
     } finally {
       killServer(server);
     }

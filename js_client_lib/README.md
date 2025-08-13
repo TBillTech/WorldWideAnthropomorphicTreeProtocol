@@ -53,6 +53,34 @@ Troubleshooting
 - Ensure `build/wwatp_server` exists; otherwise run the CMake build first.
 - Prefer forward slashes in YAML paths; tests run with cwd at repo root.
 
+### Curl bridge transport (interim option)
+
+Until a native HTTP/3/WebTransport adapter is available for Node/browser, you can run real-server flows through a small Node-only adapter that shells out to curl.
+
+Status
+- Implemented as `transport/curl_communication.js`. It implements the Communication interface by executing `curl --http3` per request and piping WWATP-framed bytes.
+
+How tests will select it
+- Set `WWATP_TRANSPORT=curl` along with `WWATP_E2E=1`.
+- The system test will instantiate the updater with the curl transport and perform a minimal request to `/init/wwatp/`.
+
+TLS/mTLS options (from env)
+- `WWATP_CERT`, `WWATP_KEY`, `WWATP_CA` for client cert/key/CA paths.
+- `WWATP_INSECURE=1` to add `-k` for curl during local testing.
+
+Limitations
+- Non-streaming only: responses are treated as complete bodies (RESPONSE_FINAL). Server push/streaming semantics are not supported in this bridge.
+- Node-only. This module is excluded from browser bundles.
+
+Quick start
+1) Build server and ensure certs exist (or set `WWATP_GEN_CERTS=1`).
+2) From `js_client_lib`:
+	- `WWATP_E2E=1 WWATP_TRANSPORT=curl npm test -- -t "System (real server)"`
+3) If curl lacks HTTP/3, install a build with HTTP/3 support or skip this path.
+
+Expected outcome
+- The test will run a minimal getFullTree request over the curl bridge and assert that the protocol path works end-to-end. The returned vector may be empty depending on server content; the goal is transport verification.
+
 ## Mock transport tests
 
 - Run all tests: `npm test` from `js_client_lib`.

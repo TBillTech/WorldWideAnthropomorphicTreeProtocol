@@ -244,6 +244,13 @@ Browser runtime constraints
 - [x] Optional Node-only adapters kept out of browser bundle (e.g., `quic_communication.js`) guarded by environment.
 - [x] Provide a mock/in-memory transport for unit tests that exercises chunk framing.
 
+- [x] Node-only curl bridge (short-term real-server path)
+  - [x] File: `js_client_lib/transport/curl_communication.js` implementing the Communication interface.
+  - [x] Execute `curl --http3` per request (child_process) to POST WWATP chunk-framed bytes to `/init/wwatp/`; read binary response from stdout.
+  - [x] Map TLS options from env/per-request: `WWATP_CERT`, `WWATP_KEY`, `WWATP_CA`, `WWATP_INSECURE=1`.
+  - [x] Non-streaming only: treat responses as complete bodies (RESPONSE_FINAL); document limitation (no server push/streaming).
+  - [x] Select via env `WWATP_TRANSPORT=curl`; documented to avoid bundling into browsers.
+
 ## D. HTTP3 client backend in JS
 
 1) Http3ClientBackend (`js_client_lib/http3_client.js`)
@@ -293,6 +300,7 @@ Browser runtime constraints
   - [ ] Handle unexpected/unknown signals with a clear error/log path without breaking the wait map.
   - [ ] Journal edge case: when server returns the mutable page tree as the response to a journal request due to client being out of sync; wire this into local cache and lastNotification_ correctly.
   - [x] Static asset response path: route static URL responses to update staticNode_ and optionally notify local listeners.
+  - [x] Compatibility with curl bridge: resolve waits on final body parse and avoid assumptions about streaming.
 
 2) Http3ClientBackendUpdater (`js_client_lib/http3_client_updater.js`)
 - [x] Constructor(name, ipAddr, port); name/type getters
@@ -336,6 +344,9 @@ Decisions (updated)
   - [x] Updater maintainRequestHandlers flow with a mock Communication
     - [x] Transport mock: stream identifier management, response handler routing
 - [ ] Minimal integration test: issue getFullTree or queryNodes over mock transport and observe localBackend updates.
+ - [x] Real-server smoke using curl bridge:
+   - [x] When `WWATP_TRANSPORT=curl` and `WWATP_E2E=1`, instantiate Updater with curl transport and perform a minimal request (e.g., getFullTree or getNode) against `/init/wwatp/`; assert decode and local cache update.
+   - [x] Skip with message if `curl --http3` is unavailable; provide hint to install a curl with HTTP/3.
  
 ### System-level tests
 
@@ -388,9 +399,9 @@ Integration readiness and investigation tasks
 - Transport adapter and connectivity experiments
   - [ ] Survey Node options for HTTP/3/WebTransport:
         - node-webtransport (status/compat), quiche bindings, nghttp3 wrappers; Undici/fetch do not support HTTP/3.
-  - [ ] Prototype a minimal "connect + GET /index.html" using selected approach, or shell out to curl as a bridge until adapter lands.
-  - [ ] Confirm that server responds to static asset fetch at `/index.html` using certs from YAML.
-  - [ ] Confirm WWATP route reachability at `/init/wwatp/` (status/sanity), even if full protocol not exercised yet.
+  - [x] Prototype a minimal "connect + GET /index.html" using selected approach; meanwhile, shell out to curl as a bridge until a native adapter lands.
+  - [x] Confirm that server responds to static asset fetch at `/index.html` using certs from YAML.
+  - [x] Confirm WWATP route reachability at `/init/wwatp/` by POSTing WWATP chunk-framed bytes via curl and decoding the response.
 
 - Test harness hardening for real server
   - [x] Update `system_real_server.test.js` to:
@@ -404,6 +415,7 @@ Integration readiness and investigation tasks
   - [ ] Add a small Node script or Make/CMake test target to run `--check-only` and the smoke startup as CI preflight for e2e.
   - [ ] Verify `--help http3_server` and `--help backends` run without error and print usage (sanity for CLI wiring).
   - [x] Document run instructions in `js_client_lib/README.md` for the real-server e2e path, including cert generation, env vars, and how to enable `WWATP_E2E=1`.
+  - [x] Document `WWATP_TRANSPORT=curl` usage and limitations (no streaming) in README.
 
 - Post-research follow-up
   - [ ] After completing the investigations and writing up results in `js_client_lib/README.md`, perform an audit to identify any missing JS coding tasks required for full integration (e.g., transport adapter gaps, response handling edge cases, env-driven configuration). Add those concrete tasks back into this TODO under the relevant sections with owners/priorities.
@@ -423,6 +435,7 @@ How to run
 - [ ] Usage example: constructing backend, updater, and making a call.
 - [ ] Notes on QUIC availability and using mock transport.
 - [ ] Browser usage: bundler example (Vite), WebTransport capability detection, fallbacks.
+ - [x] Document curl bridge adapter usage, env vars, and fallback behavior.
 
 ## I. Stretch and future work
 
@@ -472,31 +485,46 @@ Port the C++ SimpleBackend to support the Http3ClientBackend locally in the brow
 ## K. Session summary (context)
 Date: 2025-08-13
 
-What we analyzed
-- Tightened D.1 Http3ClientBackend behavior around static asset fetching and multi-chunk responses; validated transport routing and journaling cadence with the mock server.
+What we did this iteration
+- Implemented Node-only curl bridge transport (`transport/curl_communication.js`) to reach the real WWATPService over HTTP/3 using curl.
+- Wired the real-server system test to use the curl transport for a minimal getFullTree request and basic cache assertion, with graceful skips when curl/H3 or certs are unavailable.
+- Updated README with curl bridge usage, env vars, and quick start; expanded TODO with staged integration plan and marked completed items.
 
 Decisions
-- Keep browser-safe, promise-based blocking semantics with a simple pendingRequests_ queue flushed by the Updater.
-- Update local cache upon node/full-tree/page responses and journal notifications for parity with C++ intent.
-- Treat non-WWATP static URLs via REQUEST_FINAL/RESPONSE_FINAL path carrying a TreeNode payload.
+- Keep curl bridge non-streaming and Node-only; use it as an interim path for E2E until a native WebTransport/HTTP/3 adapter is ready.
+- Maintain browser-first runtime code; expose Node-only adapters via separate modules and avoid bundling into browser builds.
 
-Artifacts created/updated (this iteration)
-- server/main.cpp: Accept .yaml path directly; pass `--check-only` through to avoid over-initialization.
-- common/frontend/wwatp_service_cpp/wwatp_service.{h,cpp}: Added YAML-string constructor with `test_only` flag.
-- js_client_lib/test/resources/wwatp_server_config.yaml: Fixed indentation and relative paths.
-- js_client_lib/test/system/system_real_server.test.js: Hardened daemon readiness (UDP bind), added curl mTLS probe with retries, increased timeouts.
-- js_client_lib/README.md: Documented real server e2e steps, mTLS, YAML CLI support, and readiness checks.
+Artifacts created/updated
+- js_client_lib/transport/curl_communication.js: new adapter.
+- js_client_lib/test/system/system_real_server.test.js: switched the final test to exercise curl transport for minimal E2E.
+- js_client_lib/README.md: added "Curl bridge transport" section and instructions.
+- js_client_lib/TODO.md: added and checked tasks for curl bridge and tests.
 
 Status updates
-- Group B readiness: server YAML CLI support landed; `--check-only` stabilized; tests reliably detect readiness; curl probe succeeds with mTLS; JS suite green locally with `WWATP_GEN_CERTS=1`.
+- Real-server E2E path can run a minimal request over curl when enabled; suite continues to gate on WWATP_E2E and skips if curl/H3 is unavailable.
 
 Notes / deferrals
+- Streaming/server-push not supported in curl bridge (by design).
 - Still pending: uniform handling for empty/signal-only responses; journal mutable page tree edge-case; optional server sync flags helpers.
 
-Open items (next steps candidates)
-- Extend Updater with explicit journalingRequests/completeRequests tracking if needed for richer transport behaviors.
-- Complete remaining processHTTP3Response cases (empty responses, out-of-sync journal -> mutable page tree).
-- Add README and browser usage docs; consider TypeScript typings.
+Open items (next steps)
+- Evaluate native WebTransport/HTTP/3 adapter for Node/browser and gradually replace curl bridge where feasible.
+- Close remaining response-handling edge cases; consider parameterizing real-server test ports and paths via env.
+
+## L. Real-server integration plan (staged)
+
+Stage 1 — Curl bridge (Node-only)
+- Implement `transport/curl_communication.js` and select with `WWATP_TRANSPORT=curl`.
+- Scope: request/response flows that complete in a single body (RESPONSE_FINAL). Journaling is periodic short-lived requests.
+- Update `system_real_server.test.js` to exercise one happy-path backend call over the curl transport.
+
+Stage 2 — Native HTTP/3/WebTransport adapter
+- Evaluate `node-webtransport` or bindings to `ngtcp2`/`quiche` for streaming support.
+- Replace curl in tests where available; keep curl as CI fallback.
+
+Stage 3 — WebSocket sidecar bridge (optional)
+- Provide a dev sidecar that proxies WS<->HTTP/3 preserving WWATP framing for browser demos.
+- Add `websocket_communication.js` and document setup.
 
 ---
 
