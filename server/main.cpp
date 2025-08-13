@@ -6,6 +6,7 @@
 #include <csignal>
 #include <atomic>
 #include <map>
+#include <fstream>
 
 #include "wwatp_service.h"
 #include "shared_chunk.h"
@@ -217,8 +218,23 @@ int main(int argc, char* argv[]) {
         cout << "Config file: " << config_path << endl;
         cout << "Memory pool size: " << pool_size_gb << " GB" << endl;
 
-        // Create WWATPService with config file path
-        auto service = make_unique<WWATPService>(config_path, check_only);
+        // Create WWATPService: if a .yaml file is provided, read it and use YAML-string ctor;
+        // otherwise, fall back to the path-based ctor (FileBackend node label behavior).
+        unique_ptr<WWATPService> service;
+        if (config_path.ends_with(".yaml")) {
+            // Read YAML file into a string
+            std::ifstream in(config_path);
+            if (!in) {
+                throw std::runtime_error(string("Failed to open YAML config file: ") + config_path);
+            }
+            std::string yaml_config{
+                std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()
+            };
+            // Construct service from YAML, honoring check_only for initialization mode
+            service = make_unique<WWATPService>("wwatp_server", yaml_config, check_only);
+        } else {
+            service = make_unique<WWATPService>(config_path, check_only);
+        }
 
         cout << "Service constructed successfully" << endl;
 

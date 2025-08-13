@@ -13,9 +13,10 @@
     "node": ">=18.19"
   },
   "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "coverage": "vitest run --coverage",
+  "test": "cross-env WWATP_E2E=1 vitest run",
+  "test:watch": "cross-env WWATP_E2E=1 vitest",
+  "coverage": "cross-env WWATP_E2E=1 vitest run --coverage",
+  "test:mock": "vitest run -t 'System (mock transport)'",
   "lint": "eslint . --ext .js,.mjs,.cjs",
     "format": "prettier -w .",
     "build": "echo 'no build step needed'"
@@ -30,6 +31,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+  "cross-env": "^7.0.3",
   "@vitest/coverage-v8": "^3.0.0",
   "eslint": "^9.7.0",
   "eslint-config-prettier": "^9.1.0",

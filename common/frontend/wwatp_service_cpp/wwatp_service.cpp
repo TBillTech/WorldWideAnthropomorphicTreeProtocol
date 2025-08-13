@@ -98,6 +98,15 @@ WWATPService::WWATPService(string name, const std::string& yaml_config)
     initialize();
 }
 
+WWATPService::WWATPService(string name, const std::string& yaml_config, bool test_only)
+    : name_(name), config_backend_(createConfigBackendFromYAML(yaml_config)), config_label_("config") {
+    if (!config_backend_) {
+        throw std::invalid_argument("Failed to create config backend from YAML");
+    }
+    // Initialize with the provided test_only flag
+    initialize(test_only);
+}
+
 WWATPService::WWATPService(const std::string& path, bool test_only)
     : config_label_("config") {
     // Get the name from the final directory in the path

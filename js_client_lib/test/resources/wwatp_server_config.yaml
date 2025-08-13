@@ -19,16 +19,16 @@ config:
         name: localhost
         ip: 127.0.0.1
         port: 12345
-        private_key_file: ../../test_instances/data/private_key.pem
-        cert_file: ../../test_instances/data/cert.pem
+        private_key_file: test_instances/data/private_key.pem
+        cert_file: test_instances/data/cert.pem
         quiet: true
         send_trailers: false
-        log_path: ../../test_instances/sandbox/
+        log_path: test_instances/sandbox/
         static_load: true
       child_names: [init]
       init:
         child_names: [wwatp]
         wwatp:
           backend: initialized_simple
-      index.html: ../../test_instances/data/libtest_index.html
-      randombytes.bin: ../../test_instances/data/randombytes.bin
+      index.html: test_instances/data/libtest_index.html
+      randombytes.bin: test_instances/data/randombytes.bin

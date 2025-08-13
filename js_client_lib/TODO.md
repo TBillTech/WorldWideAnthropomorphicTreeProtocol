@@ -355,6 +355,59 @@ Group B – Real WWATPService server (scaffolded)
     2) Launch it with the provided YAML.
     3) Connect JS Http3ClientBackend(s) to the HTTP/3 endpoint and run: add animals + add notes + test backend logically, and peer notification with two clients.
   - Current status: test file is scaffolded and skipped unless `WWATP_E2E=1` is set. A functional HTTP/3 transport adapter for Node/browser to the C++ server remains to be wired (WebTransport or QUIC binding). Once available, remove the skip and assert real responses.
+  - Documentation requirement: For every investigation and outcome in Group B below, record the answers and procedures in `js_client_lib/README.md` under a "Real server e2e" section so the setup is reproducible.
+
+Integration readiness and investigation tasks
+
+- Server binary + config smoke checks
+  - [x] Validate config only: run `build/wwatp_server --check-only js_client_lib/test/resources/wwatp_server_config.yaml` and expect exit code 0 and output containing "Configuration validation completed successfully".
+  - [x] Runtime smoke: start `build/wwatp_server js_client_lib/test/resources/wwatp_server_config.yaml` with cwd at repo root; wait for UDP bind; then stop; clean shutdown and non-error stderr.
+  - [x] Verify listener: confirm UDP QUIC port from YAML (default 12345) is bound. If occupied, change YAML (env override deferred).
+
+- Config YAML and required files correctness
+  - [x] Confirm relative paths in `wwatp_server_config.yaml` resolve from repo root (test uses cwd=ROOT):
+        - `private_key_file: ../../test_instances/data/private_key.pem`
+        - `cert_file: ../../test_instances/data/cert.pem`
+        - `log_path: ../../test_instances/sandbox/`
+        - static assets: `index.html`, `randombytes.bin`
+  - [x] Ensure `test_instances/sandbox/` exists prior to startup; create if missing.
+  - [x] Ensure `test_instances/data/cert.pem` and `test_instances/data/private_key.pem` exist; if absent, add a dev script/steps to generate a local self-signed cert/key pair for testing (do not commit secrets).
+  - [x] Validate that the `frontends/http3_server/init/wwatp` route in YAML matches the Request path used by tests (`/init/wwatp/`).
+  - [ ] Document Windows launch parity (server.exe) and path separator caveats; prefer forward slashes in YAML.
+  - [x] Document all of the above verification steps and any deviations or environment-specific notes in `js_client_lib/README.md`.
+
+- TLS provisioning for system_real_server.test.js
+  - [x] Determine if server requires client certificate authentication (mTLS) or serves with server-only cert (curl requires `--cert`/`--key`).
+  - [x] Decide client strategy for tests:
+    - Short-term: Use `curl --http3` via child_process in the test to probe `https://127.0.0.1:12345/index.html` (with `-k` for self-signed) to validate handshake and content.
+    - Long-term: Implement a Node-compatible HTTP/3/WebTransport adapter and thread cert/key/CA options via env (e.g., WWATP_CERT, WWATP_KEY, WWATP_CA, WWATP_INSECURE=1).
+  - [x] If mTLS required, use the same self-signed pair for client and server in dev; paths are discoverable in tests.
+  - [x] Add README notes on generating local certs and using them for e2e tests.
+  - [x] Document the exact TLS setup required (paths, env vars, curl commands, adapter config) in `js_client_lib/README.md`.
+
+- Transport adapter and connectivity experiments
+  - [ ] Survey Node options for HTTP/3/WebTransport:
+        - node-webtransport (status/compat), quiche bindings, nghttp3 wrappers; Undici/fetch do not support HTTP/3.
+  - [ ] Prototype a minimal "connect + GET /index.html" using selected approach, or shell out to curl as a bridge until adapter lands.
+  - [ ] Confirm that server responds to static asset fetch at `/index.html` using certs from YAML.
+  - [ ] Confirm WWATP route reachability at `/init/wwatp/` (status/sanity), even if full protocol not exercised yet.
+
+- Test harness hardening for real server
+  - [x] Update `system_real_server.test.js` to:
+    - Spawn server with cwd=repo root; stream stdout; wait for UDP bind readiness; robust teardown on failures.
+    - Pre-flight: when `WWATP_E2E=1`, run curl probe and assert response for `/index.html` using mTLS to validate TLS/QUIC.
+    - Gate full protocol assertions behind feature flag until adapter exists; otherwise, skip with actionable message.
+  - [ ] Parameterize port and cert paths via env to decouple from repository layout.
+  - [x] Add timeouts and diagnostics for flakes (port in use, missing files).
+
+- Operational checks and docs
+  - [ ] Add a small Node script or Make/CMake test target to run `--check-only` and the smoke startup as CI preflight for e2e.
+  - [ ] Verify `--help http3_server` and `--help backends` run without error and print usage (sanity for CLI wiring).
+  - [x] Document run instructions in `js_client_lib/README.md` for the real-server e2e path, including cert generation, env vars, and how to enable `WWATP_E2E=1`.
+
+- Post-research follow-up
+  - [ ] After completing the investigations and writing up results in `js_client_lib/README.md`, perform an audit to identify any missing JS coding tasks required for full integration (e.g., transport adapter gaps, response handling edge cases, env-driven configuration). Add those concrete tasks back into this TODO under the relevant sections with owners/priorities.
+
 
 How to run
 
@@ -417,7 +470,7 @@ Port the C++ SimpleBackend to support the Http3ClientBackend locally in the brow
 ---
 
 ## K. Session summary (context)
-Date: 2025-08-12
+Date: 2025-08-13
 
 What we analyzed
 - Tightened D.1 Http3ClientBackend behavior around static asset fetching and multi-chunk responses; validated transport routing and journaling cadence with the mock server.
@@ -428,17 +481,14 @@ Decisions
 - Treat non-WWATP static URLs via REQUEST_FINAL/RESPONSE_FINAL path carrying a TreeNode payload.
 
 Artifacts created/updated (this iteration)
-- js_client_lib/http3_client.js: Implemented requestStaticNodeData, RESPONSE_CONTINUE/FINAL handling, static asset response routing, and improved journal timing helpers.
-- js_client_lib/http3_client_updater.js: Ensured last-chunk signal tracking and passed logical time to setJournalRequestComplete.
-- js_client_lib/test/http3_client_static_asset.test.js: New test validating static asset flow over mock transport.
-- js_client_lib/test/system/server_mock.js: Added backend-diff journaling to synthesize notifications from authoritative state.
+- server/main.cpp: Accept .yaml path directly; pass `--check-only` through to avoid over-initialization.
+- common/frontend/wwatp_service_cpp/wwatp_service.{h,cpp}: Added YAML-string constructor with `test_only` flag.
+- js_client_lib/test/resources/wwatp_server_config.yaml: Fixed indentation and relative paths.
+- js_client_lib/test/system/system_real_server.test.js: Hardened daemon readiness (UDP bind), added curl mTLS probe with retries, increased timeouts.
+- js_client_lib/README.md: Documented real server e2e steps, mTLS, YAML CLI support, and readiness checks.
 
 Status updates
-- D.1 Http3ClientBackend core methods and response handling: implemented; tests pass.
-- D.1 journaling helpers: implemented; first poll fires immediately; logical time wired from updater.
-- D.1 requestStaticNodeData: implemented; static asset loaded into staticNode_ and local cache on FINAL.
-- D.1 processHTTP3Response: CONTINUE/FINAL and static asset paths implemented; remaining edge cases tracked.
-- D.2 Updater: maintain/dispatch/routing working; explicit journaling maps deferred as not required for current tests.
+- Group B readiness: server YAML CLI support landed; `--check-only` stabilized; tests reliably detect readiness; curl probe succeeds with mTLS; JS suite green locally with `WWATP_GEN_CERTS=1`.
 
 Notes / deferrals
 - Still pending: uniform handling for empty/signal-only responses; journal mutable page tree edge-case; optional server sync flags helpers.

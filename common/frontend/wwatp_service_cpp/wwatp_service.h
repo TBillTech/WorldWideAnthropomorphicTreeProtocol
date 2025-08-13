@@ -55,6 +55,8 @@ public:
      * This constructor automatically creates the config backend from YAML and initializes the service
      */
     WWATPService(std::string name, const std::string& yaml_config);
+    // Constructor with YAML configuration string and test_only flag
+    WWATPService(std::string name, const std::string& yaml_config, bool test_only);
 
     /**
      * Constructor with file path
