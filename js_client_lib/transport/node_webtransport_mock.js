@@ -41,21 +41,59 @@ export default class NodeWebTransportMock extends Communication {
         return true;
     }
 
-    async sendRequest(sid, request, data = null, _options = {}) {
+    async sendRequest(sid, request, data = null, options = {}) {
         if (!this._connected) throw new Error('Not connected');
         if (!this._mockHandler) throw new Error('No mock handler set');
+
+        const { timeoutMs = 0, signal } = options || {};
+        let aborted = false;
+        let timeoutId = null;
+        let abortReject = null;
+        const onAbort = () => {
+            aborted = true;
+            try { abortReject?.(new Error('Aborted')); } catch {}
+        };
+        if (signal) {
+            if (signal.aborted) onAbort();
+            else signal.addEventListener('abort', onAbort, { once: true });
+        }
+        if (timeoutMs && timeoutMs > 0) {
+            timeoutId = setTimeout(() => onAbort(), timeoutMs);
+        }
 
         // Simulate creation of a bidi stream and async write/close/read phases
         const body = data instanceof Uint8Array ? data : (data ? new Uint8Array(data) : new Uint8Array());
         // microtask tick to emulate network scheduling
         await Promise.resolve();
 
-        const respBytes = await this._mockHandler(request, body);
+        if (aborted) {
+            if (signal) try { signal.removeEventListener('abort', onAbort); } catch {}
+            if (timeoutId) clearTimeout(timeoutId);
+            const err = new Error('Aborted');
+            this._emitResponseEvent(sid, { type: 'error', ok: false, status: 0, error: err });
+            throw err;
+        }
+
+        const abortPromise = new Promise((_, rej) => { abortReject = rej; });
+        const handlerPromise = (async () => this._mockHandler(request, body))();
+        let respBytes;
+        try {
+            respBytes = await Promise.race([handlerPromise, abortPromise]);
+        } catch (err) {
+            if (signal) try { signal.removeEventListener('abort', onAbort); } catch {}
+            if (timeoutId) clearTimeout(timeoutId);
+            this._emitResponseEvent(sid, { type: 'error', ok: false, status: 0, error: err });
+            throw err;
+        }
 
         // Another microtask tick to emulate response propagation
         await Promise.resolve();
 
-        this._emitResponseEvent(sid, { type: 'response', ok: true, status: 200, data: respBytes });
-        return { ok: true, status: 200 };
+        if (signal) try { signal.removeEventListener('abort', onAbort); } catch {}
+        if (timeoutId) clearTimeout(timeoutId);
+
+        const payload = respBytes instanceof Uint8Array ? respBytes : (respBytes ? new Uint8Array(respBytes) : new Uint8Array());
+        this._emitResponseEvent(sid, { type: 'response', ok: true, status: 200, data: payload });
+        return { ok: true, status: 200, data: payload };
     }
 }

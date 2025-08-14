@@ -260,3 +260,16 @@ enable_testing()
 
 # Add tests
 add_test(NAME TreeBusTest COMMAND library_tester)
+
+# Optional: Build C-compatible QUIC client facade for Node bindings (FFI/N-API)
+option(BUILD_WWATP_QUIC_C "Build C facade shared lib for QuicConnector" ON)
+if(BUILD_WWATP_QUIC_C)
+    # Minimal stub implementation to get a shared library producing symbols. Replace with real wiring.
+    add_library(wwatp_quic_c SHARED
+        ${PROJECT_SOURCE_DIR}/common/transport/src/quic_connector_c.cc
+    )
+    target_include_directories(wwatp_quic_c PUBLIC ${PROJECT_SOURCE_DIR}/common/transport/include)
+    # Link against existing objects if needed later; keep stub self-contained for now.
+    # target_link_libraries(wwatp_quic_c PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES})
+    set_target_properties(wwatp_quic_c PROPERTIES OUTPUT_NAME "wwatp_quic")
+endif()

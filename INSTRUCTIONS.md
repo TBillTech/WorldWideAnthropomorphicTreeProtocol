@@ -8,7 +8,10 @@ Follow INSTRUCTIONS.md
 
 ## During this Session
 
-Focus: Section C.2 Node mock WebTransport. Complete C FFI investigation kickoff: add C facade header, plan CMake shared lib, and outline Node binding/POC.
+Focus: Finish C.2 Node mock + kick off C FFI Phase 2
+- C.2: finalize Node WebTransport mock semantics parity and wire it to the in-memory server mock for system tests.
+- C FFI (Phase 2): replace stub with real backing in `quic_connector_c.cc`, link to `QuicConnector`, and start a minimal Node binding (N-API preferred) with a POC test.
+Relevant TODO sections: `js_client_lib/TODO.md` → C.2 and C.2 Investigation bullets.
 
 Relevant `TODO.md` is under path: js_client_lib
 Relevant `README.md` is under path: js_client_lib

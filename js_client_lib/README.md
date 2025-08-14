@@ -141,14 +141,26 @@ Proposed C facade
   - `wwatp_quic_stream_close(stream)`
 
 Build integration (next)
-- Add a CMake target to build `libwwatp_quic.so` (or `.dylib`/`.dll`) exporting the C symbols above.
-- Ensure it links the existing QUIC client pieces and reuses YAML/TLS config akin to `QuicConnector`.
+- Added CMake option and stub shared lib target:
+	- Option: `BUILD_WWATP_QUIC_C` (ON by default)
+	- Target: `wwatp_quic_c` producing `libwwatp_quic.*` built from `common/transport/src/quic_connector_c.cc`
+	- Current implementation is a stub that echoes bytes and exists to validate binding/workflow. Replace with real `QuicConnector` wiring.
+- Next: link the target with QUIC client objects and implement real session/stream operations.
 - For Node, prefer loading via N-API addon that wraps this C API with async methods and one persistent connection per process.
 
 POC plan
 - Implement the `.cc` backing for the C header and a minimal Node binding.
 - Write a small Node test: open session to local server, open bidi stream to `/init/wwatp/`, write a minimal WWATP-framed request, read response, close.
 - Compare behavior vs `LibcurlTransport` in system_real_server tests.
+
+Build the C stub
+- From repo root:
+	- Configure and build as usual; the shared lib will be produced alongside other targets when `BUILD_WWATP_QUIC_C=ON` (default).
+	- Output name: `libwwatp_quic.so` on Linux under your build output directory.
+
+Load from Node (FFI sketch)
+- Using ffi-napi (future): load `libwwatp_quic` and bind the functions from `quic_connector_c.h`.
+- Prefer N-API for production: wrap the C API with async methods and reuse one session per process.
 
 Caveats
 - Same-connection requirement: ensure a single session is reused across requests to allow heartbeat-triggered flushes.

@@ -269,12 +269,13 @@ Goal: Provide a Node environment class with the same interface as the browser We
 
 - [x] Mock adapter shape
   - [x] Implement `node_webtransport_mock.js` that mirrors the WebTransport adapter surface and reuses Communication methods.
+  - [x] Ensure identical event/timing semantics as the browser adapter (request-per-bidi-stream model) including abort/timeout and full payload return.
   - [ ] Back the mock with an in-memory duplex transport that routes to the existing mock server used by system tests (`test/system/server_mock.js`).
-  - [ ] Ensure identical event/timing semantics as the browser adapter (request-per-bidi-stream model).
 - [ ] Investigation: C FFI to QuicConnector (optional alternative backend)
   - [x] Feasibility study started: defined a minimal C facade in `common/transport/include/quic_connector_c.h`.
-  - [ ] Implement C facade backing (`common/transport/src/quic_connector_c.cc`) linking existing `QuicConnector`.
-  - [ ] Build system: add CMake target producing `libwwatp_quic` shared library and install step for headers.
+  - [x] Added initial stub C facade implementation: `common/transport/src/quic_connector_c.cc` building a shared lib target `wwatp_quic_c` (output name `libwwatp_quic`). This stub echoes bytes and is intended only to validate binding/tooling.
+  - [ ] Replace stub with real backing that links `QuicConnector` and QUIC libs; export session/stream operations.
+  - [x] Build system: CMake option `BUILD_WWATP_QUIC_C` (default ON) produces the shared library; header is available under `common/transport/include/`.
   - [ ] Node binding: create `js_client_lib/transport/native_quic.js` that loads the shared lib via N-API addon or ffi-napi and exposes the Communication interface.
   - [ ] POC: single WWATP request over native QUIC, parity-check with `LibcurlTransport` system test.
   - [ ] Decision: choose N-API vs FFI for long-term based on complexity and performance.
