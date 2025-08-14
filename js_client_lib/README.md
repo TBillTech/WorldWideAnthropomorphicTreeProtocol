@@ -127,3 +127,19 @@ Notes
 - Run all tests: `npm test` from `js_client_lib`.
 - The mock server exercises the protocol framing over an in-memory transport and validates backend behaviors without QUIC.
 
+### Node WebTransport mock (for parity tests)
+
+When running in Node, you can use a WebTransport-shaped mock that behaves like the browser adapter but stays in-memory:
+
+- File: `transport/node_webtransport_mock.js` (exported as `NodeWebTransportMock` from `index.js`).
+- Purpose: Provide the same request-per-bidirectional-stream model and timing as the browser `WebTransportCommunication`, while reusing the in-memory WWATP mock server.
+- Usage (tests/dev):
+	- `const { NodeWebTransportMock } = await import('../index.js');`
+	- `const comm = new NodeWebTransportMock('mock://local');`
+	- `comm.setMockHandler(createWWATPHandler(serverBackend));`
+	- `await comm.connect();`
+	- Use with `Http3ClientBackendUpdater.maintainRequestHandlers(comm, ...)`.
+- Tests: `test/transport_node_webtransport_mock.test.js` and `test/system/system_node_webtransport_mock.test.js` cover unit and system flows.
+
+Note: This adapter is strictly a mock; for real HTTP/3 connectivity in Node, prefer `LibcurlTransport`.
+

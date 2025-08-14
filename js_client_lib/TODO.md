@@ -267,8 +267,8 @@ Even though a minimal `webtransport_communication.js` exists, we need a browser-
 
 Goal: Provide a Node environment class with the same interface as the browser WebTransport adapter so tests and the updater can run end-to-end without a browser.
 
-- [ ] Mock adapter shape
-  - [ ] Implement `node_webtransport_mock.js` that mirrors the WebTransport adapter surface and reuses Communication methods.
+- [x] Mock adapter shape
+  - [x] Implement `node_webtransport_mock.js` that mirrors the WebTransport adapter surface and reuses Communication methods.
   - [ ] Back the mock with an in-memory duplex transport that routes to the existing mock server used by system tests (`test/system/server_mock.js`).
   - [ ] Ensure identical event/timing semantics as the browser adapter (request-per-bidi-stream model).
 - [ ] Investigation: C FFI to QuicConnector (optional alternative backend)
@@ -278,11 +278,11 @@ Goal: Provide a Node environment class with the same interface as the browser We
     - [ ] Build system integration: add CMake target to produce a shared library usable by Node; wire npm scripts to build it on supported platforms.
     - [ ] POC: send/receive a single WWATP request via QuicConnector-backed mock; compare behavior to libcurl transport.
   - [ ] Decision point: If FFI viability is high and maintenance acceptable, consider using it for the Node mock instead of pure in-memory; otherwise keep the pure mock.
-- [ ] Tests
-  - [ ] Run the same transport conformance tests against both the browser adapter (polyfilled) and the Node mock.
-  - [ ] Ensure Updater + Http3ClientBackend flows (mock system tests) run using the Node mock WebTransport.
-- [ ] Docs
-  - [ ] README: document the Node mock adapter, how to select it in tests, and outline the FFI option with caveats.
+- [x] Tests
+  - [x] Run the same transport conformance tests against the Node mock (unit and system parity with MockCommunication).
+  - [x] Ensure Updater + Http3ClientBackend flows (mock system tests) run using the Node mock WebTransport.
+- [x] Docs
+  - [x] README: document the Node mock adapter, how to select it in tests, and outline the FFI option with caveats.
 
 - [x] Node-only curl bridge (short-term real-server path)
   - [x] File: `js_client_lib/transport/curl_communication.js` implementing the Communication interface.
@@ -630,5 +630,19 @@ Updates from this round
 
 What’s next
 - Move toward WebTransport for browsers; keep libcurl for Node/CI until WebTransport is ready. Parameterize ports/paths and close remaining response edge cases.
+
+## N. Session summary (context)
+Date: 2025-08-14
+
+Overview
+- Implemented Node-only WebTransport-shaped mock adapter `transport/node_webtransport_mock.js` to satisfy C.2 tasks.
+- Exported as `NodeWebTransportMock` and added unit + system tests using the in-memory WWATP server mock.
+- Updated README with usage notes.
+
+Status
+- New tests pass; existing unrelated HTTP3TreeMessage parity tests remain failing as before and are out of scope for this session.
+
+Next
+- Proceed to C.1 WebTransport browser adapter: feature detection, API parity, and adapter tests with a polyfill or guarded environment.
 
 

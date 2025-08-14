@@ -2,18 +2,13 @@
 
 Use this document to guide your work in this repository. Keep your responses short, concrete, and actionable.
 
+The user can invoke following these instructions by saying: 
+
+Follow INSTRUCTIONS.md
+
 ## During this Session
 
-Focus: Implement and test the browser WebTransport adapter and a Node mock with the same interface.
-
-- Add a browser-first WebTransport Communication adapter with capability detection and tests.
-- Add a Node mock WebTransport class compatible with the browser adapter; wire into mock system tests.
-- Investigate a C FFI to QuicConnector as an optional Node backing for the mock adapter.
-- Update README with browser usage notes and selection logic; keep Node-only adapters excluded from browser bundles.
-
-## During Previous Session
-
-We implemented the curl_communication and libcurl_transport, and verified minimal E2E tests against the real server.
+Focus: Work on the C.1 WebTransport browser adapter tasks in TODO.md (feature detection, API parity, chunk framing tests, error handling, docs).
 
 ## Before you start
 - Carefully read the nearest `TODO.md` for open tasks (check root and relevant subfolders).
@@ -47,8 +42,10 @@ We implemented the curl_communication and libcurl_transport, and verified minima
 
 ## After you Finish
 
+- If you made any code changes, ALWAYS run unit tests.
+- If there are ANY unit test failures, try hard to fix them all. If this seems too difficult consult with the user and get detailed about debugging.
 - If you made any code changes, update the TODO.md and check all completed tasks.
 - Update the session conversation summary at the end of TODO.md.
 - Update the README.md with any findings that appeared during the session which are worth remarking on.  Be sure to preserve any solutions to command line issues, so we don't have to repeat broken command lines in the future.
-- Update these `INSTRUCTIONS.md` by replacing the "During Previous Session" with "During this Session", and replace the "During this Session" with a concise and simple guess for the most reasonable next steps.
+- Update these `INSTRUCTIONS.md` by replacing the "During this Session" with a concise and simple guess for the most reasonable next steps.  This should usually direct the agent to the matching section in `TODO.md`.  If there is no matching section in `TODO.md`, instead add a warning.
 - Finally, commit all file changes.
