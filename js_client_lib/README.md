@@ -143,3 +143,23 @@ When running in Node, you can use a WebTransport-shaped mock that behaves like t
 
 Note: This adapter is strictly a mock; for real HTTP/3 connectivity in Node, prefer `LibcurlTransport`.
 
+## Browser WebTransport
+
+Feature detection and selection
+- Use `createTransportForUrl(url)` from `index.js` to pick the best browser transport at runtime.
+	- If `WebTransport` is available in a secure context, it returns a `WebTransportCommunication`.
+	- Otherwise, it falls back to `FetchCommunication` (non-streaming) to keep basic flows working.
+- You can force a choice by passing `{ preferred: 'webtransport' | 'fetch' }`.
+
+Abort/timeout
+- `WebTransportCommunication.sendRequest(sid, request, data, { timeoutMs, signal })` supports optional timeouts and `AbortSignal` to cancel in-flight requests.
+
+Chunk framing and WWATP
+- The adapter writes exactly the bytes you pass (pre-framed WWATP chunks) and assembles the full response payload before emitting a `response` event.
+- For truly streaming use-cases, extend the adapter to surface progressive reads via an additional callback or a readable stream.
+
+Troubleshooting
+- WebTransport requires a secure context (https or localhost) and a browser with the API enabled.
+- If `WebTransport` is undefined, ensure you're on Chrome/Edge recent versions and not in an insecure http page.
+- Server must advertise WebTransport/HTTP/3 and support datagrams/bidi streams; otherwise the transport will fail to establish.
+

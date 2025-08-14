@@ -8,10 +8,13 @@ Follow INSTRUCTIONS.md
 
 ## During this Session
 
-Focus: Work on the C.1 WebTransport browser adapter tasks in TODO.md (feature detection, API parity, chunk framing tests, error handling, docs).
+Focus: Continue with section D/E tasks in `js_client_lib/TODO.md` (Http3ClientBackend remaining response cases, blocking semantics), and add CI preflight for server readiness (section G).
+
+Relevant `TODO.md` is under path: js_client_lib
+Relevant `README.md` is under path: js_client_lib
 
 ## Before you start
-- Carefully read the nearest `TODO.md` for open tasks (check root and relevant subfolders).
+- Carefully read the relevant `TODO.md` for open tasks (check root and relevant subfolders).
 - Carefully read the relevant `README.md` (or `Readme.md`) for project details that aren’t obvious from code.
 - Skim top-level configs to infer stack and workflows (e.g., `CMakeLists.txt`, `package.json`, test configs).
 
@@ -22,7 +25,6 @@ Focus: Work on the C.1 WebTransport browser adapter tasks in TODO.md (feature de
 - Validate changes: build, run tests/linters, and report PASS/FAIL succinctly with key deltas only.
 - After ~3–5 tool calls or when editing >3 files, post a compact progress checkpoint (what changed, what’s next).
 - Use delta updates in conversation—avoid repeating unchanged plans.
-- When the current Session appears about wrapped up, always run the full unit test for what we are working on at the end.
 
 ## Prioritization
 - Prioritize items in `TODO.md` matching what we are working on during this session. If unclear, suggest small, high-impact fixes or docs/tests that clarify behavior, and get confirmation from the user.  Note that sometimes the task is to just update the `TODO.md` or add research findings to a `README.md`.

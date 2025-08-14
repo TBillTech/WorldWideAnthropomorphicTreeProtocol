@@ -248,20 +248,20 @@ Browser runtime constraints
 
 Even though a minimal `webtransport_communication.js` exists, we need a browser-first, fully exercised adapter with tests and feature detection. Tasks:
 
-- [ ] Feature detection and selection
-  - [ ] Export a small `createTransportForUrl(url)` that returns WebTransport adapter when available, else falls back (fetch/XHR or websocket when added).
-  - [ ] Gate WebTransport behind a capability probe and clear error messaging when not available (non-secure context or missing API).
-- [ ] API completeness vs Communication
-  - [ ] Verify `connectionId()`, `connect()`, `close()`, `sendRequest()` semantics match the Communication contract (Uint8Array in/out, one bidirectional stream per request).
-  - [ ] Add optional per-request options for timeouts and abort via `AbortSignal`.
-- [ ] Chunk framing compliance
-  - [ ] Confirm that `sendRequest()` transmits exact WWATP chunk-framed bytes and assembles the full response body; document streaming limitations if any.
-  - [ ] Add tests that run encoders -> adapter -> decoders using a mock server (in-memory) wired behind WebTransport when `WebTransport` is polyfilled in tests.
-- [ ] Error handling and edge cases
-  - [ ] Uniformly surface network/transport errors to the updater/backend; ensure pending resolvers are cleaned up.
-  - [ ] Handle empty/signal-only responses; ensure final resolution.
-- [ ] Docs
-  - [ ] README: add a "Browser WebTransport" section with capability detection and troubleshooting (secure context, flags for Chrome/Edge).
+- [x] Feature detection and selection
+  - [x] Export a small `createTransportForUrl(url)` that returns WebTransport adapter when available, else falls back (fetch/XHR or websocket when added).
+  - [x] Gate WebTransport behind a capability probe and clear error messaging when not available (non-secure context or missing API).
+- [x] API completeness vs Communication
+  - [x] Verify `connectionId()`, `connect()`, `close()`, `sendRequest()` semantics match the Communication contract (Uint8Array in/out, one bidirectional stream per request).
+  - [x] Add optional per-request options for timeouts and abort via `AbortSignal`.
+- [x] Chunk framing compliance
+  - [x] Confirm that `sendRequest()` transmits exact WWATP chunk-framed bytes and assembles the full response body; document streaming limitations if any.
+  - [x] Add tests that run encoders -> adapter -> decoders using a mock server (in-memory) wired behind WebTransport when `WebTransport` is polyfilled in tests.
+- [x] Error handling and edge cases
+  - [x] Uniformly surface network/transport errors to the updater/backend; ensure pending resolvers are cleaned up.
+  - [x] Handle empty/signal-only responses; ensure final resolution.
+- [x] Docs
+  - [x] README: add a "Browser WebTransport" section with capability detection and troubleshooting (secure context, flags for Chrome/Edge).
 
 ### C.2 Node mock WebTransport – plan and investigations
 
@@ -561,6 +561,12 @@ Update (later in session)
 
 Status updates
 - Real-server E2E path can run a minimal request over curl when enabled; suite continues to gate on WWATP_E2E and skips if curl/H3 is unavailable.
+
+Update (this session)
+- Implemented `createTransportForUrl()` with feature detection and fallback to Fetch.
+- Upgraded `WebTransportCommunication` with abort/timeout support and robust read/write handling.
+- Added tests: factory selection and WebTransport polyfill (echo + timeout).
+- Updated README with a new "Browser WebTransport" section.
 
 Notes / deferrals
 - Streaming/server-push not supported in curl bridge (by design).
