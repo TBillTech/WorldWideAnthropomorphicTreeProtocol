@@ -156,7 +156,7 @@ describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', (
     }
   }, 20000);
 
-  it('add animals + notes + test backend logically against server', async () => {
+  it('libcurl testBackendLogically', async () => {
     // Detect curl with HTTP/3 support
     const ver = child_process.spawnSync('bash', ['-lc', 'command -v curl >/dev/null 2>&1 && curl -V | head -n1 || echo "nocurl"'], { encoding: 'utf8' });
     const v = ver.stdout || '';
@@ -190,27 +190,196 @@ describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', (
         return;
       }
 
-      // Enqueue a full tree request and flush once
-      const promise = client.getFullTree();
-  await updater.maintainRequestHandlers(transport, 0);
+      // Seed the server with animals and a notes page tree using backend_testbed helpers
+      const {
+        createLionNodes,
+        createElephantNodes,
+        createParrotNodes,
+        createNotesPageTree,
+      } = await import('../backend_testbed/backend_testbed.js');
 
-      // Wait for response with a timeout
+      // Upsert animals (each as a vector of nodes); process network each time
+      const up1 = client.upsertNode(createLionNodes());
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([up1, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting lion')), 8000))])).toBe(true);
+
+      const up2 = client.upsertNode(createElephantNodes());
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([up2, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting elephant')), 8000))])).toBe(true);
+
+      const up3 = client.upsertNode(createParrotNodes());
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([up3, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting parrot')), 8000))])).toBe(true);
+
+      // Upsert notes page tree
+      const up4 = client.upsertNode([createNotesPageTree()]);
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([up4, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting notes page')), 8000))])).toBe(true);
+
+      // Fetch full tree to sync local cache
+      const fullP = client.getFullTree();
+      await updater.maintainRequestHandlers(transport, 0);
       const vec = await Promise.race([
-        promise,
-        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for server response')), 8000)),
+        fullP,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for full tree')), 8000)),
       ]);
-
-      // Require success
       expect(Array.isArray(vec)).toBe(true);
-      // vec may be empty, but must be an array if protocol works
-      if (Array.isArray(vec) && vec.length) {
-        const got = await local.queryNodes('/*');
-        expect(Array.isArray(got)).toBe(true);
-      }
+
+      // Now validate logically on the local SimpleBackend using BackendTestbed
+      const tbClient = new BackendTestbed(local, { shouldTestChanges: true });
+      tbClient.testBackendLogically('');
     } finally {
       killServer(server);
     }
   }, 20000);
+
+  it('test roundtrip', async () => {
+    // Detect curl with HTTP/3 support
+    const ver = child_process.spawnSync('bash', ['-lc', 'command -v curl >/dev/null 2>&1 && curl -V | head -n1 || echo "nocurl"'], { encoding: 'utf8' });
+    const v = ver.stdout || '';
+    if (!v || v.includes('nocurl') || !/HTTP\/?3|nghttp3|quiche/i.test(v)) {
+      return; // Skip if curl or HTTP/3 not available
+    }
+    if (!haveCerts() && !tryGenerateSelfSignedCerts()) {
+      return; // Skip if certs missing and cannot generate
+    }
+
+    // Ensure env for curl-based transports
+    process.env.WWATP_CERT = CERT_FILE;
+    process.env.WWATP_KEY = KEY_FILE;
+    process.env.WWATP_INSECURE = '1';
+
+    const server = await spawnServer();
+    try {
+      // One LibcurlTransport to reuse the same QUIC connection
+      let transport = null;
+      try {
+        const { LibcurlTransport } = await import('../../index.js');
+        transport = new LibcurlTransport();
+        await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
+      } catch (_e) {
+        return; // Skip if libcurl not present
+      }
+
+      // Updater and two clients to same URL
+      const updater = new Http3ClientBackendUpdater('roundtrip', '127.0.0.1', 12345);
+      const localA = new SimpleBackend();
+      const localB = new SimpleBackend();
+      const req = new Request({ scheme: 'https', authority: '127.0.0.1:12345', path: '/init/wwatp/' });
+      const clientA = updater.addBackend(localA, true, req, 60);
+      const clientB = updater.addBackend(localB, true, req, 60);
+
+      const { createLionNodes, createElephantNodes, createParrotNodes, createNotesPageTree } = await import('../backend_testbed/backend_testbed.js');
+
+      // Seed via client A
+      const up1 = clientA.upsertNode(createLionNodes());
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([up1, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting lion')), 8000))])).toBe(true);
+
+      const up2 = clientA.upsertNode(createElephantNodes());
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([up2, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting elephant')), 8000))])).toBe(true);
+
+      const up3 = clientA.upsertNode(createParrotNodes());
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([up3, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting parrot')), 8000))])).toBe(true);
+
+      const up4 = clientA.upsertNode([createNotesPageTree()]);
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([up4, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting notes page')), 8000))])).toBe(true);
+
+      // Sync client B's local cache
+      const fullP = clientB.getFullTree();
+      await updater.maintainRequestHandlers(transport, 0);
+      const vec = await Promise.race([
+        fullP,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for clientB full tree')), 8000)),
+      ]);
+      expect(Array.isArray(vec)).toBe(true);
+
+      // Validate logically on client B's backend
+      const tbB = new BackendTestbed(localB, { shouldTestChanges: true });
+      tbB.testBackendLogically('');
+    } finally {
+      killServer(server);
+    }
+  }, 25000);
+
+  it('test deleteElephant', async () => {
+    // Detect curl with HTTP/3 support
+    const ver = child_process.spawnSync('bash', ['-lc', 'command -v curl >/dev/null 2>&1 && curl -V | head -n1 || echo "nocurl"'], { encoding: 'utf8' });
+    const v = ver.stdout || '';
+    if (!v || v.includes('nocurl') || !/HTTP\/?3|nghttp3|quiche/i.test(v)) {
+      return; // Skip if curl or HTTP/3 not available
+    }
+    if (!haveCerts() && !tryGenerateSelfSignedCerts()) {
+      return; // Skip if certs missing and cannot generate
+    }
+
+    process.env.WWATP_CERT = CERT_FILE;
+    process.env.WWATP_KEY = KEY_FILE;
+    process.env.WWATP_INSECURE = '1';
+
+    const server = await spawnServer();
+    try {
+      let transport = null;
+      try {
+        const { LibcurlTransport } = await import('../../index.js');
+        transport = new LibcurlTransport();
+        await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
+      } catch (_e) {
+        return; // Skip if libcurl not present
+      }
+
+      const updater = new Http3ClientBackendUpdater('roundtrip-del', '127.0.0.1', 12345);
+      const localA = new SimpleBackend();
+      const localB = new SimpleBackend();
+      const req = new Request({ scheme: 'https', authority: '127.0.0.1:12345', path: '/init/wwatp/' });
+      const clientA = updater.addBackend(localA, true, req, 60);
+      const clientB = updater.addBackend(localB, true, req, 60);
+
+      const { createLionNodes, createElephantNodes, createParrotNodes, createNotesPageTree, checkMultipleDeletedNode } = await import('../backend_testbed/backend_testbed.js');
+
+      // Seed animals + notes via client A
+      const u1 = clientA.upsertNode(createLionNodes());
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([u1, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting lion')), 8000))])).toBe(true);
+
+      const u2 = clientA.upsertNode(createElephantNodes());
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([u2, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting elephant')), 8000))])).toBe(true);
+
+      const u3 = clientA.upsertNode(createParrotNodes());
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([u3, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting parrot')), 8000))])).toBe(true);
+
+      const u4 = clientA.upsertNode([createNotesPageTree()]);
+      await updater.maintainRequestHandlers(transport, 0);
+      expect(await Promise.race([u4, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting notes page')), 8000))])).toBe(true);
+
+      // Perform deletion on client A
+      const delP = clientA.deleteNode('elephant');
+      await updater.maintainRequestHandlers(transport, 0);
+      const delOk = await Promise.race([
+        delP,
+        new Promise((_, r) => setTimeout(() => r(new Error('timeout deleting elephant')), 8000)),
+      ]);
+      expect(!!delOk).toBe(true);
+
+      // Sync client B cache and verify deletion
+      const fullP = clientB.getFullTree();
+      await updater.maintainRequestHandlers(transport, 0);
+      await Promise.race([
+        fullP,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for clientB full tree')), 8000)),
+      ]);
+
+      // Ensure all elephant-related nodes are gone on B
+      checkMultipleDeletedNode(localB, createElephantNodes());
+    } finally {
+      killServer(server);
+    }
+  }, 25000);
 
   it('upsert a test node and fetch it back via curl bridge', async () => {
     // Detect curl with HTTP/3 support

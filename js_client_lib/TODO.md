@@ -156,7 +156,7 @@ Browser runtime constraints
    - [x] `collectAllNotes()`; `createNotesPageTree()`; `prefixNodeLabels(prefix, nodes)`
    - [x] `checkGetNode(backend, labelRule, expectedNode)`; `checkMultipleGetNode(backend, expectedNodes)`
    - [x] `checkDeletedNode(backend, labelRule)`; `checkMultipleDeletedNode(backend, expectedNodes)`
- - [ ] Implement `BackendTestbed` class for JS with methods analogous to C++:
+ - [x] Implement `BackendTestbed` class for JS with methods analogous to C++:
    - [x] constructor(backend, { shouldTestNotifications = true, shouldTestChanges = true })
    - [x] `addAnimalsToBackend()`; [x] `addNotesPageTree()`; [ ] `stressTestConstructions(count)`
    - [ ] `testAnimalNodesNoElephant(labelPrefix = "")`;
@@ -349,7 +349,7 @@ Decisions (updated)
   - [ ] Http3ClientBackend behavior: pending queue, blocking waits, journal rate-limiting, static node fetching, listener notifications
   - [x] Updater maintainRequestHandlers flow with a mock Communication
     - [x] Transport mock: stream identifier management, response handler routing
-- [ ] Minimal integration test: issue getFullTree or queryNodes over mock transport and observe localBackend updates.
+ - [x] Minimal integration test: issue getFullTree or queryNodes over mock transport and observe localBackend updates.
  - [x] Real-server smoke using curl bridge:
    - [x] When `WWATP_TRANSPORT=curl` and `WWATP_E2E=1`, instantiate Updater with curl transport and perform a minimal request (e.g., getFullTree or getNode) against `/init/wwatp/`; assert decode and local cache update.
    - [x] Skip with message if `curl --http3` is unavailable; provide hint to install a curl with HTTP/3.
@@ -390,7 +390,6 @@ Integration readiness and investigation tasks
   - [x] Ensure `test_instances/sandbox/` exists prior to startup; create if missing.
   - [x] Ensure `test_instances/data/cert.pem` and `test_instances/data/private_key.pem` exist; if absent, add a dev script/steps to generate a local self-signed cert/key pair for testing (do not commit secrets).
   - [x] Validate that the `frontends/http3_server/init/wwatp` route in YAML matches the Request path used by tests (`/init/wwatp/`).
-  - [ ] Document Windows launch parity (server.exe) and path separator caveats; prefer forward slashes in YAML.
   - [x] Document all of the above verification steps and any deviations or environment-specific notes in `js_client_lib/README.md`.
 
 - TLS provisioning for system_real_server.test.js
@@ -531,6 +530,13 @@ Open items (next steps)
 - Evaluate native WebTransport/HTTP/3 adapter for Node/browser and gradually replace curl bridge where feasible.
 - Close remaining response-handling edge cases; consider parameterizing real-server test ports and paths via env.
 
+Additional updates (late):
+- Refactored real-server test to use backend_testbed sequence (add animals, add notes, then logical checks) and renamed it to "libcurl testBackendLogically" to improve filtering reliability.
+- Added two new real-server tests using a single LibcurlTransport connection and two clients to the same URL:
+  - "test roundtrip": seed via client A; verify full logical state via client B with BackendTestbed.
+  - "test deleteElephant": seed via client A; delete 'elephant' via client A; sync client B and verify deletion with checkMultipleDeletedNode.
+- Verified both new tests execute and pass when WWATP_E2E=1 and node-libcurl (HTTP/3) is available; tests skip gracefully otherwise.
+
 ## L. Real-server integration plan (staged)
 
 Stage 1 — Curl bridge (Node-only)
@@ -575,6 +581,12 @@ Key steps
 - Verified that separate curl processes don’t share a QUIC connection, so heartbeats sent that way can’t flush.
 - Built a Node-only LibcurlTransport that reuses one HTTP/3 connection and opens new streams for follow-up heartbeats; switched WWATP tests to use it.
 - Kept curl CLI for static asset/health checks. Real-server tests pass end-to-end with LibcurlTransport.
+
+Updates from this round
+- Fixed the real-server parity test to actually use the backend_testbed sequence (add animals + add notes + logical checks) and renamed it to "libcurl testBackendLogically" to avoid grep issues with "+".
+- Added "test roundtrip" using two clients to validate round-trip state sync via getFullTree on client B.
+- Added "test deleteElephant" to validate delete propagation; asserts via checkMultipleDeletedNode on client B.
+- Confirmed these tests run and pass when node-libcurl HTTP/3 is available; otherwise they skip as designed under the E2E gate.
 
 What’s next
 - Move toward WebTransport for browsers; keep libcurl for Node/CI until WebTransport is ready. Parameterize ports/paths and close remaining response edge cases.
