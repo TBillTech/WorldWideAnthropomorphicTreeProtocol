@@ -11,6 +11,7 @@ export { default as createTransportForUrl, hasWebTransport, isSecureContextLike 
 export { default as CurlCommunication } from './transport/curl_communication.js';
 export { default as LibcurlTransport } from './transport/libcurl_transport.js';
 export { default as MockCommunication } from './transport/mock_communication.js';
+export { default as NativeQuic, tryLoadNativeQuic } from './transport/native_quic.js';
 export { Maybe, Just, Nothing, fromNullable } from './interface/maybe.js';
 export { Backend, Notification, SequentialNotification } from './interface/backend.js';
 export {

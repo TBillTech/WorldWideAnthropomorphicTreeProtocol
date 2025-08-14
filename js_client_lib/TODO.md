@@ -267,17 +267,17 @@ Even though a minimal `webtransport_communication.js` exists, we need a browser-
 
 Goal: Provide a Node environment class with the same interface as the browser WebTransport adapter so tests and the updater can run end-to-end without a browser.
 
-- [x] Mock adapter shape
+  - [x] Mock adapter shape
   - [x] Implement `node_webtransport_mock.js` that mirrors the WebTransport adapter surface and reuses Communication methods.
   - [x] Ensure identical event/timing semantics as the browser adapter (request-per-bidi-stream model) including abort/timeout and full payload return.
-  - [ ] Back the mock with an in-memory duplex transport that routes to the existing mock server used by system tests (`test/system/server_mock.js`).
+  - [x] Back the mock with an in-memory duplex transport that routes to the existing mock server used by system tests (`test/system/server_mock.js`).
 - [ ] Investigation: C FFI to QuicConnector (optional alternative backend)
   - [x] Feasibility study started: defined a minimal C facade in `common/transport/include/quic_connector_c.h`.
   - [x] Added initial stub C facade implementation: `common/transport/src/quic_connector_c.cc` building a shared lib target `wwatp_quic_c` (output name `libwwatp_quic`). This stub echoes bytes and is intended only to validate binding/tooling.
   - [ ] Replace stub with real backing that links `QuicConnector` and QUIC libs; export session/stream operations.
   - [x] Build system: CMake option `BUILD_WWATP_QUIC_C` (default ON) produces the shared library; header is available under `common/transport/include/`.
-  - [ ] Node binding: create `js_client_lib/transport/native_quic.js` that loads the shared lib via N-API addon or ffi-napi and exposes the Communication interface.
-  - [ ] POC: single WWATP request over native QUIC, parity-check with `LibcurlTransport` system test.
+  - [x] Node binding kickoff: created `js_client_lib/transport/native_quic.js` that loads the shared lib via ffi-napi and exposes minimal session/stream methods (POC only; not a full Communication yet).
+  - [ ] POC: single WWATP request over native QUIC, parity-check with `LibcurlTransport` system test once real wiring replaces echo stub.
   - [ ] Decision: choose N-API vs FFI for long-term based on complexity and performance.
 - [x] Tests
   - [x] Run the same transport conformance tests against the Node mock (unit and system parity with MockCommunication).

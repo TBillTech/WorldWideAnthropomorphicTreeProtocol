@@ -208,3 +208,23 @@ Troubleshooting
 - If `WebTransport` is undefined, ensure you're on Chrome/Edge recent versions and not in an insecure http page.
 - Server must advertise WebTransport/HTTP/3 and support datagrams/bidi streams; otherwise the transport will fail to establish.
 
+
+## Native QUIC (FFI) POC
+
+A minimal Node-only loader is provided to experiment with a native HTTP/3 client via the C facade:
+
+- Loader: `transport/native_quic.js` (exported as `NativeQuic` and `tryLoadNativeQuic`)
+- Library: built as `libwwatp_quic.*` under `build/` when `BUILD_WWATP_QUIC_C=ON` (default)
+- Usage:
+	- `const { NativeQuic } = await import('../index.js');`
+	- `const nq = NativeQuic(); // null if ffi modules or lib missing`
+	- `const sess = nq.createSession({ url: 'https://127.0.0.1:12345' });`
+	- `const st = nq.openBidiStream(sess, '/init/wwatp/');`
+	- `nq.write(st, new Uint8Array([1,2,3]), true);`
+	- `const out = nq.read(st);`
+	- `nq.closeStream(st); nq.closeSession(sess);`
+
+Notes
+- Current C implementation is a stub that echoes bytes. Replace with QuicConnector-backed logic to perform real HTTP/3.
+- The test `test/native_quic.test.js` auto-skips when prerequisites are not met.
+

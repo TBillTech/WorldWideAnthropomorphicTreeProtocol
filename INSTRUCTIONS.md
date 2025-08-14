@@ -4,14 +4,15 @@ Use this document to guide your work in this repository. Keep your responses sho
 
 The user can invoke following these instructions by saying: 
 
-Follow INSTRUCTIONS.md
+Follow instructions
 
 ## During this Session
 
-Focus: Finish C.2 Node mock + kick off C FFI Phase 2
-- C.2: finalize Node WebTransport mock semantics parity and wire it to the in-memory server mock for system tests.
-- C FFI (Phase 2): replace stub with real backing in `quic_connector_c.cc`, link to `QuicConnector`, and start a minimal Node binding (N-API preferred) with a POC test.
-Relevant TODO sections: `js_client_lib/TODO.md` → C.2 and C.2 Investigation bullets.
+Focus: Advance C FFI Phase 2 and basic native transport POC
+- Replace the echo stub in `common/transport/src/quic_connector_c.cc` with real `QuicConnector` wiring and link QUIC libs.
+- Extend `js_client_lib/transport/native_quic.js` toward a minimal Communication-like wrapper or an async API sufficient for one WWATP request.
+- Add a POC test that performs a simple WWATP request to local server via the native path and compare with `LibcurlTransport`.
+Relevant TODO sections: `js_client_lib/TODO.md` → C.2 Investigation bullets (Node binding + POC), and C++ wiring tasks.
 
 Relevant `TODO.md` is under path: js_client_lib
 Relevant `README.md` is under path: js_client_lib
