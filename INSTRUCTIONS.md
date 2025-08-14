@@ -8,7 +8,7 @@ Follow INSTRUCTIONS.md
 
 ## During this Session
 
-Focus: Continue with section D/E tasks in `js_client_lib/TODO.md` (Http3ClientBackend remaining response cases, blocking semantics), and add CI preflight for server readiness (section G).
+Focus: Section C.2 Node mock WebTransport. Complete C FFI investigation kickoff: add C facade header, plan CMake shared lib, and outline Node binding/POC.
 
 Relevant `TODO.md` is under path: js_client_lib
 Relevant `README.md` is under path: js_client_lib
@@ -49,5 +49,5 @@ Relevant `README.md` is under path: js_client_lib
 - If you made any code changes, update the TODO.md and check all completed tasks.
 - Update the session conversation summary at the end of TODO.md.
 - Update the README.md with any findings that appeared during the session which are worth remarking on.  Be sure to preserve any solutions to command line issues, so we don't have to repeat broken command lines in the future.
-- Update these `INSTRUCTIONS.md` by replacing the "During this Session" with a concise and simple guess for the most reasonable next steps.  This should usually direct the agent to the matching section in `TODO.md`.  If there is no matching section in `TODO.md`, instead add a warning.
+- Update these `INSTRUCTIONS.md` by replacing the "During this Session" with a concise and simple guess for the most reasonable next steps. This should usually direct the agent to the matching section in `TODO.md`. If there is no matching section in `TODO.md`, instead add a warning.
 - Finally, commit all file changes.

@@ -272,34 +272,19 @@ Goal: Provide a Node environment class with the same interface as the browser We
   - [ ] Back the mock with an in-memory duplex transport that routes to the existing mock server used by system tests (`test/system/server_mock.js`).
   - [ ] Ensure identical event/timing semantics as the browser adapter (request-per-bidi-stream model).
 - [ ] Investigation: C FFI to QuicConnector (optional alternative backend)
-  - [ ] Feasibility study: expose the C++ `QuicConnector` over a C-compatible FFI and bind from Node.
-    - [ ] Decide binding approach: N-API Addon (C++), node-ffi-napi (pure FFI), or node-addon-api.
-    - [ ] Define minimal C facade for: create_session(url, tls_opts), open_bidi_stream(), write(), read(), close().
-    - [ ] Build system integration: add CMake target to produce a shared library usable by Node; wire npm scripts to build it on supported platforms.
-    - [ ] POC: send/receive a single WWATP request via QuicConnector-backed mock; compare behavior to libcurl transport.
-  - [ ] Decision point: If FFI viability is high and maintenance acceptable, consider using it for the Node mock instead of pure in-memory; otherwise keep the pure mock.
+  - [x] Feasibility study started: defined a minimal C facade in `common/transport/include/quic_connector_c.h`.
+  - [ ] Implement C facade backing (`common/transport/src/quic_connector_c.cc`) linking existing `QuicConnector`.
+  - [ ] Build system: add CMake target producing `libwwatp_quic` shared library and install step for headers.
+  - [ ] Node binding: create `js_client_lib/transport/native_quic.js` that loads the shared lib via N-API addon or ffi-napi and exposes the Communication interface.
+  - [ ] POC: single WWATP request over native QUIC, parity-check with `LibcurlTransport` system test.
+  - [ ] Decision: choose N-API vs FFI for long-term based on complexity and performance.
 - [x] Tests
   - [x] Run the same transport conformance tests against the Node mock (unit and system parity with MockCommunication).
   - [x] Ensure Updater + Http3ClientBackend flows (mock system tests) run using the Node mock WebTransport.
 - [x] Docs
   - [x] README: document the Node mock adapter, how to select it in tests, and outline the FFI option with caveats.
 
-- [x] Node-only curl bridge (short-term real-server path)
-  - [x] File: `js_client_lib/transport/curl_communication.js` implementing the Communication interface.
-  - [x] Execute `curl --http3` per request (child_process) to POST WWATP chunk-framed bytes to `/init/wwatp/`; read binary response from stdout.
-  - [x] Map TLS options from env/per-request: `WWATP_CERT`, `WWATP_KEY`, `WWATP_CA`, `WWATP_INSECURE=1`.
-  - [x] Non-streaming only: treat responses as complete bodies (RESPONSE_FINAL); document limitation (no server push/streaming).
-  - [x] Select via env `WWATP_TRANSPORT=curl`; documented to avoid bundling into browsers.
-
-- [x] Node-only libcurl HTTP/3 transport (single-connection reuse)
-  - [x] File: `js_client_lib/transport/libcurl_transport.js` implementing the Communication interface.
-  - [x] Force HTTP/3 and reuse a single QUIC connection via node-libcurl; open new streams for follow-ups (e.g., heartbeats).
-  - [x] Map TLS options from env: `WWATP_CERT`, `WWATP_KEY`, `WWATP_CA`, `WWATP_INSECURE=1`.
-  - [x] Prefer in real-server tests; skip gracefully if `node-libcurl` is not installed.
-
-## D. HTTP3 client backend in JS
-
-1) Http3ClientBackend (`js_client_lib/http3_client.js`)
+- HTTP3ClientBackend (`js_client_lib/http3_client.js`)
 - [x] Class constructor signature mirrors C++:
   - constructor(localBackend, blockingMode, request, journalRequestsPerMinute = 0, staticNode = Nothing)
   - validations per C++ (staticNode with WWATP check, journaling with static node check)

@@ -122,6 +122,39 @@ Usage (tests/dev)
 Notes
 - This transport keeps a single HTTP/3 connection and is better aligned with server behavior that requires heartbeats on the same QUIC connection.
 
+## Node C FFI to QuicConnector (investigation)
+
+Goal
+- Expose the C++ QuicConnector over a small C-compatible facade and bind from Node for a native HTTP/3 client in tests/dev.
+
+Binding options
+- N-API addon (C/C++ via node-addon-api): best performance and control; requires building a Node addon.
+- ffi-napi/node-ffi-napi: pure FFI loading of a shared library; faster to prototype, but less ergonomic for async/streams.
+
+Proposed C facade
+- Header: `common/transport/include/quic_connector_c.h` (added this session)
+- Opaque handles and functions:
+  - `wwatp_quic_create_session(opts)` / `wwatp_quic_close_session(session)`
+  - `wwatp_quic_open_bidi_stream(session, path)`
+  - `wwatp_quic_stream_write(stream, data, len, end_stream)`
+  - `wwatp_quic_stream_read(stream, buf, buf_len, timeout_ms)`
+  - `wwatp_quic_stream_close(stream)`
+
+Build integration (next)
+- Add a CMake target to build `libwwatp_quic.so` (or `.dylib`/`.dll`) exporting the C symbols above.
+- Ensure it links the existing QUIC client pieces and reuses YAML/TLS config akin to `QuicConnector`.
+- For Node, prefer loading via N-API addon that wraps this C API with async methods and one persistent connection per process.
+
+POC plan
+- Implement the `.cc` backing for the C header and a minimal Node binding.
+- Write a small Node test: open session to local server, open bidi stream to `/init/wwatp/`, write a minimal WWATP-framed request, read response, close.
+- Compare behavior vs `LibcurlTransport` in system_real_server tests.
+
+Caveats
+- Same-connection requirement: ensure a single session is reused across requests to allow heartbeat-triggered flushes.
+- TLS: pass cert/key/CA paths via opts; allow `insecure_skip_verify` for local dev only.
+- CI: gate behind env and skip if library not built.
+
 ## Mock transport tests
 
 - Run all tests: `npm test` from `js_client_lib`.
