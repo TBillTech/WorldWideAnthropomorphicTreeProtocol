@@ -244,6 +244,46 @@ Browser runtime constraints
 - [x] Optional Node-only adapters kept out of browser bundle (e.g., `quic_communication.js`) guarded by environment.
 - [x] Provide a mock/in-memory transport for unit tests that exercises chunk framing.
 
+### C.1 WebTransport browser adapter – plan and tasks
+
+Even though a minimal `webtransport_communication.js` exists, we need a browser-first, fully exercised adapter with tests and feature detection. Tasks:
+
+- [ ] Feature detection and selection
+  - [ ] Export a small `createTransportForUrl(url)` that returns WebTransport adapter when available, else falls back (fetch/XHR or websocket when added).
+  - [ ] Gate WebTransport behind a capability probe and clear error messaging when not available (non-secure context or missing API).
+- [ ] API completeness vs Communication
+  - [ ] Verify `connectionId()`, `connect()`, `close()`, `sendRequest()` semantics match the Communication contract (Uint8Array in/out, one bidirectional stream per request).
+  - [ ] Add optional per-request options for timeouts and abort via `AbortSignal`.
+- [ ] Chunk framing compliance
+  - [ ] Confirm that `sendRequest()` transmits exact WWATP chunk-framed bytes and assembles the full response body; document streaming limitations if any.
+  - [ ] Add tests that run encoders -> adapter -> decoders using a mock server (in-memory) wired behind WebTransport when `WebTransport` is polyfilled in tests.
+- [ ] Error handling and edge cases
+  - [ ] Uniformly surface network/transport errors to the updater/backend; ensure pending resolvers are cleaned up.
+  - [ ] Handle empty/signal-only responses; ensure final resolution.
+- [ ] Docs
+  - [ ] README: add a "Browser WebTransport" section with capability detection and troubleshooting (secure context, flags for Chrome/Edge).
+
+### C.2 Node mock WebTransport – plan and investigations
+
+Goal: Provide a Node environment class with the same interface as the browser WebTransport adapter so tests and the updater can run end-to-end without a browser.
+
+- [ ] Mock adapter shape
+  - [ ] Implement `node_webtransport_mock.js` that mirrors the WebTransport adapter surface and reuses Communication methods.
+  - [ ] Back the mock with an in-memory duplex transport that routes to the existing mock server used by system tests (`test/system/server_mock.js`).
+  - [ ] Ensure identical event/timing semantics as the browser adapter (request-per-bidi-stream model).
+- [ ] Investigation: C FFI to QuicConnector (optional alternative backend)
+  - [ ] Feasibility study: expose the C++ `QuicConnector` over a C-compatible FFI and bind from Node.
+    - [ ] Decide binding approach: N-API Addon (C++), node-ffi-napi (pure FFI), or node-addon-api.
+    - [ ] Define minimal C facade for: create_session(url, tls_opts), open_bidi_stream(), write(), read(), close().
+    - [ ] Build system integration: add CMake target to produce a shared library usable by Node; wire npm scripts to build it on supported platforms.
+    - [ ] POC: send/receive a single WWATP request via QuicConnector-backed mock; compare behavior to libcurl transport.
+  - [ ] Decision point: If FFI viability is high and maintenance acceptable, consider using it for the Node mock instead of pure in-memory; otherwise keep the pure mock.
+- [ ] Tests
+  - [ ] Run the same transport conformance tests against both the browser adapter (polyfilled) and the Node mock.
+  - [ ] Ensure Updater + Http3ClientBackend flows (mock system tests) run using the Node mock WebTransport.
+- [ ] Docs
+  - [ ] README: document the Node mock adapter, how to select it in tests, and outline the FFI option with caveats.
+
 - [x] Node-only curl bridge (short-term real-server path)
   - [x] File: `js_client_lib/transport/curl_communication.js` implementing the Communication interface.
   - [x] Execute `curl --http3` per request (child_process) to POST WWATP chunk-framed bytes to `/init/wwatp/`; read binary response from stdout.

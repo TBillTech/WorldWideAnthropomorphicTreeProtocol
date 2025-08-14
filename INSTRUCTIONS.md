@@ -4,13 +4,16 @@ Use this document to guide your work in this repository. Keep your responses sho
 
 ## During this Session
 
-We are currently working on the js_client_lib, so look at the files under that directory.
+Focus: Implement and test the browser WebTransport adapter and a Node mock with the same interface.
 
-We need to add a section under transport abstraction in TODO.md to develop a module which implements the communication interface built on top of the WebTransport in the web browser.  In addition, we need a mock WebTransport class for running in Node (which uses the same interface as the one in the web browser).  We need tasks to investigate and determine how to implement the mock WebTransport class.  One option to look at is to create an c ffi for QuicConnector, and build the mock WebTransport on top of that.
+- Add a browser-first WebTransport Communication adapter with capability detection and tests.
+- Add a Node mock WebTransport class compatible with the browser adapter; wire into mock system tests.
+- Investigate a C FFI to QuicConnector as an optional Node backing for the mock adapter.
+- Update README with browser usage notes and selection logic; keep Node-only adapters excluded from browser bundles.
 
 ## During Previous Session
 
-We implemented the curl_communication, and verified it works with E2E tests.
+We implemented the curl_communication and libcurl_transport, and verified minimal E2E tests against the real server.
 
 ## Before you start
 - Carefully read the nearest `TODO.md` for open tasks (check root and relevant subfolders).
