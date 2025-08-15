@@ -271,14 +271,15 @@ Goal: Provide a Node environment class with the same interface as the browser We
   - [x] Implement `node_webtransport_mock.js` that mirrors the WebTransport adapter surface and reuses Communication methods.
   - [x] Ensure identical event/timing semantics as the browser adapter (request-per-bidi-stream model) including abort/timeout and full payload return.
   - [x] Back the mock with an in-memory duplex transport that routes to the existing mock server used by system tests (`test/system/server_mock.js`).
-- [ ] Investigation: C FFI to QuicConnector (optional alternative backend)
+- [ ] Investigation: Native Node addon to QuicConnector (optional alternative backend)
   - [x] Feasibility study started: defined a minimal C facade in `common/transport/include/quic_connector_c.h`.
-  - [x] Added initial stub C facade implementation: `common/transport/src/quic_connector_c.cc` building a shared lib target `wwatp_quic_c` (output name `libwwatp_quic`). This stub echoes bytes and is intended only to validate binding/tooling.
-  - [ ] Replace stub with real backing that links `QuicConnector` and QUIC libs; export session/stream operations.
+  - [x] Added initial stub C facade implementation: `common/transport/src/quic_connector_c.cc` building a shared lib target `wwatp_quic_c` (output name `libwwatp_quic`). This stub echoed bytes and validated binding/tooling.
+  - [x] Replace stub with real backing that links `QuicConnector` and QUIC libs; export session/stream operations (produces `build/libwwatp_quic.so`).
   - [x] Build system: CMake option `BUILD_WWATP_QUIC_C` (default ON) produces the shared library; header is available under `common/transport/include/`.
-  - [x] Node binding kickoff: created `js_client_lib/transport/native_quic.js` that loads the shared lib via ffi-napi and exposes minimal session/stream methods (POC only; not a full Communication yet).
-  - [ ] POC: single WWATP request over native QUIC, parity-check with `LibcurlTransport` system test once real wiring replaces echo stub.
-  - [ ] Decision: choose N-API vs FFI for long-term based on complexity and performance.
+  - [x] Node binding: implemented an N-API addon in `js_client_lib/native` (node-addon-api + node-gyp) that wraps the C facade: `createSession`, `closeSession`, `openBidiStream`, `write`, `read`, `closeStream`, `lastError`.
+  - [x] Loader: `js_client_lib/transport/native_quic.js` now loads the N-API addon only (FFI removed) and returns an addon-backed binding or `null` if absent.
+  - [x] POC: basic native QUIC session + bidirectional stream operations verified in tests; end-to-end WWATP request parity against LibcurlTransport remains optional follow-up.
+  - [x] Decision: standardize on N-API addon; remove ffi-napi/ref* dependencies and code.
 - [x] Tests
   - [x] Run the same transport conformance tests against the Node mock (unit and system parity with MockCommunication).
   - [x] Ensure Updater + Http3ClientBackend flows (mock system tests) run using the Node mock WebTransport.
@@ -601,40 +602,30 @@ If invoking from repo root, you can also run: `cd js_client_lib && npm test`
 
 
 ## M. Conversation summary (latest)
-Date: 2025-08-13
-
-Overview
-- Goal: reach the C++ WWATPService from JS, initially via a curl bridge, then a native HTTP/3 path; ensure message encoding matches C++ and handle the server’s heartbeat flush behavior.
-
-Key steps
-- Implemented curl-based transport that shells out to curl --http3 with mTLS; integrated into system tests (config, UDP bind, static probe, minimal WWATP flows).
-- Discovered server behavior: WWATP responses may flush only after heartbeats on the same QUIC connection; appending an inline heartbeat on the same stream didn’t unblock.
-- Implemented C++-parity chunk encoders/decoders in JS and aligned boolean responses to label-encoded "true"/"false".
-- Verified that separate curl processes don’t share a QUIC connection, so heartbeats sent that way can’t flush.
-- Built a Node-only LibcurlTransport that reuses one HTTP/3 connection and opens new streams for follow-up heartbeats; switched WWATP tests to use it.
-- Kept curl CLI for static asset/health checks. Real-server tests pass end-to-end with LibcurlTransport.
-
-Updates from this round
-- Fixed the real-server parity test to actually use the backend_testbed sequence (add animals + add notes + logical checks) and renamed it to "libcurl testBackendLogically" to avoid grep issues with "+".
-- Added "test roundtrip" using two clients to validate round-trip state sync via getFullTree on client B.
-- Added "test deleteElephant" to validate delete propagation; asserts via checkMultipleDeletedNode on client B.
-- Confirmed these tests run and pass when node-libcurl HTTP/3 is available; otherwise they skip as designed under the E2E gate.
-
-What’s next
-- Move toward WebTransport for browsers; keep libcurl for Node/CI until WebTransport is ready. Parameterize ports/paths and close remaining response edge cases.
-
-## N. Session summary (context)
 Date: 2025-08-14
 
 Overview
-- Implemented Node-only WebTransport-shaped mock adapter `transport/node_webtransport_mock.js` to satisfy C.2 tasks.
-- Exported as `NodeWebTransportMock` and added unit + system tests using the in-memory WWATP server mock.
-- Updated README with usage notes.
+- Goal: stabilize native QUIC integration for Node by replacing fragile FFI with a robust N-API addon, keep browser-first design elsewhere, and ensure tests pass end-to-end.
 
-Status
-- New tests pass; existing unrelated HTTP3TreeMessage parity tests remain failing as before and are out of scope for this session.
+Key steps
+- Implemented an N-API addon (`js_client_lib/native`) wrapping the C facade in `quic_connector_c.h`; linked against `build/libwwatp_quic.so` with correct rpath.
+- Updated loader `transport/native_quic.js` to prefer the addon exclusively and removed all ffi-napi/ref* code and dependencies.
+- Fixed addon path resolution and binding.gyp include/-L/rpath settings; validated exports and runtime loading.
+- Updated tests (`test/ffi_sanity.test.js`, `test/native_quic.test.js`) to use the addon only; added TLS options (cert/key or insecure flag) for session creation; tests pass when addon is built.
+- Retained existing LibcurlTransport real-server tests; addon covers native QUIC session/stream operations and is the foundation for future Node QUIC transport.
 
-Next
-- Proceed to C.1 WebTransport browser adapter: feature detection, API parity, and adapter tests with a polyfill or guarded environment.
+Decisions
+- Standardize on N-API addon for Node integration; drop ffi-napi entirely.
+- Keep browser-facing code free of Node-only APIs; continue WebTransport work in parallel.
+
+Artifacts updated
+- js_client_lib/transport/native_quic.js: addon-only loader.
+- js_client_lib/native/binding.gyp and src/addon.cc: addon build and exports.
+- js_client_lib/test/ffi_sanity.test.js and native_quic.test.js: addon-based tests with graceful skips if addon not built.
+- js_client_lib/package.json: removed ffi-napi/ref* deps; ensured node-addon-api/node-gyp present.
+
+What’s next
+- Optionally wire a Node QUIC transport class on top of the addon to mirror `Communication` and run the same conformance/system tests used by LibcurlTransport.
+- Integrate addon build into CI and document build prerequisites.
 
 

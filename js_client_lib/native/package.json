@@ -1,0 +1,9 @@
+{
+  "name": "wwatp-quic-native",
+  "private": true,
+  "gypfile": true,
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "rebuild": "node-gyp rebuild --verbose"
+  }
+}

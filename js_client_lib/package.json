@@ -40,6 +40,13 @@
     "vitest": "^3.0.0"
   },
   "optionalDependencies": {
-    "node-libcurl": "^4.1.0"
+    "ffi-napi": "^4.0.3",
+    "node-libcurl": "^4.1.0",
+    "ref-napi": "^3.0.3",
+    "ref-struct-napi": "^1.1.1"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.5.0",
+    "node-gyp": "^11.3.0"
   }
 }

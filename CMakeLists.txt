@@ -204,9 +204,26 @@ set_target_properties(nghttp3_lib PROPERTIES
 # autoreconf -i
 # ./configure PKG_CONFIG_PATH=$PWD/../nghttp3/lib \
 #     BORINGSSL_LIBS="-L$PWD/../boringssl/build/ssl -lssl -L$PWD/../boringssl/build/crypto -lcrypto" \
-#     BORINGSSL_CFLAGS="-I$PWD/../boringssl/include" \
+#     BORINGSSL_CFLAGS="-I$PWD/../boringssl/include"\
 #     --with-boringssl
 # make
+# And for the shared library libngtcp2_crypto_boringssl.so:
+# from repo root (or cd libraries/ngtcp2/crypto/boringssl first)
+# mkdir -p libraries/ngtcp2/crypto/boringssl/build
+# cd libraries/ngtcp2/crypto/boringssl/build
+
+# cmake .. \
+#   -DENABLE_SHARED_LIB=ON \
+#   -DENABLE_STATIC_LIB=OFF \
+#   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+#   -DBORINGSSL_INCLUDE_DIRS=/mnt/d/code/wwatp/libraries/boringssl/include \
+#   -DBORINGSSL_LIBRARIES="/mnt/d/code/wwatp/libraries/boringssl/build/libssl.a;/mnt/d/code/wwatp/libraries/boringssl/build/libcrypto.a"
+
+# # build the shared target (name is ngtcp2_crypto_boringssl)
+# make -j ngtcp2_crypto_boringssl
+
+# # optional: see the output
+# ls -l libngtcp2_crypto_boringssl.so* || ls -l .
 ExternalProject_Add(
     ngtcp2
     PREFIX ${PROJECT_SOURCE_DIR}/libraries/ngtcp2
@@ -226,6 +243,12 @@ set_target_properties(ngtcp2_lib PROPERTIES
 add_library(ngtcp2_crypto_lib STATIC IMPORTED)
 set_target_properties(ngtcp2_crypto_lib PROPERTIES
     IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/libngtcp2_crypto_boringssl.a
+)
+
+# Shared variant of ngtcp2 crypto glue (built in subdir with CMake)
+add_library(ngtcp2_crypto_boringssl_so SHARED IMPORTED)
+set_target_properties(ngtcp2_crypto_boringssl_so PROPERTIES
+    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/.build/libngtcp2_crypto_boringssl.so
 )
 
 include(FetchContent)
@@ -264,12 +287,19 @@ add_test(NAME TreeBusTest COMMAND library_tester)
 # Optional: Build C-compatible QUIC client facade for Node bindings (FFI/N-API)
 option(BUILD_WWATP_QUIC_C "Build C facade shared lib for QuicConnector" ON)
 if(BUILD_WWATP_QUIC_C)
-    # Minimal stub implementation to get a shared library producing symbols. Replace with real wiring.
-    add_library(wwatp_quic_c SHARED
+    # Build C facade shared library, linking to transport/client sources
+    add_library(wwatp_quic_c SHARED ${COMMON_SOURCES}
         ${PROJECT_SOURCE_DIR}/common/transport/src/quic_connector_c.cc
     )
-    target_include_directories(wwatp_quic_c PUBLIC ${PROJECT_SOURCE_DIR}/common/transport/include)
-    # Link against existing objects if needed later; keep stub self-contained for now.
-    # target_link_libraries(wwatp_quic_c PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES})
+    target_include_directories(wwatp_quic_c PUBLIC ${PROJECT_SOURCE_DIR}/common/transport/include ${Boost_INCLUDE_DIRS})
+    add_dependencies(wwatp_quic_c ngtcp2 nghttp3 boringssl)
+    # Prefer shared objects for ngtcp2/nghttp3 to satisfy -fPIC in shared lib
+    set(NGTCP2_SO ${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs/libngtcp2.so)
+    set(NGHTTP3_SO ${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs/libnghttp3.so)
+    target_link_libraries(wwatp_quic_c PRIVATE ${NGTCP2_SO} ${NGHTTP3_SO} ngtcp2_crypto_boringssl_so boringssl_lib boringcrypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
+    # Ensure PIC for any objects we compile into this shared library
+    set_target_properties(wwatp_quic_c PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    # Help the runtime linker find dependent .so during development
+    set_target_properties(wwatp_quic_c PROPERTIES BUILD_RPATH "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs;${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs;${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/.build")
     set_target_properties(wwatp_quic_c PROPERTIES OUTPUT_NAME "wwatp_quic")
 endif()

@@ -9,7 +9,7 @@ Follow instructions
 ## During this Session
 
 Focus: Advance C FFI Phase 2 and basic native transport POC
-- Replace the echo stub in `common/transport/src/quic_connector_c.cc` with real `QuicConnector` wiring and link QUIC libs.
+- Replace the echo stub in `common/transport/src/quic_connector_c.cc` with real `QuicConnector` wiring and link QUIC libs.  Don't forget to compile, but you can skip the c++ unit tests this time since they don't actually excersize quic_connector_c.cc .
 - Extend `js_client_lib/transport/native_quic.js` toward a minimal Communication-like wrapper or an async API sufficient for one WWATP request.
 - Add a POC test that performs a simple WWATP request to local server via the native path and compare with `LibcurlTransport`.
 Relevant TODO sections: `js_client_lib/TODO.md` → C.2 Investigation bullets (Node binding + POC), and C++ wiring tasks.
@@ -21,6 +21,7 @@ Relevant `README.md` is under path: js_client_lib
 - Carefully read the relevant `TODO.md` for open tasks (check root and relevant subfolders).
 - Carefully read the relevant `README.md` (or `Readme.md`) for project details that aren’t obvious from code.
 - Skim top-level configs to infer stack and workflows (e.g., `CMakeLists.txt`, `package.json`, test configs).
+- If you make C++ changes, feel free to reference CLAUDE.md
 
 ## How to work
 - Extract explicit requirements into a small checklist and keep it updated until done.
@@ -48,7 +49,7 @@ Relevant `README.md` is under path: js_client_lib
 
 ## After you Finish
 
-- If you made any code changes, ALWAYS run unit tests.
+- If you made any code changes, ALWAYS run unit tests.  For C++ see CLAUDE.md.
 - If there are ANY unit test failures, try hard to fix them all. If this seems too difficult consult with the user and get detailed about debugging.
 - If you made any code changes, update the TODO.md and check all completed tasks.
 - Update the session conversation summary at the end of TODO.md.

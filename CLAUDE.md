@@ -30,10 +30,10 @@ make -C build
 ```
 
 **Testing:**
-- Main test: `ctest` or `./build/library_tester` 
-- Unit tests: `./build/catch2_unit_tests` (uses Catch2 framework)
-- Backend tests: `./build/http3_client_backend_tester`
-- Memory tests: `./build/memory_pool_tester`
+- Third party library integration tests: `ctest` or `./build/library_tester` .  Success here is not always easy to determine for subtle QUIC protocol issues, but grep for "Goodbye Client" recieved by the client is a good rule of thumb and probably means success.
+- Unit tests: `./build/catch2_unit_tests` (uses Catch2 framework, success/fail outputs easy to understand)
+- Backend tests: `./build/http3_client_backend_tester` . Success if "All Tests Passed"
+- Memory tests: `./build/memory_pool_tester` . Ignore warning/error about out of memory.  Success if the test reports passing, and also confirm memory usage printout is about 1000 MB as expected from locking the memory.
 
 ## Architecture Overview
 
