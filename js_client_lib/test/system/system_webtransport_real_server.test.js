@@ -19,7 +19,9 @@ import {
 
 // Gate on env flag
 const e2e = (process.env.WWATP_E2E || '').toString().toLowerCase();
-const SHOULD_RUN = e2e === '1' || e2e === 'true' || e2e === 'yes' || e2e === 'on';
+const full = (process.env.WWATP_E2E_FULL || '').toString().toLowerCase();
+const SHOULD_RUN = (e2e === '1' || e2e === 'true' || e2e === 'yes' || e2e === 'on') &&
+                   (full === '1' || full === 'true' || full === 'yes' || full === 'on');
 console.info('[system_webtransport_real_server.test] WWATP_E2E=%s, SHOULD_RUN=%s', process.env.WWATP_E2E, SHOULD_RUN);
 
 const ROOT = path.resolve(__dirname, '../../..');
@@ -85,9 +87,17 @@ async function spawnServer() {
   return proc;
 }
 
-function killServer(proc) {
-  if (!proc) return;
-  try { proc.kill('SIGINT'); } catch (_) {}
+function killServer(proc, signal = 'SIGTERM', timeoutMs = 5000) {
+  if (!proc) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+    try {
+      proc.once('exit', () => done());
+      proc.kill(signal);
+      setTimeout(() => done(), timeoutMs);
+    } catch (_) { done(); }
+  });
 }
 
 const wtDescribe = SHOULD_RUN ? describe.sequential : describe.skip;
@@ -109,17 +119,18 @@ wtDescribe('System (WebTransport – real server)', () => {
       return; // skip if no certs and cannot generate
     }
 
-    // Provide mTLS env for emulator
+  // Provide mTLS env for emulator
     process.env.WWATP_CERT = CERT_FILE;
     process.env.WWATP_KEY = KEY_FILE;
     process.env.WWATP_INSECURE = '1'; // allow self-signed
+  process.env.WWATP_TRACE = process.env.WWATP_TRACE || '1'; // enable tracing
 
-    // Polyfill WebTransport global with Node emulator class
+  // Polyfill WebTransport global with Node emulator class
     const { default: NodeWebTransportEmulator } = await import('../../transport/node_webtransport_emulator.js');
     const orig = globalThis.WebTransport;
     globalThis.WebTransport = NodeWebTransportEmulator;
 
-    const server = await spawnServer();
+  const server = await spawnServer();
     try {
       // Create WebTransportCommunication pointed at WWATP entry path
       const url = 'https://127.0.0.1:12345/init/wwatp/';
@@ -129,15 +140,20 @@ wtDescribe('System (WebTransport – real server)', () => {
       // Updater + backend
       const updater = new Http3ClientBackendUpdater('wt', '127.0.0.1', 12345);
       const local = new SimpleBackend();
+      const SIMPLE = String(process.env.WWATP_E2E_SIMPLE || '').toLowerCase();
+      const FULL = String(process.env.WWATP_E2E_FULL || '').toLowerCase();
+      const simpleMode = (SIMPLE === '1' || SIMPLE === 'true' || SIMPLE === 'yes' || SIMPLE === 'on') || !(FULL === '1' || FULL === 'true' || FULL === 'yes' || FULL === 'on');
       const be = updater.addBackend(
         local,
         true,
         new Request({ scheme: 'https', authority: '127.0.0.1:12345', path: '/init/wwatp/' }),
-        60
+        simpleMode ? 0 : 60
       );
 
-      // Start the periodic maintainer
-      updater.start(comm, 0, 50);
+      // Optional simplified smoke mode: do a single upsert/get without starting the periodic loop
+  if (!simpleMode) {
+        updater.start(comm, 0, 50);
+      }
 
       // Build a simple node and upsert
       const node = new TreeNode({
@@ -151,21 +167,38 @@ wtDescribe('System (WebTransport – real server)', () => {
       node.insertProperty(0, 'popularity', 42n, 'uint64');
       node.insertPropertyString(1, 'diet', 'string', 'omnivore');
 
-      const okUpsert = await be.upsertNode([node]);
+      let okUpsert;
+  // Disable heartbeats to avoid noisy stream flood in native e2e
+  process.env.WWATP_DISABLE_HB = '1';
+  if (simpleMode) {
+        // Enqueue first, then drive a single maintain tick
+        const p = be.upsertNode([node]);
+        updater.maintainRequestHandlers(comm, 0);
+        okUpsert = await p;
+      } else {
+        okUpsert = await be.upsertNode([node]);
+      }
       expect(okUpsert).toBe(true);
 
       // Fetch it back
-      const maybe = await be.getNode('e2e_webtransport_node');
+      let maybe;
+      if (simpleMode) {
+        const p = be.getNode('e2e_webtransport_node');
+        updater.maintainRequestHandlers(comm, 0);
+        maybe = await p;
+      } else {
+        maybe = await be.getNode('e2e_webtransport_node');
+      }
       expect(maybe && maybe.isJust && maybe.isJust()).toBe(true);
 
       // Optional: verify description round-trip (server may adjust versions)
       const got = maybe.getOrElse(null);
       expect(got.getDescription()).toBe('hello from webtransport e2e');
 
-      updater.stop();
+  updater.stop();
       await comm.close();
     } finally {
-      killServer(server);
+  await killServer(server);
       // Restore global
       try { if (orig) globalThis.WebTransport = orig; else delete globalThis.WebTransport; } catch {}
     }

@@ -2,7 +2,9 @@
 // Mirrors the C++ Frontend-based updater: holds many Http3ClientBackend instances, acquires
 // stream identifiers per request, sends wire-encoded chunks, and routes responses back.
 
+/* eslint-env node */
 import Http3ClientBackend from './http3_client.js';
+import { tracer } from './transport/instrumentation.js';
 import { chunkFromWire, chunkToWire, WWATP_SIGNAL, decodeFromChunks, canDecodeChunks_MaybeTreeNode, canDecodeChunks_VectorTreeNode, can_decode_vec_sequential_notification, PayloadChunkHeader } from './interface/http3_tree_message_helpers.js';
 
 export default class Http3ClientBackendUpdater {
@@ -18,6 +20,8 @@ export default class Http3ClientBackendUpdater {
 
 		this._timer = null;
 		this._hbTimers = new Map(); // sidKey -> interval id for heartbeats
+		this._trace = tracer('Updater');
+		this._lastMaintainLogTs = 0; // wall-clock ms for throttling maintain.start logs
 	}
 
 	getName() { return `Http3ClientBackendUpdater_${this.name_}_${this.ipAddr_}_${this.port_}`; }
@@ -75,11 +79,22 @@ export default class Http3ClientBackendUpdater {
 	// Core: allocate streams for pending requests and periodic journal polls.
 	maintainRequestHandlers(connector, time = 0) {
 		this.lastTime_ = Number(time) || 0;
+		// Throttle noisy trace to at most once per second
+		try {
+			const now = Date.now();
+			if (!this._lastMaintainLogTs || (now - this._lastMaintainLogTs) >= 1000) {
+				this._lastMaintainLogTs = now;
+				this._trace.info('maintain.start', { time: this.lastTime_ });
+			}
+		} catch (_) {
+			// best-effort logging only
+		}
 
 		// 1) Flush normal pending requests
 		for (const backend of this.backends_) {
 			while (backend.hasNextRequest()) {
 				const msg = backend.popNextRequest();
+				this._trace.info('dispatch.request', { rid: msg.requestId, backend: backend.getName?.() });
 				this.#dispatchOne(connector, backend, msg, /*isJournal*/ false);
 			}
 		}
@@ -88,6 +103,7 @@ export default class Http3ClientBackendUpdater {
 		for (const backend of this.backends_) {
 			if (backend.needToSendJournalRequest(this.lastTime_)) {
 				const jmsg = backend.solicitJournalRequest();
+				this._trace.info('dispatch.journal', { rid: jmsg.requestId, backend: backend.getName?.() });
 				this.#dispatchOne(connector, backend, jmsg, /*isJournal*/ true);
 			}
 		}
@@ -99,6 +115,7 @@ export default class Http3ClientBackendUpdater {
 		const sid = connector.getNewRequestStreamIdentifier(request);
 		const sidKey = String(sid);
 		let finished = false;
+		this._trace.info('send.start', { sid, rid: msg.requestId, isJournal });
 
 		// Register response handler first to avoid races
 			const handleEvent = (evt) => {
@@ -237,17 +254,21 @@ export default class Http3ClientBackendUpdater {
 		// Fire request
 		try {
 			await connector.sendRequest(sid, request, wire);
+			this._trace.info('send.done', { sid, rid: msg.requestId });
 			// Start heartbeat loop for WWATP requests after initial send; server may only release
 			// results upon receiving a HEARTBEAT on a subsequent stream with the same logical request id.
-			if (typeof request.isWWATP === 'function' ? request.isWWATP() : String(request.path || '').includes('wwatp/')) {
+			const hbDisabled = (() => { try { const v = globalThis?.process?.env?.WWATP_DISABLE_HB; if (!v) return false; const s = String(v).toLowerCase(); return s === '1' || s === 'true' || s === 'yes' || s === 'on'; } catch { return false; } })();
+			if (!hbDisabled && (typeof request.isWWATP === 'function' ? request.isWWATP() : String(request.path || '').includes('wwatp/'))) {
 				const loop = async () => {
 					if (finished) {
 						const t = this._hbTimers.get(sidKey); if (t) clearInterval(t); this._hbTimers.delete(sidKey);
+						this._trace.info('hb.stop', { sid, rid: msg.requestId });
 						return;
 					}
 					// If original handler no longer present, stop
 					if (!connector.hasResponseHandler?.(sid)) {
 						const t = this._hbTimers.get(sidKey); if (t) clearInterval(t); this._hbTimers.delete(sidKey);
+						this._trace.info('hb.stop.missingHandler', { sid, rid: msg.requestId });
 						return;
 					}
 					try {
@@ -255,19 +276,24 @@ export default class Http3ClientBackendUpdater {
 						const hbWire = chunkToWire({ header: hbHeader, payload: new Uint8Array(0) });
 						const hbSid = connector.getNewRequestStreamIdentifier(request);
 						const r = await connector.sendRequest(hbSid, request, hbWire, { timeoutMs: 2000 });
+						this._trace.inc('hb.sent');
+						this._trace.info('hb.tick', { sid: hbSid, rid: msg.requestId, bytes: r?.data?.byteLength || 0 });
 						if (r && r.data instanceof Uint8Array && r.data.byteLength) {
 							// Feed returned bytes through the same handler logic
 							handleEvent({ data: r.data });
 						}
-					} catch (_) { /* ignore heartbeat errors */ }
+					} catch (e) { this._trace.warn('hb.error', { error: String(e && e.message || e) }); }
 				};
 				const id = setInterval(loop, 100);
 				this._hbTimers.set(sidKey, id);
+			} else if (hbDisabled) {
+				this._trace.info('hb.disabled', { sid, rid: msg.requestId });
 			}
-		} catch {
+		} catch (e) {
 			// On send error, clean up and reject waiter if any
 			try { connector.deregisterResponseHandler(sid); } catch (_) {}
 			this.ongoingRequests_.delete(sidKey);
+			this._trace.warn('send.error', { sid, rid: msg.requestId, error: String(e && e.message || e) });
 			// Attempt to resolve a waiting promise with failure via processHTTP3Response default path
 			try { backend.processHTTP3Response(msg); } catch (_) {}
 		}

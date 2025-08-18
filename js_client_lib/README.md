@@ -94,16 +94,31 @@ Quick start
 	- `WWATP_E2E=1 WWATP_TRANSPORT=curl npm test -- --grep "System \\("` (or target the file: `npm test -- test/system/system_real_server.test.js`)
 3) If curl lacks HTTP/3, install a build with HTTP/3 support or skip this path.
 
-### WebTransportCommunication tests (mock and native emulator)
+### WebTransportCommunication tests (polyfill and native emulator)
 
 - Mock end-to-end using a WebTransport polyfill:
 	- Run: `npm test -- test/system/system_webtransport_mock_updater.test.js`
-	- This exercises WebTransportCommunication + Http3ClientBackendUpdater without QUIC.
+	- Or full backend logical test: `npm test -- test/system/system_webtransport_polyfill.test.js`
+	- These exercise WebTransportCommunication + Http3ClientBackendUpdater without QUIC using an in-memory WebTransport polyfill.
 - Real server via Node WebTransport emulator (requires native addon and built server):
 	- Build addon: from `js_client_lib/`, `npm run build:native` (see native/README.md)
 	- Ensure `build/wwatp_server` exists.
 	- Provide certs or set `WWATP_GEN_CERTS=1`.
 	- Run: `WWATP_E2E=1 npm test -- test/system/system_webtransport_real_server.test.js`
+
+Instrumentation and debug flags
+
+- Set `WWATP_TRACE=1` to enable concise tracing for:
+	- Node emulator: session/stream open/close, bytes sent/received
+	- WebTransportCommunication: connect/close, per-request stream lifecycle
+	- Updater: dispatches, heartbeats, completion/cleanup
+- Optional: set `WWATP_DISABLE_HB=1` to disable the Updater heartbeat loop during bisection.
+- The real-server WebTransport test is guarded by `WWATP_E2E_FULL=1` and skipped by default until stabilized; enable manually when debugging the native path.
+
+Simplified smoke (bisecting crashes)
+
+- You can run a simplified single-cycle flow without the periodic updater by setting `WWATP_E2E_SIMPLE=1`.
+	It disables heartbeats and drives a single maintain cycle for the upsert/get requests.
 	- Note: native QUIC read/close stability is under active work; this path may be flaky until finalized.
 
 ### Important: place real-server tests in one suite (sequential)

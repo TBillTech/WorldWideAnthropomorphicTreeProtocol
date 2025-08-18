@@ -9,9 +9,9 @@ Follow instructions
 ## Next steps
 
 Focus: Work on unit tests under the E2E test using WebTransportCommunication with http3_client_backend_updater section in TODO.md.  Use the following approach:
-  1) Choose the next needed unit test, and implement it
-  2) Run that unit test, and debug and fix any problems.
-  3) Once the unit test is completely functional, then go back to step 1.
+  1) Turn all unit tests on, and don't skip any of them, and if any fail, pick up debugging there.
+  2) Choose the next needed unit test, and implement it.
+  3) Then go back to step 1.
 
 This will ensure that we troubleshoot the test progressively from simpler tests to more complex.
 

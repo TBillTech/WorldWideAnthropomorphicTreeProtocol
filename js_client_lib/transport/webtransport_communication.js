@@ -3,6 +3,7 @@
 // Note: WebTransport API availability varies; callers should feature-detect.
 
 import Communication from './communication.js';
+import { tracer } from './instrumentation.js';
 
 // Small helper to coerce various input types into async chunks for writing
 async function* toAsyncChunks(data) {
@@ -48,6 +49,7 @@ export default class WebTransportCommunication extends Communication {
         this.url = url;
         this.transport = null;
         this._cid = `webtransport:${url}`;
+    this._trace = tracer('WebTransportCommunication');
     }
 
     connectionId() {
@@ -55,20 +57,30 @@ export default class WebTransportCommunication extends Communication {
     }
 
     async connect() {
-    if (typeof WebTransport === 'undefined') {
+        if (typeof WebTransport === 'undefined') {
             throw new Error('WebTransport is not available in this environment');
         }
+        this._trace.info('connect.start', { url: this.url });
         this.transport = new WebTransport(this.url);
         await this.transport.ready;
         this._connected = true;
-    // closed is a Promise on the WebTransport instance
-    this.transport.closed.then(() => { this._connected = false; }).catch(() => { this._connected = false; });
+        // closed is a Promise on the WebTransport instance
+        this.transport.closed.then((ci) => {
+            this._connected = false;
+            this._trace.info('closed.resolve', { closeInfo: ci });
+        }).catch((e) => {
+            this._connected = false;
+            this._trace.warn('closed.reject', { error: String(e && e.message || e) });
+        });
+        this._trace.info('connect.ready');
         return true;
     }
 
     async close() {
         if (this.transport) {
+            this._trace.info('close.start');
             await this.transport.close();
+            this._trace.info('close.done');
         }
         this._connected = false;
         return true;
@@ -78,7 +90,9 @@ export default class WebTransportCommunication extends Communication {
         if (!this.transport) throw new Error('Not connected');
         const { timeoutMs = 0, signal } = options || {};
 
-        const bidi = await this.transport.createBidirectionalStream();
+    const bidi = await this.transport.createBidirectionalStream();
+    this._trace.inc('streams.open');
+    this._trace.info('stream.open', { sid });
         const writer = bidi.writable.getWriter();
         const reader = bidi.readable.getReader();
 
@@ -129,14 +143,18 @@ export default class WebTransportCommunication extends Communication {
             let off = 0;
             for (const c of chunks) { out.set(c, off); off += c.byteLength; }
             this._emitResponseEvent(sid, { type: 'response', ok: true, status: 200, data: out });
+            this._trace.info('stream.response', { sid, bytes: out.byteLength });
             return { ok: true, status: 200, data: out };
         } catch (err) {
             // Surface error; consumer may also rely on thrown error
             this._emitResponseEvent(sid, { type: 'error', ok: false, status: 0, error: err });
+            this._trace.warn('stream.error', { sid, error: String(err && err.message || err) });
             throw err;
         } finally {
             try { reader.releaseLock?.(); } catch {}
             try { writer.releaseLock?.(); } catch {}
+            this._trace.inc('streams.closed');
+            this._trace.info('stream.closed', { sid });
             if (signal) {
                 try { signal.removeEventListener('abort', onAbort); } catch {}
             }

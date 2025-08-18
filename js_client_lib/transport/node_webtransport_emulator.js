@@ -4,6 +4,7 @@
 // style adapters or direct use in Node tests. Single QUIC session per instance.
 
 import { tryLoadNativeQuic } from './native_quic.js';
+import { tracer } from './instrumentation.js';
 
 function parseUrl(u) {
   try {
@@ -39,6 +40,7 @@ export default class NodeWebTransportEmulator {
     this._reliability = 'reliable-only';
     this._congestionControl = options?.congestionControl || 'default';
   this._openStreams = new Set();
+  this._trace = tracer('NodeWebTransportEmulator');
 
     this.closed = new Promise((res, rej) => { this._closedResolve = res; this._closedReject = rej; });
     this.draining = new Promise((res) => { this._drainingResolve = res; });
@@ -71,7 +73,7 @@ export default class NodeWebTransportEmulator {
 
     // Lazy-create the QUIC session
     const initPromise = (async () => {
-      const nq = tryLoadNativeQuic();
+  const nq = tryLoadNativeQuic();
       if (!nq) throw new Error('Native QUIC addon not available');
       this._nq = nq;
       const opts = {
@@ -88,7 +90,9 @@ export default class NodeWebTransportEmulator {
       if (cert && key) { opts.cert_file = cert; opts.key_file = key; }
       if (ca) opts.ca_file = ca; else if (insecure) opts.insecure_skip_verify = true;
       // Create a single connection (session)
-      this._session = this._nq.createSession(opts);
+  this._trace.info('session.create', { url: opts.url });
+  this._session = this._nq.createSession(opts);
+  this._trace.info('session.ready');
       // If creation failed, createSession would have thrown.
     })();
     // Attach a catch to avoid unhandled rejection warnings, but keep ready as the original promise
@@ -109,6 +113,7 @@ export default class NodeWebTransportEmulator {
         this._openStreams.delete(st);
       }
       if (this._session && this._nq) {
+        this._trace.info('session.close');
         this._nq.closeSession(this._session);
       }
       this._session = null;
@@ -142,6 +147,10 @@ export default class NodeWebTransportEmulator {
   const st = this._nq.openBidiStream(this._session, path);
     if (!st) throw new Error('Failed to open bidirectional stream');
   this._openStreams.add(st);
+  this._trace.inc('streams.open');
+  // Avoid coercing native handle to primitive; just tag type safely
+  const safeTag = (x) => { try { return Object.prototype.toString.call(x); } catch { return undefined; } };
+  this._trace.info('stream.open', { idTag: safeTag(st), count: this._openStreams.size });
 
     const self = this;
     // Writer
@@ -154,12 +163,14 @@ export default class NodeWebTransportEmulator {
         const wrote = self._nq.write(st, u8, false);
         if (wrote < 0) throw new Error(`write failed: ${self._nq.lastError?.() || 'unknown'}`);
         self._bytesSent += wrote;
+        self._trace.inc('bytes.sent', wrote);
       },
       async close() {
         if (writerClosed) return;
         writerClosed = true;
         const wrote = self._nq.write(st, new Uint8Array(0), true);
         if (wrote < 0) throw new Error(`close(write FIN) failed: ${self._nq.lastError?.() || 'unknown'}`);
+        self._trace.info('stream.fin', { idTag: safeTag(st) });
       },
       async abort(_reason) {
         writerClosed = true;
@@ -167,6 +178,8 @@ export default class NodeWebTransportEmulator {
           streamClosed = true;
           try { self._nq.closeStream(st); } catch {}
           self._openStreams.delete(st);
+          self._trace.inc('streams.closed');
+          self._trace.info('stream.abort', { idTag: safeTag(st), count: self._openStreams.size });
         }
       },
       releaseLock() {},
@@ -183,9 +196,15 @@ export default class NodeWebTransportEmulator {
         const maxAttempts = 100; // ~2s at 20ms + 0ms read time
         for (let i = 0; i < maxAttempts; i++) {
           const out = self._nq.read(st, 65536, 50);
-          if (out instanceof Uint8Array && out.byteLength > 0) {
-            self._bytesReceived += out.byteLength;
-            return { value: out, done: false };
+          if (out instanceof Uint8Array) {
+            if (out.byteLength > 0) {
+              self._bytesReceived += out.byteLength;
+              self._trace.inc('bytes.recv', out.byteLength);
+              return { value: out, done: false };
+            }
+            // Zero-length indicates FIN/EOF
+            done = true;
+            return { value: undefined, done: true };
           }
           // Small delay before retrying
           await new Promise((r) => setTimeout(r, 20));
@@ -199,6 +218,8 @@ export default class NodeWebTransportEmulator {
           streamClosed = true;
           try { self._nq.closeStream(st); } catch {}
           self._openStreams.delete(st);
+          self._trace.inc('streams.closed');
+          self._trace.info('stream.cancel', { idTag: safeTag(st), count: self._openStreams.size });
         }
       },
       releaseLock() {},
