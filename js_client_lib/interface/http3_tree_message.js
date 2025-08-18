@@ -2,31 +2,22 @@
 // Minimal initial implementation covering core state and chunk handling.
 
 import {
-	SpanChunk,
-	PayloadChunkHeader,
-	SignalChunkHeader,
 	chunkToWire,
 	chunkFromWire,
 	encode_transaction,
-	decode_transaction,
 	encode_sequential_notification,
-	decode_sequential_notification,
-	encode_vec_sequential_notification,
-	decode_vec_sequential_notification,
 	encode_label,
-	decode_label,
 	encode_maybe_tree_node,
-	decode_maybe_tree_node,
 	encode_vec_tree_node,
+	decode_maybe_tree_node,
 	decode_vec_tree_node,
+	decode_vec_sequential_notification,
 	encodeToChunks,
 	decodeFromChunks,
 	WWATP_SIGNAL,
-	SIGNAL_TYPE,
 } from './http3_tree_message_helpers.js';
 
-import { Maybe, Nothing, Just } from './maybe.js';
-import { TreeNode } from './tree_node.js';
+import { Nothing, Just } from './maybe.js';
 
 export default class HTTP3TreeMessage {
 	constructor() {

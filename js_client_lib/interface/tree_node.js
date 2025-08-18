@@ -268,7 +268,6 @@ export class TreeNode {
 			const raw = this.propertyData.slice(offset, offset + span);
 			return [span, value, raw];
 		} else {
-			const header = this.propertyData.slice(offset, offset + 4);
 			const data = this.propertyData.slice(offset + 4, offset + span);
 			// Generic value for variable is Uint8Array; use getPropertyString for strings
 			return [span, data, data];
@@ -291,9 +290,9 @@ export class TreeNode {
 		if (!meta) throw new Error(`Property not found: ${name}`);
 		const { offset, span, variable } = meta;
 		if (!variable) throw new Error('Property is fixed-size; expected variable-size span');
-		const header = this.propertyData.slice(offset, offset + 4);
+		const _header = this.propertyData.slice(offset, offset + 4);
 		const data = this.propertyData.slice(offset + 4, offset + span);
-		return [span, header, data];
+		return [span, _header, data];
 	}
 
 	setPropertyValue(name, value, typeHint) {
@@ -556,7 +555,6 @@ function buildPropertiesWithChange(propertyInfos, propertyData, change) {
 
 	const out = new Uint8Array(newLen);
 	let off = 0;
-	const dvIn = new DataView(propertyData.buffer, propertyData.byteOffset, propertyData.byteLength);
 	const dvOut = new DataView(out.buffer, out.byteOffset, out.byteLength);
 
 	for (let i = 0; i < items.length; i++) {

@@ -26,7 +26,7 @@ describe('Http3ClientBackend static asset flow (non-WWATP path)', () => {
     const be = updater.addBackend(local, false, request, 0); // non-blocking mode
 
     // Prepare mock: reply with RESPONSE_FINAL containing a TreeNode for label 'static/root'
-    comm.setMockHandler((_req, data) => {
+    comm.setMockHandler((_req, _data) => {
       // data is ignored; we just return FINAL
       return buildStaticAssetFinalResponse({ labelRule: 'static/root' });
     });

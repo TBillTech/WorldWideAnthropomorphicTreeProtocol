@@ -13,7 +13,7 @@ export default function createWebTransportConnector(url, options = {}) {
       // eslint-disable-next-line no-undef
       return new WebTransport(url, options);
     }
-  } catch (e) {
+  } catch {
     // ignore feature detection errors
   }
   // Node path: provide emulator if addon available

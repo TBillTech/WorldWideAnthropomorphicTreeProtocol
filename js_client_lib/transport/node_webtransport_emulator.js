@@ -9,7 +9,7 @@ function parseUrl(u) {
   try {
     // eslint-disable-next-line no-undef
     return new URL(u);
-  } catch (e) {
+  } catch {
     throw new TypeError(`Invalid URL for WebTransport: ${u}`);
   }
 }
@@ -108,7 +108,7 @@ export default class NodeWebTransportEmulator {
       this._session = null;
       this._drainingResolve?.();
       this._closedResolve?.({ closeCode: closeInfo?.closeCode || 0, reason: closeInfo?.reason || '' });
-    } catch (e) {
+  } catch (e) {
       this._closedReject?.(e);
       throw e;
     }

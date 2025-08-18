@@ -8,13 +8,11 @@ import {
   decodeFromChunks,
   encodeToChunks,
   WWATP_SIGNAL,
-  encode_label,
   decode_label,
   encode_maybe_tree_node,
   decode_maybe_tree_node,
   encode_vec_tree_node,
   decode_vec_tree_node,
-  encode_sequential_notification,
   decode_sequential_notification,
   encode_vec_sequential_notification,
 } from '../../interface/http3_tree_message_helpers.js';

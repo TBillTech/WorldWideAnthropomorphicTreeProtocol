@@ -102,8 +102,8 @@ export default class Http3ClientBackendUpdater {
 
 		// Register response handler first to avoid races
 			const handleEvent = (evt) => {
+			let shouldCleanup = false;
 			try {
-				let shouldCleanup = false;
 				if (evt?.data instanceof Uint8Array) {
 					// Parse wire bytes into chunks
 					const bytes = evt.data;
@@ -264,7 +264,7 @@ export default class Http3ClientBackendUpdater {
 				const id = setInterval(loop, 100);
 				this._hbTimers.set(sidKey, id);
 			}
-		} catch (e) {
+		} catch {
 			// On send error, clean up and reject waiter if any
 			try { connector.deregisterResponseHandler(sid); } catch (_) {}
 			this.ongoingRequests_.delete(sidKey);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { WebTransportCommunication, StreamIdentifier, Request } from '../index.js';
+import { WebTransportCommunication, Request } from '../index.js';
 
 class FakeWebTransport {
   constructor(url) {
@@ -87,7 +87,7 @@ describe('WebTransportCommunication (polyfilled)', () => {
       let threw = false;
       try {
         await comm.sendRequest(sid, req, new Uint8Array([9,9,9]), { timeoutMs: 10, signal: ac.signal });
-      } catch (e) {
+      } catch (_) {
         threw = true;
       }
       expect(threw).toBe(true);

@@ -25,7 +25,7 @@ function tryLoadNativeAddon() {
   return null;
 }
 
-export function tryLoadNativeQuic(libPathOverride = null) {
+export function tryLoadNativeQuic() {
   // Only in Node
   if (typeof process === 'undefined' || !process.versions?.node) return null;
   // Prefer N-API addon if present

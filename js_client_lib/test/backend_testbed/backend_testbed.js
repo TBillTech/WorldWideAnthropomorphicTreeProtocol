@@ -213,7 +213,7 @@ export class BackendTestbed {
     }
 
     // Full tree round-trip
-    const fullTree = this.backend.getFullTree();
+  this.backend.getFullTree();
     // For round-trip, create a new backend and upsert all nodes
     // (Assume SimpleBackend is available in test file)
 

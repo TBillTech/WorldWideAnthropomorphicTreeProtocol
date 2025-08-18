@@ -2,15 +2,12 @@ import { describe, it, expect } from 'vitest';
 import HTTP3TreeMessage from '../interface/http3_tree_message.js';
 import {
   WWATP_SIGNAL,
-  encode_label,
   decode_label,
   encode_vec_tree_node,
   decode_vec_tree_node,
   encode_maybe_tree_node,
   decode_maybe_tree_node,
-  encode_transaction,
   decode_transaction,
-  encode_sequential_notification,
   decode_sequential_notification,
   encode_vec_sequential_notification,
   decodeFromChunks,
@@ -60,7 +57,6 @@ function messageCycleTest({
   decode_request_func,
   encode_response_func,
   decode_response_func,
-  request_signal,
   response_signal,
 }) {
   // Client encodes request
@@ -393,9 +389,8 @@ describe('HTTP3TreeMessage parity scaffolds (TODO)', () => {
       'Complex Animal QA sequence'
     );
     const simpleAnimal = createAnimalNode('Sponge', 'Bottom Feeder', [], { versionNumber: 1, maxVersionSequence: 1 }, [], [], '', '');
-    const emptiest_version = [Nothing, ['', Nothing]];
-    const nolabel_version = [Just(10), ['', Nothing]];
-    const emptier_version = [Nothing, ['/lion/cub_1', Nothing]];
+  const emptiest_version = [Nothing, ['', Nothing]];
+  const emptier_version = [Nothing, ['/lion/cub_1', Nothing]];
     const empty_version = [Just(0), ['/lion/cub_1', Nothing]];
 
     const simple_version = [Just(13), [simpleAnimal.getLabelRule(), Just(simpleAnimal)]];

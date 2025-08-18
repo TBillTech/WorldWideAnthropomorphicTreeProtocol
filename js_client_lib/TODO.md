@@ -54,29 +54,29 @@ Browser runtime constraints
   Goal: Provide a WebTransport-shaped emulator for Node that uses the native QUIC QuicConnector via the N-API addon, offering emulation of the browser WebTransport while paying attention to the QUIC session details such as heartbeats.
 
   WebTransport API parity (constructor, attributes, methods)
-  - [ ] Implement `new WebTransport(url, options)` with a compatible `WebTransportOptions` subset:
-    • options.allowPooling, requireUnreliable, protocols[]
-    • options.anticipatedConcurrentIncomingUnidirectionalStreams?, anticipatedConcurrentIncomingBidirectionalStreams?
-    • options.congestionControl ("default" | "throughput" | "low-latency") — accept but may be advisory only
-    • options.serverCertificateHashes (accept but may be no-op in Node path)
-  - [ ] Expose read-only attributes with correct lifecycles:
-    • `ready: Promise<void>` resolves when session established; rejects on failure
-    • `closed: Promise<WebTransportCloseInfo>` fulfills on graceful close or rejects on abrupt/failed init
-    • `draining: Promise<void>` resolves when session drained (map to session shutdown in addon)
-    • `datagrams: WebTransportDatagramDuplexStream` (see Datagrams section below)
-    • `incomingBidirectionalStreams: ReadableStream<WebTransportBidirectionalStream>`
-    • `incomingUnidirectionalStreams: ReadableStream<WebTransportReceiveStream>`
-    • `reliability: "pending" | "reliable-only" | "supports-unreliable"`
-    • `congestionControl: "default" | "throughput" | "low-latency"` (Report effective value)
-    • `protocol: string` (ALPN or application protocol; empty if unknown)
-  - [ ] Implement methods:
-    • `close(closeInfo?: { closeCode?: number; reason?: string })`: graceful termination semantics; map to addon session close
-    • `getStats(): Promise<WebTransportConnectionStats>` — provide at least bytesSent/Received, packetsSent/Received when available; otherwise reasonable zeros/nulls
-    • `exportKeyingMaterial(label: BufferSource, context?: BufferSource): Promise<ArrayBuffer>` — optional stub or throw NotSupported if addon lacks support
-    • `createBidirectionalStream(options?: WebTransportSendStreamOptions)` returns `WebTransportBidirectionalStream`
-    • `createUnidirectionalStream(options?: WebTransportSendStreamOptions)` returns `WebTransportSendStream`
-    • `createSendGroup()` returns `WebTransportSendGroup` (optional minimal stub sufficient for sendOrder grouping)
-    • Static: `WebTransport.supportsReliableOnly: boolean` (true if HTTP/2 fallback only; Node QUIC should set false)
+  - [X] Implement `new WebTransport(url, options)` with a compatible `WebTransportOptions` subset:
+    [X] options.allowPooling, requireUnreliable, protocols[]
+    [X] options.anticipatedConcurrentIncomingUnidirectionalStreams?, anticipatedConcurrentIncomingBidirectionalStreams?
+    [X] options.congestionControl ("default" | "throughput" | "low-latency") — accept but may be advisory only
+    [X] options.serverCertificateHashes (accept but may be no-op in Node path)
+  - [X] Expose read-only attributes with correct lifecycles:
+    [X] `ready: Promise<void>` resolves when session established; rejects on failure
+    [X] `closed: Promise<WebTransportCloseInfo>` fulfills on graceful close or rejects on abrupt/failed init
+    [X] `draining: Promise<void>` resolves when session drained (map to session shutdown in addon)
+    [X] `datagrams: WebTransportDatagramDuplexStream` (see Datagrams section below)
+    [X] `incomingBidirectionalStreams: ReadableStream<WebTransportBidirectionalStream>`
+    [X] `incomingUnidirectionalStreams: ReadableStream<WebTransportReceiveStream>`
+    [X] `reliability: "pending" | "reliable-only" | "supports-unreliable"`
+    [X] `congestionControl: "default" | "throughput" | "low-latency"` (Report effective value)
+    [X] `protocol: string` (ALPN or application protocol; empty if unknown)
+  - [X] Implement methods:
+    [X] `close(closeInfo?: { closeCode?: number; reason?: string })`: graceful termination semantics; map to addon session close
+    [X] `getStats(): Promise<WebTransportConnectionStats>` — provide at least bytesSent/Received, packetsSent/Received when available; otherwise reasonable zeros/nulls
+    [X] `exportKeyingMaterial(label: BufferSource, context?: BufferSource): Promise<ArrayBuffer>` — optional stub or throw NotSupported if addon lacks support
+    [X] `createBidirectionalStream(options?: WebTransportSendStreamOptions)` returns `WebTransportBidirectionalStream`
+    [X] `createUnidirectionalStream(options?: WebTransportSendStreamOptions)` returns `WebTransportSendStream`
+    [X] `createSendGroup()` returns `WebTransportSendGroup` (optional minimal stub sufficient for sendOrder grouping)
+    [X] Static: `WebTransport.supportsReliableOnly: boolean` (true if HTTP/2 fallback only; Node QUIC should set false)
 
   Streams (Readable/Writable conformance)
   - [ ] `WebTransportBidirectionalStream` exposes `.readable: WebTransportReceiveStream` and `.writable: WebTransportSendStream`.
@@ -88,10 +88,10 @@ Browser runtime constraints
 
   Datagrams
   - [ ] Implement `datagrams: WebTransportDatagramDuplexStream` with:
-    • `.readable: ReadableStream<Uint8Array>`
-    • `.createWritable(options?): WebTransportDatagramsWritable` and writer semantics
-    • Attributes: `maxDatagramSize`, `incomingMaxAge`, `outgoingMaxAge`, `incomingHighWaterMark`, `outgoingHighWaterMark`
-    • If QUIC DATAGRAM not supported by addon, expose the interface but either no-op or reject writes; set `reliability` accordingly.
+    [X] `.readable: ReadableStream<Uint8Array>`
+    [X] `.createWritable(options?): WebTransportDatagramsWritable` and writer semantics
+    [X] Attributes: `maxDatagramSize`, `incomingMaxAge`, `outgoingMaxAge`, `incomingHighWaterMark`, `outgoingHighWaterMark`
+    [X] If QUIC DATAGRAM not supported by addon, expose the interface but either no-op or reject writes; set `reliability` accordingly.
 
   Session model and heartbeats
   - [ ] Ensure a single QUIC connection (session) per `WebTransport` instance and reuse it for all streams; required so updater heartbeats arrive on the same connection.
@@ -135,7 +135,7 @@ Browser runtime constraints
   Implementation
   - [ ] Audit and finalize `transport/webtransport_communication.js` as the concrete BackendConnector for browsers (feature parity with curl adapter where applicable).
   - [ ] Implement a small factory for WebTransport connectors that selects between browser `WebTransport` and a Node adapter (from C.1) without changing call sites.
-    • File: `transport/create_webtransport_connector.js` (browser: `WebTransportCommunication`; node: `node_webtransport_mock.js` or native emulator when available).
+    [X] File: `transport/create_webtransport_connector.js` (browser: `WebTransportCommunication`; node: `node_webtransport_mock.js` or native emulator when available).
   - [ ] Add environment-driven selection: allow `WWATP_TRANSPORT=webtransport` (browser) and `WWATP_TRANSPORT=webtransport-native` (Node emulator) and wire through `index.js` export.
   - [ ] Error handling: map stream/session errors into thrown errors and `response` events with `{ ok:false, status:0, error }`.
   - [ ] Abort/timeout: ensure `sendRequest` cancels writes/reads and surfaces `AbortError`; add timeout behavior consistent across envs.
@@ -155,10 +155,10 @@ Browser runtime constraints
 
   Tests
   - [ ] Unit tests (browser-like via jsdom or WebTransport polyfill):
-    • sendRequest success round-trip emits `response` and returns `{ ok:true, status:200, data }`.
-    • AbortSignal cancels in-flight write/read and rejects with `AbortError`.
-    • Timeout triggers expected error path and cleanup.
-    • Concurrent requests route responses to the correct handlers.
+    [X] sendRequest success round-trip emits `response` and returns `{ ok:true, status:200, data }`.
+    [X] AbortSignal cancels in-flight write/read and rejects with `AbortError`.
+    [X] Timeout triggers expected error path and cleanup.
+    [X] Concurrent requests route responses to the correct handlers.
   - [ ] Node tests with `node_webtransport_mock.js`: mirror the above behaviors and validate parity with browser connector.
   - [ ] Integration with updater (mock server): end-to-end WWATP message encode->transport->decode using the connector; includes heartbeats loop behavior.
   - [ ] Real-server smoke (optional, guarded by `WWATP_E2E=1`): minimal `getFullTree` over the selected WebTransport (Node emulator path only for now); skip gracefully in CI if not available.

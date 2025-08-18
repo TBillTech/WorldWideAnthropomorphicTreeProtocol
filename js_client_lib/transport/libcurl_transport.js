@@ -6,15 +6,14 @@
 
 import Communication from './communication.js';
 
-let Curl, CurlMulti, CurlFeature, CurlHttpVersion, CurlHeader;
+let Curl, CurlMulti, CurlFeature, CurlHttpVersion;
 try {
   const lib = await import('node-libcurl');
   Curl = lib.Curl;
   CurlMulti = lib.CurlMulti;
   CurlFeature = lib.CurlFeature;
   CurlHttpVersion = lib.CurlHttpVersion || lib.CurlHttpVersion; // alias safety
-  CurlHeader = lib.CurlHeader;
-} catch (e) {
+} catch {
   throw new Error('node-libcurl is not installed. Install it in this workspace to use libcurl_transport.');
 }
 

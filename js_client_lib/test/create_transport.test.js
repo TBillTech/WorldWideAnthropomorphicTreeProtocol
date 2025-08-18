@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createTransportForUrl, hasWebTransport, isSecureContextLike, FetchCommunication } from '../index.js';
+import { createTransportForUrl, FetchCommunication } from '../index.js';
 
 describe('createTransportForUrl', () => {
   it('falls back to Fetch when WebTransport not available', () => {

@@ -47,8 +47,6 @@ function buildCurlArgs(url, method, hasBody) {
 // Parse `curl -i` output: headers+CRLFCRLF+body. Returns { status, headersText, bodyBytes }.
 function parseCurlHttpOutput(stdoutBytes) {
 	// Look for CRLFCRLF or LF LF separators
-	const CRLFCRLF = new Uint8Array([13, 10, 13, 10]);
-	const LFLF = new Uint8Array([10, 10]);
 	const u8 = new Uint8Array(stdoutBytes);
 	let sepIndex = -1;
 	// Search CRLFCRLF
@@ -138,7 +136,7 @@ export default class CurlCommunication extends Communication {
 					const parsed = parseCurlHttpOutput(stdout);
 					status = parsed.status || 0;
 					body = new Uint8Array(parsed.bodyBytes);
-				} catch (e) {
+				} catch {
 					// Fallback: deliver raw stdout as body
 					body = new Uint8Array(stdout);
 				}

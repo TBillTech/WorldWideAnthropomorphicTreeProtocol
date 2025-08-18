@@ -2,7 +2,7 @@
 
 Use this document to guide your work in this repository. Keep your responses short, concrete, and actionable.
 
-The user can invoke following these instructions by saying: 
+The user can invoke following these instructions, which means to perfectly follow the details under the Next steps section below by saying: 
 
 Follow instructions
 

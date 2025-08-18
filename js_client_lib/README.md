@@ -94,6 +94,12 @@ Quick start
 	- `WWATP_E2E=1 WWATP_TRANSPORT=curl npm test -- --grep "System \\("` (or target the file: `npm test -- test/system/system_real_server.test.js`)
 3) If curl lacks HTTP/3, install a build with HTTP/3 support or skip this path.
 
+### Important: place real-server tests in one suite (sequential)
+
+- To avoid port contention in IDEs (e.g., VS Code) that run tests in parallel, all tests that talk to the real WWATP service should live in `test/system/system_real_server.test.js`.
+- That file’s suite is explicitly marked sequential, so its sub-tests run in series and reuse the same port without conflicts.
+- Don’t scatter real-server tests across other files; consolidate them into this suite to benefit from sequential execution.
+
 Filtering specific tests (Vitest)
 - Filter by suite/test title: `npm test -- --grep "System \\("` (matches suite names too).
 - Filter by file: `npm test -- test/system/system_mock_transport.test.js`.

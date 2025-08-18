@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TreeNode, TreeNodeVersion } from '../interface/tree_node.js';
+import { TreeNode } from '../interface/tree_node.js';
 
 function makeNode() {
   const propertyInfos = [
@@ -26,12 +26,12 @@ function makeNode() {
 describe('TreeNode property layout', () => {
   it('reads values correctly', () => {
     const n = makeNode();
-    const [s1, mass] = n.getPropertyValue('mass');
+  const [s1, mass] = n.getPropertyValue('mass');
     expect(s1).toBe(8);
     expect(mass).toBeCloseTo(190.5, 5);
-    const [s2, str] = n.getPropertyString('notes');
+  const [, str] = n.getPropertyString('notes');
     expect(str).toBe('lion');
-    const [s3, id] = n.getPropertyValue('id');
+  const [, id] = n.getPropertyValue('id');
     expect(id).toBe(1234n);
   });
 
@@ -39,7 +39,7 @@ describe('TreeNode property layout', () => {
     const n = makeNode();
     n.setPropertyValue('mass', 200.25);
     n.setPropertyString('notes', 'alpha');
-    const [, mass] = n.getPropertyValue('mass');
+  const [, mass] = n.getPropertyValue('mass');
     expect(mass).toBeCloseTo(200.25, 5);
     const [, notes] = n.getPropertyString('notes');
     expect(notes).toBe('alpha');
@@ -51,7 +51,7 @@ describe('TreeNode property layout', () => {
     const [, alive] = n.getPropertyValue('alive');
     expect(alive).toBe(true);
     n.insertPropertyString(100, 'comment', 'string', 'roars');
-    const [, comment] = n.getPropertyString('comment');
+  const [, comment] = n.getPropertyString('comment');
     expect(comment).toBe('roars');
     n.deleteProperty('isKing');
     expect(() => n.getPropertyValue('isKing')).toThrow();

@@ -300,9 +300,7 @@ export function canDecodeChunks_long_string(startChunk, chunks) {
 	// We need to ensure at least 8 bytes exist starting at startChunk across chunk payloads
 	let need = 8;
 	let idx = startChunk;
-	let o = 0;
 	let len = 0n;
-	let haveLen = false;
 	// First, collect 8 bytes
 	const tmp = new Uint8Array(8);
 	let to = 0;
@@ -313,14 +311,10 @@ export function canDecodeChunks_long_string(startChunk, chunks) {
 		tmp.set(c.payload.slice(0, take), to);
 		to += take;
 		need -= take;
-		if (c.payload.byteLength > take) {
-			// remaining bytes in this chunk belong to string too
-		}
 		idx++;
 	}
 	if (need > 0) return null; // not enough for size yet
 	len = le64Decode(tmp, 0);
-	haveLen = true;
 	// Now ensure total bytes available across chunks cover 8 + len
 	const totalNeeded = 8n + len;
 	let available = 0n;
@@ -352,10 +346,6 @@ export function decodeChunks_long_string(startChunk, chunks) {
 }
 
 // TreeNode <-> C++ text format (hide_contents on encode)
-function maybeToText(m) {
-	if (!Maybe.isMaybe(m)) return `Just ${String(m)}`;
-	return m.isJust() ? `Just ${String(m.value)}` : 'Nothing';
-}
 function maybeStrToText(m) {
 	if (!Maybe.isMaybe(m)) return `Just ${String(m)}`;
 	return m.isJust() ? `Just ${String(m.value)}` : 'Nothing';

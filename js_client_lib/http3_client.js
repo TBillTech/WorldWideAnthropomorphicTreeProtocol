@@ -9,7 +9,6 @@ import { Backend } from './interface/backend.js';
 import { Maybe, Just, Nothing } from './interface/maybe.js';
 import HTTP3TreeMessage from './interface/http3_tree_message.js';
 import { WWATP_SIGNAL, encodeToChunks, decodeFromChunks, decode_maybe_tree_node, decode_tree_node } from './interface/http3_tree_message_helpers.js';
-import { TreeNode } from './interface/tree_node.js';
 import Request from './transport/request.js';
 
 let GLOBAL_REQUEST_ID = 1;
@@ -191,8 +190,7 @@ export default class Http3ClientBackend extends Backend {
 		const waiter = this.waits_.get(reqId);
 		const signal = http3TreeMessage.signal;
 		// Decode by signal family when no waiter type (e.g., journal in non-blocking)
-		let resolved = false;
-		const finish = (value) => { resolved = true; if (waiter) { this.waits_.delete(reqId); waiter.resolve(value); } };
+		const finish = (value) => { if (waiter) { this.waits_.delete(reqId); waiter.resolve(value); } };
 		const completeBool = () => {
 			const bytes = decodeFromChunks(http3TreeMessage.responseChunks);
 			const s = new TextDecoder('utf-8').decode(bytes).trim();

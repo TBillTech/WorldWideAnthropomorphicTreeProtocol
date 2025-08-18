@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { SimpleBackend, TreeNode, Just, Nothing, Maybe } from '../index.js';
+import { SimpleBackend, TreeNode, Just, Nothing } from '../index.js';
 
 function makeAnimal(label, desc = '') {
   return new TreeNode({ labelRule: label, description: desc, propertyInfos: [], propertyData: new Uint8Array(0), childNames: [] });

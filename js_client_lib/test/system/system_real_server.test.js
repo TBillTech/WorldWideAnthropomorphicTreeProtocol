@@ -13,7 +13,6 @@ import dgram from 'node:dgram';
 const e2e = (process.env.WWATP_E2E || '').toString().toLowerCase();
 const SHOULD_RUN = e2e === '1' || e2e === 'true' || e2e === 'yes' || e2e === 'on';
 // Diagnostics to confirm gating
-// eslint-disable-next-line no-console
 console.info('[system_real_server.test] WWATP_E2E=%s, SHOULD_RUN=%s', process.env.WWATP_E2E, SHOULD_RUN);
 const ROOT = path.resolve(__dirname, '../../..');
 const SERVER_BIN = path.join(ROOT, 'build', 'wwatp_server');
@@ -94,7 +93,9 @@ function killServer(proc) {
   try { proc.kill('SIGINT'); } catch (_) {}
 }
 
-describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', () => {
+// Force this suite to run sequentially (no parallel sub-tests) when enabled
+const realServerDescribe = SHOULD_RUN ? describe.sequential : describe.skip;
+realServerDescribe('System (real server) – integration readiness', () => {
   it('config --check-only validates server config', async () => {
     ensureSandboxAndDataDirs();
     // Optionally generate certs for convenience when enabled
@@ -146,8 +147,7 @@ describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', (
         await new Promise(r => setTimeout(r, 400));
       }
       // If still failing, surface diagnostics
-      // eslint-disable-next-line no-console
-      console.error('[curl-http3] status=%s, stdout=%s, stderr=%s', last.status, last.stdout, last.stderr);
+  console.error('[curl-http3] status=%s, stdout=%s, stderr=%s', last.status, last.stdout, last.stderr);
       const bytes = parseInt((last.stdout || '0').trim(), 10);
       expect(last.status).toBe(0);
       expect(Number.isFinite(bytes) && bytes > 0).toBe(true);
@@ -185,7 +185,7 @@ describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', (
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-      } catch (_e) {
+  } catch (_) {
         // Skip this WWATP flow if node-libcurl isn't installed or fails to init
         return;
       }
@@ -257,7 +257,7 @@ describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', (
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-      } catch (_e) {
+  } catch (_) {
         return; // Skip if libcurl not present
       }
 
@@ -327,7 +327,7 @@ describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', (
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-      } catch (_e) {
+  } catch (_) {
         return; // Skip if libcurl not present
       }
 
@@ -409,14 +409,14 @@ describe.skipIf(!SHOULD_RUN)('System (real server) – integration readiness', (
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-      } catch (_e) {
+  } catch (_) {
         return; // skip if libcurl not present
       }
 
       // Construct a minimal test node under a unique prefix to avoid conflicts
       const ts = Date.now() & 0xffff;
       const label = `e2e_js/${ts}`;
-      const { TreeNode, TreeNodeVersion, Just } = await import('../../index.js');
+  const { TreeNode, TreeNodeVersion } = await import('../../index.js');
       const node = new TreeNode({
         labelRule: label,
         description: 'e2e test node',

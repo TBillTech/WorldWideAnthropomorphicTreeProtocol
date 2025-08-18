@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Maybe, Just, Nothing, fromNullable } from '../index.js';
+import { Just, Nothing, fromNullable } from '../index.js';
 
 describe('Maybe', () => {
   it('constructs Just and Nothing', () => {

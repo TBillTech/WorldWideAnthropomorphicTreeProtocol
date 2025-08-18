@@ -58,7 +58,6 @@ describe('NativeQuic (FFI POC)', () => {
   it('addon is present or test is skipped', () => {
     const ap = path.join(ROOT, 'js_client_lib', 'native', 'build', 'Release', 'wwatp_quic_native.node');
     if (!fs.existsSync(ap)) {
-      // eslint-disable-next-line no-console
       console.warn(`[native_quic.test] addon not built at ${ap}; skipping.`);
       expect(true).toBe(true);
       return;

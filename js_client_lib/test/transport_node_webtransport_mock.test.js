@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { StreamIdentifier, Request, NodeWebTransportMock } from '../index.js';
+import { Request, NodeWebTransportMock } from '../index.js';
 
 describe('NodeWebTransportMock', () => {
   it('connects, routes response, and preserves connectionId', async () => {

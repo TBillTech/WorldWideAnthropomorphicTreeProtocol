@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TreeNodeVersion, Maybe, Just, Nothing } from '../interface/tree_node.js';
+import { TreeNodeVersion } from '../interface/tree_node.js';
 
 describe('TreeNodeVersion', () => {
   it('defaults and isDefault', () => {

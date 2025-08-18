@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   SIGNAL_TYPE,
   WWATP_SIGNAL,
-  NoChunkHeader,
   SignalChunkHeader,
   PayloadChunkHeader,
   SpanChunk,

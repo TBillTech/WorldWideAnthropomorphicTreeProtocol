@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { MockCommunication, Request, SimpleBackend, Http3ClientBackendUpdater, HTTP3TreeMessage, Http3Helpers, Maybe, Just, Nothing } from '../index.js';
+import { MockCommunication, Request, SimpleBackend, Http3ClientBackendUpdater, HTTP3TreeMessage, Http3Helpers } from '../index.js';
 
 const { WWATP_SIGNAL, encodeToChunks, chunkToWire } = Http3Helpers;
 
-function buildResponseForGetNode(requestBytes) {
+function buildResponseForGetNode(_requestBytes) {
   // Decode request bytes minimally to extract requestId and produce a Maybe<TreeNode> with a simple JSON payload
   // Our HTTP3TreeMessage encodes request as chunks; here, we don't strictly decode. We'll accept any input and craft a response for a fixed node.
   // Build a minimal TreeNode JSON consistent with helpers: we can echo an empty Maybe (Nothing) for simplicity.

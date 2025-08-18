@@ -18,7 +18,6 @@ describe('napi addon: load and export symbols', () => {
   it('requires the addon and exposes expected functions', async () => {
     const ap = addonPath();
     if (!fs.existsSync(ap)) {
-      // eslint-disable-next-line no-console
       console.warn(`[ffi_sanity.test] addon not built at ${ap}; skipping (run: cd js_client_lib/native && npm run build)`);
       expect(true).toBe(true);
       return;
@@ -36,7 +35,6 @@ describe('napi addon: loader prefers addon over FFI', () => {
   it('tryLoadNativeQuic returns addon binding', async () => {
     const ap = addonPath();
     if (!fs.existsSync(ap)) {
-      // eslint-disable-next-line no-console
       console.warn('[ffi_sanity.test] addon not built; skipping loader preference check.');
       expect(true).toBe(true);
       return;

@@ -49,8 +49,8 @@ describe('System (mock transport) – end-to-end', () => {
     const localA = new SimpleBackend();
     const localB = new SimpleBackend();
     const req = new Request({ path: '/api/wwatp' });
-    const A = updater.addBackend(localA, true, req, 120);
-    const B = updater.addBackend(localB, true, req, 120);
+  const A = updater.addBackend(localA, true, req, 120);
+  updater.addBackend(localB, true, req, 120);
 
     const maintain = async () => { await updater.maintainRequestHandlers(comm, 0); };
 
@@ -62,9 +62,7 @@ describe('System (mock transport) – end-to-end', () => {
     await maintain();
 
     // From B: create lion nodes on the server
-    const tbTmp = new BackendTestbed({
-      upsertNode: (nodes) => serverBackend.upsertNode(nodes),
-    });
+  // Temporary testbed was unused in this test; remove
     // Reuse helper to create lion nodes only
     const { createLionNodes } = await import('../backend_testbed/backend_testbed.js');
     serverBackend.upsertNode(createLionNodes());

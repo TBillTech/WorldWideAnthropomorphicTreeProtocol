@@ -1,14 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Just, Nothing } from '../interface/maybe.js';
-import {
-  TreeNode,
-  prefixNewNodeVersionLabels,
-  shortenNewNodeVersionLabels,
-  prefixSubTransactionLabels,
-  shortenSubTransactionLabels,
-  prefixTransactionLabels,
-  shortenTransactionLabels,
-} from '../interface/tree_node.js';
+import { prefixNewNodeVersionLabels, shortenNewNodeVersionLabels, prefixTransactionLabels, shortenTransactionLabels, TreeNode } from '../interface/tree_node.js';
 
 describe('Transaction label helpers', () => {
   it('prefix/shorten for NewNodeVersion', () => {
