@@ -6,13 +6,11 @@ The user can invoke following these instructions by saying:
 
 Follow instructions
 
-## During this Session
+## Next steps
 
-Focus: Advance C FFI Phase 2 and basic native transport POC
-- Replace the echo stub in `common/transport/src/quic_connector_c.cc` with real `QuicConnector` wiring and link QUIC libs.  Don't forget to compile, but you can skip the c++ unit tests this time since they don't actually excersize quic_connector_c.cc .
-- Extend `js_client_lib/transport/native_quic.js` toward a minimal Communication-like wrapper or an async API sufficient for one WWATP request.
-- Add a POC test that performs a simple WWATP request to local server via the native path and compare with `LibcurlTransport`.
-Relevant TODO sections: `js_client_lib/TODO.md` → C.2 Investigation bullets (Node binding + POC), and C++ wiring tasks.
+- Work from `js_client_lib/TODO.md – Compact TODO (open items only)`.
+- Prioritize the "Transport – Node WebTransport mock (native QUIC)" section to finish the adapter over the N-API addon and add tests.
+- For docs, refer to `js_client_lib/README.md` → "Node C Gyp QuicConnector Module" and `js_client_lib/native/README.md` for build/run details.
 
 Relevant `TODO.md` is under path: js_client_lib
 Relevant `README.md` is under path: js_client_lib

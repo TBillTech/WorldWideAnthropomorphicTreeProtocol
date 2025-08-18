@@ -26,6 +26,19 @@ Generating dev TLS certs
 - Set `WWATP_GEN_CERTS=1` when running tests to auto-generate self-signed certs for localhost if missing.
 - The test will create `test_instances/data/cert.pem` and `test_instances/data/private_key.pem` using OpenSSL.
 
+How to run tests
+
+- Run mock system tests (default): from `js_client_lib`, run `npm test`.
+- Run only system tests (mock):
+  - By file: `npm test -- test/system/system_mock_transport.test.js`
+  - By suite title (grep): `npm test -- --grep "System \\("` or `npm test -- --grep "System \\(mock transport\)"`
+- Run real server e2e (after building server and enabling QUIC transport): set `WWATP_E2E=1` and run tests. Ensure `build/wwatp_server` exists and certificates under `test_instances/data` are present.
+  - By file: `npm test -- test/system/system_real_server.test.js`
+  - By suite title (grep): `npm test -- --grep "System \\(real server\)"`
+  - With curl bridge: `WWATP_TRANSPORT=curl npm test -- --grep "System \\(real server\)"`
+  - Run a single test by exact name with -t (append file for reliability):
+    - `npm test -- -t "server starts, binds UDP port, and stops cleanly (smoke)" test/system/system_real_server.test.js`
+
 Run readiness tests
 - From `js_client_lib`:
 	- Enable Group B tests: set `WWATP_E2E=1`.
@@ -37,6 +50,7 @@ Run readiness tests
 		2) Smoke start/stop: launch server, wait for UDP QUIC port bind, then stop.
 		3) HTTP/3 curl probe for `/index.html` using mutual TLS (see below).
 		4) Placeholder client flow until a Node/browser HTTP/3/WebTransport adapter is wired.
+
 
 Mutual TLS for curl probe
 - Current server setup expects a client certificate. The tests invoke curl with mTLS flags:
@@ -87,6 +101,8 @@ Filtering specific tests (Vitest)
 	- Example: `npm test -- -t "server starts, binds UDP port, and stops cleanly (smoke)" test/system/system_real_server.test.js`
 	- Note: `-t "System (real server)"` won’t match because that’s a suite title; use `--grep` for suites.
 
+
+
 Expected outcome
 - The test will run a minimal getFullTree request over the curl bridge and assert that the protocol path works end-to-end. The returned vector may be empty depending on server content; the goal is transport verification.
 
@@ -122,50 +138,27 @@ Usage (tests/dev)
 Notes
 - This transport keeps a single HTTP/3 connection and is better aligned with server behavior that requires heartbeats on the same QUIC connection.
 
-## Node C FFI to QuicConnector (investigation)
+## Node C Gyp QuicConnector Module
 
-Goal
-- Expose the C++ QuicConnector over a small C-compatible facade and bind from Node for a native HTTP/3 client in tests/dev.
+A native Node module exposes the C facade defined in `common/transport/include/quic_connector_c.h` to provide an HTTP/3/QUIC client used by tests and Node-only adapters.
 
-Binding options
-- N-API addon (C/C++ via node-addon-api): best performance and control; requires building a Node addon.
-- ffi-napi/node-ffi-napi: pure FFI loading of a shared library; faster to prototype, but less ergonomic for async/streams.
+Start here:
+- Native addon README: `js_client_lib/native/README.md` (build and runtime details)
+- Loader/transport: `transport/native_quic.js` (tries the addon first, falls back to FFI if configured)
 
-Proposed C facade
-- Header: `common/transport/include/quic_connector_c.h` (added this session)
-- Opaque handles and functions:
-  - `wwatp_quic_create_session(opts)` / `wwatp_quic_close_session(session)`
-  - `wwatp_quic_open_bidi_stream(session, path)`
-  - `wwatp_quic_stream_write(stream, data, len, end_stream)`
-  - `wwatp_quic_stream_read(stream, buf, buf_len, timeout_ms)`
-  - `wwatp_quic_stream_close(stream)`
+Build prerequisites
+- Ensure the shared library `libwwatp_quic.*` is produced by the CMake build (`BUILD_WWATP_QUIC_C=ON`, default). Output is under `build/`.
+- From `js_client_lib/`, run the addon build: `npm run build:native`.
 
-Build integration (next)
-- Added CMake option and stub shared lib target:
-	- Option: `BUILD_WWATP_QUIC_C` (ON by default)
-	- Target: `wwatp_quic_c` producing `libwwatp_quic.*` built from `common/transport/src/quic_connector_c.cc`
-	- Current implementation is a stub that echoes bytes and exists to validate binding/workflow. Replace with real `QuicConnector` wiring.
-- Next: link the target with QUIC client objects and implement real session/stream operations.
-- For Node, prefer loading via N-API addon that wraps this C API with async methods and one persistent connection per process.
+Usage (Node-only)
+- Import dynamically where needed:
+	- `const { NativeQuic } = await import('../index.js');`
+	- Create a session with TLS/mTLS options, open a bidi stream (e.g., `/init/wwatp/`), write WWATP-framed bytes, read, then close.
+- The transport keeps a single QUIC connection to satisfy heartbeat-on-same-connection semantics.
 
-POC plan
-- Implement the `.cc` backing for the C header and a minimal Node binding.
-- Write a small Node test: open session to local server, open bidi stream to `/init/wwatp/`, write a minimal WWATP-framed request, read response, close.
-- Compare behavior vs `LibcurlTransport` in system_real_server tests.
-
-Build the C stub
-- From repo root:
-	- Configure and build as usual; the shared lib will be produced alongside other targets when `BUILD_WWATP_QUIC_C=ON` (default).
-	- Output name: `libwwatp_quic.so` on Linux under your build output directory.
-
-Load from Node (FFI sketch)
-- Using ffi-napi (future): load `libwwatp_quic` and bind the functions from `quic_connector_c.h`.
-- Prefer N-API for production: wrap the C API with async methods and reuse one session per process.
-
-Caveats
-- Same-connection requirement: ensure a single session is reused across requests to allow heartbeat-triggered flushes.
-- TLS: pass cert/key/CA paths via opts; allow `insecure_skip_verify` for local dev only.
-- CI: gate behind env and skip if library not built.
+Notes
+- Prefer the N-API addon path for performance and proper async I/O; the FFI path is primarily for experimentation.
+- See the native README for environment variables (e.g., `WWATP_QUIC_SO`) and troubleshooting.
 
 ## Mock transport tests
 
