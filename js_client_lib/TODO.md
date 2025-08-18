@@ -47,18 +47,133 @@ Browser runtime constraints
 
  - DONE
  
-## C. Transport – Node WebTransport mock (native QUIC)
+## C. Transport 
 
-  Goal: Provide a WebTransport-shaped adapter for Node that uses the native QUIC QuicConnector via the N-API addon, offering parity with the browser adapter while reusing a single QUIC session for heartbeats.
+1) Node WebTransport emulator (using N-API addon)
 
-  - [ ] Design API surface matching the browser WebTransport adapter: connect(), close(), sendRequest(streamId, bytes, opts), session reuse.
-  - [ ] Implement against native addon (`js_client_lib/native`), fallback to FFI loader in `transport/native_quic.js` only if addon is unavailable.
-  - [ ] Map WebTransport bidi streams to QuicConnector streams; ensure same-connection requirement for heartbeats.
-  - [ ] TLS/mTLS: wire env vars (WWATP_CERT/KEY/CA, WWATP_INSECURE) into session options.
-  - [ ] Error handling: timeouts, AbortSignal support, orderly close, and cleanup on transport errors.
-  - [ ] Tests: unit conformance and system parity vs mock transport and LibcurlTransport.
-  - [ ] Selection: allow `WWATP_TRANSPORT=webtransport-native` and export from `index.js`.
-  - [ ] Docs: README “Node C Gyp QuicConnector Module” and adapter usage example.
+  Goal: Provide a WebTransport-shaped emulator for Node that uses the native QUIC QuicConnector via the N-API addon, offering emulation of the browser WebTransport while paying attention to the QUIC session details such as heartbeats.
+
+  WebTransport API parity (constructor, attributes, methods)
+  - [ ] Implement `new WebTransport(url, options)` with a compatible `WebTransportOptions` subset:
+    • options.allowPooling, requireUnreliable, protocols[]
+    • options.anticipatedConcurrentIncomingUnidirectionalStreams?, anticipatedConcurrentIncomingBidirectionalStreams?
+    • options.congestionControl ("default" | "throughput" | "low-latency") — accept but may be advisory only
+    • options.serverCertificateHashes (accept but may be no-op in Node path)
+  - [ ] Expose read-only attributes with correct lifecycles:
+    • `ready: Promise<void>` resolves when session established; rejects on failure
+    • `closed: Promise<WebTransportCloseInfo>` fulfills on graceful close or rejects on abrupt/failed init
+    • `draining: Promise<void>` resolves when session drained (map to session shutdown in addon)
+    • `datagrams: WebTransportDatagramDuplexStream` (see Datagrams section below)
+    • `incomingBidirectionalStreams: ReadableStream<WebTransportBidirectionalStream>`
+    • `incomingUnidirectionalStreams: ReadableStream<WebTransportReceiveStream>`
+    • `reliability: "pending" | "reliable-only" | "supports-unreliable"`
+    • `congestionControl: "default" | "throughput" | "low-latency"` (Report effective value)
+    • `protocol: string` (ALPN or application protocol; empty if unknown)
+  - [ ] Implement methods:
+    • `close(closeInfo?: { closeCode?: number; reason?: string })`: graceful termination semantics; map to addon session close
+    • `getStats(): Promise<WebTransportConnectionStats>` — provide at least bytesSent/Received, packetsSent/Received when available; otherwise reasonable zeros/nulls
+    • `exportKeyingMaterial(label: BufferSource, context?: BufferSource): Promise<ArrayBuffer>` — optional stub or throw NotSupported if addon lacks support
+    • `createBidirectionalStream(options?: WebTransportSendStreamOptions)` returns `WebTransportBidirectionalStream`
+    • `createUnidirectionalStream(options?: WebTransportSendStreamOptions)` returns `WebTransportSendStream`
+    • `createSendGroup()` returns `WebTransportSendGroup` (optional minimal stub sufficient for sendOrder grouping)
+    • Static: `WebTransport.supportsReliableOnly: boolean` (true if HTTP/2 fallback only; Node QUIC should set false)
+
+  Streams (Readable/Writable conformance)
+  - [ ] `WebTransportBidirectionalStream` exposes `.readable: WebTransportReceiveStream` and `.writable: WebTransportSendStream`.
+  - [ ] `WebTransportSendStream` is a WritableStream<Uint8Array> with `.getWriter()`, `.close()`, `.abort(err)`, `.getStats()`; enforce backpressure via `.ready` on writer.
+  - [ ] `WebTransportReceiveStream` is a ReadableStream<Uint8Array> with BYOB reader support; `.getStats()` provided minimally.
+  - [ ] Map `.createBidirectionalStream()` to opening a QUIC bidi stream on the single underlying session; honor `waitUntilAvailable` by awaiting flow control if necessary.
+  - [ ] Provide `incomingBidirectionalStreams` and `incomingUnidirectionalStreams` as ReadableStreams that yield on server-initiated streams.
+  - [ ] Handle STOP_SENDING / RESET_STREAM mapping to `WebTransportError` with `source: "stream"` and `streamErrorCode` per spec guidance.
+
+  Datagrams
+  - [ ] Implement `datagrams: WebTransportDatagramDuplexStream` with:
+    • `.readable: ReadableStream<Uint8Array>`
+    • `.createWritable(options?): WebTransportDatagramsWritable` and writer semantics
+    • Attributes: `maxDatagramSize`, `incomingMaxAge`, `outgoingMaxAge`, `incomingHighWaterMark`, `outgoingHighWaterMark`
+    • If QUIC DATAGRAM not supported by addon, expose the interface but either no-op or reject writes; set `reliability` accordingly.
+
+  Session model and heartbeats
+  - [ ] Ensure a single QUIC connection (session) per `WebTransport` instance and reuse it for all streams; required so updater heartbeats arrive on the same connection.
+  - [ ] Map WWATP heartbeat writes to new streams on the same session; verify addon ensures connection reuse and stream id allocation.
+
+  Error handling and lifecycle
+  - [ ] Propagate transport errors: reject `ready`, cause `closed` to reject with `WebTransportError` (source: "session").
+  - [ ] Properly fulfill `closed` with `WebTransportCloseInfo` on graceful close; error open streams and close datagram/readable streams per spec cleanup steps.
+  - [ ] Abort/timeout handling for writers/readers: support `.abort()` on writers and cancellation on readers; integrate with addon to reset/stop-sending.
+
+  TLS/mTLS and configuration (Node only)
+  - [ ] Wire env vars (WWATP_CERT/KEY/CA, WWATP_INSECURE) into session options and pass to addon; document precedence and defaults.
+  - [ ] Support URL parsing: `https://host:port/path` with explicit port; reject insecure http.
+
+  Selection and exports
+  - [ ] Selection: allow `WWATP_TRANSPORT=webtransport-native` and export from `index.js` guarded to avoid bundling into browsers.
+  - [ ] Provide a small factory `create_webtransport_connector.js` that returns browser `WebTransport` or Node emulator depending on environment.
+
+  Conformance tests (unit + integration)
+  - [ ] API shape tests: constructor presence, attributes (`ready`, `closed`, `datagrams`, `incoming*Streams`, `reliability`, `protocol`) and methods (`close`, `create*Stream`, `getStats`).
+  - [ ] Stream happy path: open bidi, write bytes, FIN, read echoed/response bytes; verify backpressure and writer `.ready` behavior.
+  - [ ] Abort/cancel: writer.abort propagates RESET, reader.cancel sends STOP_SENDING; verify errors surfaced as `WebTransportError` with `source` and optional `streamErrorCode`.
+  - [ ] Incoming streams: push a server-initiated unidirectional/bidirectional stream via addon shim and assert they appear on `incoming*Streams`.
+  - [ ] Datagrams: when supported, send/receive; when not, ensure writes fail predictably and `maxDatagramSize` reflects capability.
+  - [ ] Lifecycle: `ready` resolves, `closed` fulfills on graceful close and rejects on abrupt close; ensure cleanup of streams and datagrams.
+  - [ ] Parity: run the same tests against browser `WebTransport` where feasible (jsdom not sufficient; use manual or conditional skip), and against `NodeWebTransportMock` to validate adapter behavior.
+
+  Docs
+  - [ ] README section “Node WebTransport emulator” with API coverage matrix vs spec, known limitations, and usage examples.
+  - [ ] Document environment variables for TLS/mTLS and transport selection; include troubleshooting.
+
+2) BackendConnector built on WebTransport (either node mock or Browser implementation)
+
+  Goal: Provide a Communication class (comparable to the curl_communication.js for example) which which uses a WebTransport interface for the backend.  This will allow code using the BackendConnector to be agnostic about whether running in the Browser or on node js.
+
+  Design and API
+  - [ ] Define the BackendConnector contract: subclass `transport/communication.js` and expose `connect()`, `close()`, `sendRequest(sid, request, bytes, opts)` with AbortSignal/timeout support and response event emission.
+  - [ ] Decide on URL semantics: accept a base WebTransport URL (e.g., `https://host:port/webtransport`) and ignore per-request path once connected; document that WWATP pathing is handled at session creation.
+  - [ ] Connection reuse: ensure a single WebTransport session per connector instance; reuse it for all requests to satisfy heartbeat-on-same-connection.
+
+  Implementation
+  - [ ] Audit and finalize `transport/webtransport_communication.js` as the concrete BackendConnector for browsers (feature parity with curl adapter where applicable).
+  - [ ] Implement a small factory for WebTransport connectors that selects between browser `WebTransport` and a Node adapter (from C.1) without changing call sites.
+    • File: `transport/create_webtransport_connector.js` (browser: `WebTransportCommunication`; node: `node_webtransport_mock.js` or native emulator when available).
+  - [ ] Add environment-driven selection: allow `WWATP_TRANSPORT=webtransport` (browser) and `WWATP_TRANSPORT=webtransport-native` (Node emulator) and wire through `index.js` export.
+  - [ ] Error handling: map stream/session errors into thrown errors and `response` events with `{ ok:false, status:0, error }`.
+  - [ ] Abort/timeout: ensure `sendRequest` cancels writes/reads and surfaces `AbortError`; add timeout behavior consistent across envs.
+  - [ ] Concurrency: support multiple concurrent requests by opening a new bidi stream per call; verify no cross-talk and correct handler routing by `StreamIdentifier`.
+  - [ ] Large payloads/backpressure: write in chunks (async iterator) and ensure backpressure is respected; add a stress test plan (10MB+ payload).
+  - [ ] Reconnect policy: on session close, optionally auto-reconnect once on next `sendRequest`; guard with an option `{ autoReconnect: true }`.
+
+  Node path integration (depends on C.1)
+  - [ ] If the Node WebTransport emulator is present, provide an adapter with the same surface as the browser connector and ensure single-connection reuse.
+  - [ ] TLS/mTLS for Node: propagate `WWATP_CERT`, `WWATP_KEY`, `WWATP_CA`, `WWATP_INSECURE` into the Node adapter session options; no-op in browsers.
+  - [ ] Heartbeats: verify that heartbeats sent by the Updater arrive on the same QUIC connection (same session) and trigger server flushes.
+
+  Wiring and exports
+  - [ ] Export the connector/factory from `js_client_lib/index.js` (browser-safe named exports).
+  - [ ] Extend `transport/create_transport.js` or add `create_webtransport_connector.js` to support `{ preferred: 'webtransport' }` and env `WWATP_TRANSPORT` overrides.
+  - [ ] Ensure `Http3ClientBackendUpdater` usage is unchanged: pass the selected connector instance to `maintainRequestHandlers`.
+
+  Tests
+  - [ ] Unit tests (browser-like via jsdom or WebTransport polyfill):
+    • sendRequest success round-trip emits `response` and returns `{ ok:true, status:200, data }`.
+    • AbortSignal cancels in-flight write/read and rejects with `AbortError`.
+    • Timeout triggers expected error path and cleanup.
+    • Concurrent requests route responses to the correct handlers.
+  - [ ] Node tests with `node_webtransport_mock.js`: mirror the above behaviors and validate parity with browser connector.
+  - [ ] Integration with updater (mock server): end-to-end WWATP message encode->transport->decode using the connector; includes heartbeats loop behavior.
+  - [ ] Real-server smoke (optional, guarded by `WWATP_E2E=1`): minimal `getFullTree` over the selected WebTransport (Node emulator path only for now); skip gracefully in CI if not available.
+
+  Documentation
+  - [ ] README: Add “BackendConnector (WebTransport)” section with usage examples in both browser and Node (mock/emulator), option flags, and limitations.
+  - [ ] Note browser mTLS limitations and recommend token-based auth if required; detail Node-only mTLS env vars.
+  - [ ] Architecture note: why single-session reuse is required for WWATP heartbeats.
+
+  Developer experience
+  - [ ] Lint/format and ESM-friendly exports; avoid Node-only APIs in browser path.
+  - [ ] Add minimal TypeScript typings (d.ts) for the connector public surface (optional, stretch).
+  - [ ] CI: add a browser-run test job (Vitest + jsdom) for connector unit tests; keep Node-only tests separate.
+
+  
 
 ## E. Serialization and binary safety
 

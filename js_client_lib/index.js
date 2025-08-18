@@ -6,6 +6,8 @@ export { default as Request } from './transport/request.js';
 export { default as FetchCommunication } from './transport/fetch_communication.js';
 export { default as WebTransportCommunication } from './transport/webtransport_communication.js';
 export { default as NodeWebTransportMock } from './transport/node_webtransport_mock.js';
+export { default as NodeWebTransportEmulator } from './transport/node_webtransport_emulator.js';
+export { default as createWebTransportConnector } from './transport/create_webtransport_connector.js';
 export { default as createTransportForUrl, hasWebTransport, isSecureContextLike } from './transport/create_transport.js';
 // Node-only interim adapter; not suitable for browsers
 export { default as CurlCommunication } from './transport/curl_communication.js';

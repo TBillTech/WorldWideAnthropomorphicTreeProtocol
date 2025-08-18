@@ -165,21 +165,21 @@ Notes
 - Run all tests: `npm test` from `js_client_lib`.
 - The mock server exercises the protocol framing over an in-memory transport and validates backend behaviors without QUIC.
 
-### Node WebTransport mock (for parity tests)
+## Node WebTransport emulator (Node-only)
 
-When running in Node, you can use a WebTransport-shaped mock that behaves like the browser adapter but stays in-memory:
+A WebTransport-shaped emulator is available for Node to enable single-connection QUIC semantics using the native N-API addon. It reuses one QUIC session and opens a bidi stream per request, matching WWATP heartbeat requirements.
 
-- File: `transport/node_webtransport_mock.js` (exported as `NodeWebTransportMock` from `index.js`).
-- Purpose: Provide the same request-per-bidirectional-stream model and timing as the browser `WebTransportCommunication`, while reusing the in-memory WWATP mock server.
-- Usage (tests/dev):
-	- `const { NodeWebTransportMock } = await import('../index.js');`
-	- `const comm = new NodeWebTransportMock('mock://local');`
-	- `comm.setMockHandler(createWWATPHandler(serverBackend));`
-	- `await comm.connect();`
-	- Use with `Http3ClientBackendUpdater.maintainRequestHandlers(comm, ...)`.
-- Tests: `test/transport_node_webtransport_mock.test.js` and `test/system/system_node_webtransport_mock.test.js` cover unit and system flows.
-
-Note: This adapter is strictly a mock; for real HTTP/3 connectivity in Node, prefer `LibcurlTransport`.
+- File: `transport/node_webtransport_emulator.js` (exported as `NodeWebTransportEmulator`)
+- Factory: `transport/create_webtransport_connector.js` (exported as `createWebTransportConnector`)
+- Usage:
+  - `const { createWebTransportConnector } = await import('../index.js');`
+  - `const wt = createWebTransportConnector('https://127.0.0.1:12345/init/wwatp/', { insecure: true });`
+  - `await wt.ready; const bidi = await wt.createBidirectionalStream();`
+- TLS/mTLS env:
+  - `WWATP_CERT`, `WWATP_KEY`, `WWATP_CA`, `WWATP_INSECURE=1`
+- Notes:
+  - Datagrams are not supported yet; methods are stubs.
+  - If the native addon is not built, creation will throw or `ready` will reject.
 
 ## Browser WebTransport
 

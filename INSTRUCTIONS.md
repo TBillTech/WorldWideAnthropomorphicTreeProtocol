@@ -8,9 +8,7 @@ Follow instructions
 
 ## Next steps
 
-- Work from `js_client_lib/TODO.md – Compact TODO (open items only)`.
-- Prioritize the "Transport – Node WebTransport mock (native QUIC)" section to finish the adapter over the N-API addon and add tests.
-- For docs, refer to `js_client_lib/README.md` → "Node C Gyp QuicConnector Module" and `js_client_lib/native/README.md` for build/run details.
+Focus: Carefully read TODO.md, and start work on section C. Transport Node WebTransport emulator.
 
 Relevant `TODO.md` is under path: js_client_lib
 Relevant `README.md` is under path: js_client_lib
@@ -30,7 +28,7 @@ Relevant `README.md` is under path: js_client_lib
 - Use delta updates in conversation—avoid repeating unchanged plans.
 
 ## Prioritization
-- Prioritize items in `TODO.md` matching what we are working on during this session. If unclear, suggest small, high-impact fixes or docs/tests that clarify behavior, and get confirmation from the user.  Note that sometimes the task is to just update the `TODO.md` or add research findings to a `README.md`.
+- Prioritize items in `TODO.md` matching what we are working on during this session. If unclear, suggest small, high-impact fixes or docs/tests that clarify behavior, and get confirmation from the user. 
 
 ## Deliverables
 - Provide complete, runnable edits (code + small test/runner if needed). Update docs when behavior changes.
