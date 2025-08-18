@@ -94,6 +94,18 @@ Quick start
 	- `WWATP_E2E=1 WWATP_TRANSPORT=curl npm test -- --grep "System \\("` (or target the file: `npm test -- test/system/system_real_server.test.js`)
 3) If curl lacks HTTP/3, install a build with HTTP/3 support or skip this path.
 
+### WebTransportCommunication tests (mock and native emulator)
+
+- Mock end-to-end using a WebTransport polyfill:
+	- Run: `npm test -- test/system/system_webtransport_mock_updater.test.js`
+	- This exercises WebTransportCommunication + Http3ClientBackendUpdater without QUIC.
+- Real server via Node WebTransport emulator (requires native addon and built server):
+	- Build addon: from `js_client_lib/`, `npm run build:native` (see native/README.md)
+	- Ensure `build/wwatp_server` exists.
+	- Provide certs or set `WWATP_GEN_CERTS=1`.
+	- Run: `WWATP_E2E=1 npm test -- test/system/system_webtransport_real_server.test.js`
+	- Note: native QUIC read/close stability is under active work; this path may be flaky until finalized.
+
 ### Important: place real-server tests in one suite (sequential)
 
 - To avoid port contention in IDEs (e.g., VS Code) that run tests in parallel, all tests that talk to the real WWATP service should live in `test/system/system_real_server.test.js`.

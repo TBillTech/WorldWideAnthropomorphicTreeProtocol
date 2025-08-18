@@ -123,17 +123,17 @@ Browser runtime constraints
   - [ ] README section “Node WebTransport emulator” with API coverage matrix vs spec, known limitations, and usage examples.
   - [ ] Document environment variables for TLS/mTLS and transport selection; include troubleshooting.
 
-2) BackendConnector built on WebTransport (either node mock or Browser implementation)
+2) WebTransportCommunication built on WebTransport (either node mock or Browser implementation)
 
-  Goal: Provide a Communication class (comparable to the curl_communication.js for example) which which uses a WebTransport interface for the backend.  This will allow code using the BackendConnector to be agnostic about whether running in the Browser or on node js.
+  Goal: Provide a Communication class (comparable to the curl_communication.js for example) which which uses a WebTransport interface for the backend.  This will allow code using the WebTransportCommunication to be agnostic about whether running in the Browser or on node js.
 
   Design and API
-  - [ ] Define the BackendConnector contract: subclass `transport/communication.js` and expose `connect()`, `close()`, `sendRequest(sid, request, bytes, opts)` with AbortSignal/timeout support and response event emission.
+  - [ ] Define the WebTransportCommunication contract: subclass `transport/communication.js` and expose `connect()`, `close()`, `sendRequest(sid, request, bytes, opts)` with AbortSignal/timeout support and response event emission.
   - [ ] Decide on URL semantics: accept a base WebTransport URL (e.g., `https://host:port/webtransport`) and ignore per-request path once connected; document that WWATP pathing is handled at session creation.
   - [ ] Connection reuse: ensure a single WebTransport session per connector instance; reuse it for all requests to satisfy heartbeat-on-same-connection.
 
   Implementation
-  - [ ] Audit and finalize `transport/webtransport_communication.js` as the concrete BackendConnector for browsers (feature parity with curl adapter where applicable).
+  - [ ] Audit and finalize `transport/webtransport_communication.js` as the concrete WebTransportCommunication for browsers (feature parity with curl adapter where applicable).
   - [ ] Implement a small factory for WebTransport connectors that selects between browser `WebTransport` and a Node adapter (from C.1) without changing call sites.
     [X] File: `transport/create_webtransport_connector.js` (browser: `WebTransportCommunication`; node: `node_webtransport_mock.js` or native emulator when available).
   - [ ] Add environment-driven selection: allow `WWATP_TRANSPORT=webtransport` (browser) and `WWATP_TRANSPORT=webtransport-native` (Node emulator) and wire through `index.js` export.
@@ -164,7 +164,7 @@ Browser runtime constraints
   - [ ] Real-server smoke (optional, guarded by `WWATP_E2E=1`): minimal `getFullTree` over the selected WebTransport (Node emulator path only for now); skip gracefully in CI if not available.
 
   Documentation
-  - [ ] README: Add “BackendConnector (WebTransport)” section with usage examples in both browser and Node (mock/emulator), option flags, and limitations.
+  - [ ] README: Add WebTransportCommunication section with usage examples in both browser and Node (mock/emulator), option flags, and limitations.
   - [ ] Note browser mTLS limitations and recommend token-based auth if required; detail Node-only mTLS env vars.
   - [ ] Architecture note: why single-session reuse is required for WWATP heartbeats.
 
@@ -173,7 +173,14 @@ Browser runtime constraints
   - [ ] Add minimal TypeScript typings (d.ts) for the connector public surface (optional, stretch).
   - [ ] CI: add a browser-run test job (Vitest + jsdom) for connector unit tests; keep Node-only tests separate.
 
-  
+3) E2E test using WebTransportCommunication with http3_client_backend_updater
+
+  The Following tests need to be added to the system_real_server.text.js.  
+  - [x] upsert a test node and fetch it back via WebTransportCommunication (In place of LibcurlTransport, for example)
+  - [ ] WebTransportCommunication testBackendLogically
+  - [ ] WebTransportCommunication test roundtrip
+  - [ ] Verify implementation of testPeerNotification test in js_client_lib/test/backend_testbed/backend_testbed.js (use test_instances/catch2_unit_tests/backend_testbed.cpp for reference)
+  - [ ] WebTransportCommunication testPeerNotification (which will verify that notifications are working via WebTransportCommunication)
 
 ## E. Serialization and binary safety
 
@@ -253,10 +260,11 @@ Browser testing
 ---
 
 ## Conversation summary (latest)
-Date: 2025-08-14
+Date: 2025-08-18
 
 Overview
 - Goal: stabilize native QUIC integration for Node by replacing fragile FFI with a robust N-API addon, keep browser-first design elsewhere, and ensure tests pass end-to-end.
+ - Added a passing mock WebTransport E2E test (upsert + getNode via WebTransportCommunication + Updater). Began real-server WebTransport test using Node emulator; needs further stabilization in native read/close loop.
 
 Key steps
 - Implemented an N-API addon (`js_client_lib/native`) wrapping the C facade in `quic_connector_c.h`; linked against `build/libwwatp_quic.so` with correct rpath.

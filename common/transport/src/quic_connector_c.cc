@@ -324,7 +324,10 @@ int64_t wwatp_quic_stream_read(wwatp_quic_stream_t* stream, uint8_t* buf, size_t
 
 void wwatp_quic_stream_close(wwatp_quic_stream_t* stream) {
   if (!stream) return;
-  if (stream->closed) { delete stream; return; }
+  // If we've already closed, do nothing. Calling close twice should be a no-op.
+  // Note: The caller MUST NOT call this function more than once for the same pointer;
+  // this guard prevents an explicit double-delete path but cannot make use-after-free safe.
+  if (stream->closed) { return; }
   stream->closed = true;
   // Best-effort deregistration; ignore errors
   try { stream->session->qc->deregisterResponseHandler(stream->sid); } catch (...) {}

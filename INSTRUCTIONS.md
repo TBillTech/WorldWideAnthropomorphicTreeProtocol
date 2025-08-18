@@ -8,7 +8,12 @@ Follow instructions
 
 ## Next steps
 
-Focus: Fix all linter errors, except for webtransport_communication.js, which is currently under development.
+Focus: Work on unit tests under the E2E test using WebTransportCommunication with http3_client_backend_updater section in TODO.md.  Use the following approach:
+  1) Choose the next needed unit test, and implement it
+  2) Run that unit test, and debug and fix any problems.
+  3) Once the unit test is completely functional, then go back to step 1.
+
+This will ensure that we troubleshoot the test progressively from simpler tests to more complex.
 
 Relevant `TODO.md` is under path: js_client_lib
 Relevant `README.md` is under path: js_client_lib

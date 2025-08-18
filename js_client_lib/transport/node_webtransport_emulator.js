@@ -38,6 +38,7 @@ export default class NodeWebTransportEmulator {
     this._protocol = 'h3';
     this._reliability = 'reliable-only';
     this._congestionControl = options?.congestionControl || 'default';
+  this._openStreams = new Set();
 
     this.closed = new Promise((res, rej) => { this._closedResolve = res; this._closedReject = rej; });
     this.draining = new Promise((res) => { this._drainingResolve = res; });
@@ -102,6 +103,11 @@ export default class NodeWebTransportEmulator {
   async close(closeInfo = {}) {
     // Graceful close: free session
     try {
+      // First, best-effort close any open streams once
+      for (const st of Array.from(this._openStreams)) {
+        try { this._nq?.closeStream(st); } catch {}
+        this._openStreams.delete(st);
+      }
       if (this._session && this._nq) {
         this._nq.closeSession(this._session);
       }
@@ -133,13 +139,15 @@ export default class NodeWebTransportEmulator {
     await this.ready;
     if (!this._session) throw new Error('Session not open');
     const path = parseUrl(this.url).pathname || '/';
-    const st = this._nq.openBidiStream(this._session, path);
+  const st = this._nq.openBidiStream(this._session, path);
     if (!st) throw new Error('Failed to open bidirectional stream');
+  this._openStreams.add(st);
 
     const self = this;
     // Writer
     let writerClosed = false;
-    const writer = {
+  let streamClosed = false; // guard to ensure native close called once
+  const writer = {
       async write(chunk) {
         if (writerClosed) throw new Error('writer closed');
         const u8 = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
@@ -155,7 +163,11 @@ export default class NodeWebTransportEmulator {
       },
       async abort(_reason) {
         writerClosed = true;
-        try { self._nq.closeStream(st); } catch {}
+        if (!streamClosed) {
+          streamClosed = true;
+          try { self._nq.closeStream(st); } catch {}
+          self._openStreams.delete(st);
+        }
       },
       releaseLock() {},
       get closed() { return Promise.resolve(); },
@@ -164,21 +176,30 @@ export default class NodeWebTransportEmulator {
 
     // Readable
     let done = false;
-    const reader = {
+  const reader = {
       async read() {
         if (done) return { value: undefined, done: true };
-        const out = self._nq.read(st, 65536, 10);
-        if (!(out instanceof Uint8Array) || out.byteLength === 0) {
-          // Interpret zero-length read as end-of-stream
-          done = true;
-          return { value: undefined, done: true };
+        // Poll native read for a short window to avoid premature EOF on empty reads.
+        const maxAttempts = 100; // ~2s at 20ms + 0ms read time
+        for (let i = 0; i < maxAttempts; i++) {
+          const out = self._nq.read(st, 65536, 50);
+          if (out instanceof Uint8Array && out.byteLength > 0) {
+            self._bytesReceived += out.byteLength;
+            return { value: out, done: false };
+          }
+          // Small delay before retrying
+          await new Promise((r) => setTimeout(r, 20));
         }
-        self._bytesReceived += out.byteLength;
-        return { value: out, done: false };
+        done = true;
+        return { value: undefined, done: true };
       },
       async cancel(_reason) {
         done = true;
-        try { self._nq.closeStream(st); } catch {}
+        if (!streamClosed) {
+          streamClosed = true;
+          try { self._nq.closeStream(st); } catch {}
+          self._openStreams.delete(st);
+        }
       },
       releaseLock() {},
     };
