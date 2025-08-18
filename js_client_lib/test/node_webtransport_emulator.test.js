@@ -1,3 +1,4 @@
+/* eslint-env node */
 import { describe, it, expect } from 'vitest';
 import { createWebTransportConnector } from '../index.js';
 import fs from 'node:fs';
@@ -17,8 +18,10 @@ describe('NodeWebTransportEmulator', () => {
     if (typeof process === 'undefined' || !process.versions?.node) return;
   const certs = getCertPaths();
   expect(certs).toBeTruthy();
-  process.env.WWATP_CERT = certs.cert;
-  process.env.WWATP_KEY = certs.key;
+    if (typeof process !== 'undefined') {
+      process.env.WWATP_CERT = certs.cert;
+      process.env.WWATP_KEY = certs.key;
+    }
   let wt;
   wt = createWebTransportConnector('https://127.0.0.1:65535/test');
     expect(wt).toBeTruthy();

@@ -259,6 +259,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Catch2)
 
+# Make Catch2's CTest integration module available
+list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)
+include(CTest)
+include(Catch)
+
 # Ensure executables depend on external libraries
 add_dependencies(wwatp_server ngtcp2 nghttp3 boringssl)
 add_dependencies(library_tester ngtcp2 nghttp3 boringssl)
@@ -278,11 +283,9 @@ target_link_options(http3_client_backend_tester PRIVATE -fsanitize=address,undef
 # Enable verbose linker output
 # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--verbose")
 
-# Enable testing
+# Enable testing and have CTest discover Catch2 test cases from our executable
 enable_testing()
-
-# Add tests
-add_test(NAME TreeBusTest COMMAND library_tester)
+catch_discover_tests(catch2_unit_tests)
 
 # Optional: Build C-compatible QUIC client facade for Node bindings (FFI/N-API)
 option(BUILD_WWATP_QUIC_C "Build C facade shared lib for QuicConnector" ON)

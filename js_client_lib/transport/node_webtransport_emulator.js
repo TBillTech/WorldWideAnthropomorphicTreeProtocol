@@ -1,3 +1,4 @@
+/* eslint-env node */
 // Node WebTransport emulator for Node.js that wraps the native QUIC addon (N-API).
 // It mimics the browser WebTransport surface enough for WebTransportCommunication
 // style adapters or direct use in Node tests. Single QUIC session per instance.
@@ -6,6 +7,7 @@ import { tryLoadNativeQuic } from './native_quic.js';
 
 function parseUrl(u) {
   try {
+    // eslint-disable-next-line no-undef
     return new URL(u);
   } catch (e) {
     throw new TypeError(`Invalid URL for WebTransport: ${u}`);
@@ -40,8 +42,17 @@ export default class NodeWebTransportEmulator {
     this.closed = new Promise((res, rej) => { this._closedResolve = res; this._closedReject = rej; });
     this.draining = new Promise((res) => { this._drainingResolve = res; });
     this.datagrams = {
-      readable: new ReadableStream({ start(controller) { controller.close(); } }),
-      createWritable() { return new WritableStream({ write() { throw new Error('QUIC DATAGRAM not supported'); } }); },
+      readable: (typeof ReadableStream !== 'undefined')
+        // eslint-disable-next-line no-undef
+        ? new ReadableStream({ start(controller) { controller.close(); } })
+        : { getReader: () => ({ read: async () => ({ done: true }) }) },
+      createWritable() {
+        if (typeof WritableStream !== 'undefined') {
+          // eslint-disable-next-line no-undef
+          return new WritableStream({ write() { throw new Error('QUIC DATAGRAM not supported'); } });
+        }
+        return { getWriter: () => ({ write() { throw new Error('QUIC DATAGRAM not supported'); } }) };
+      },
       maxDatagramSize: 0,
       incomingMaxAge: 0,
       outgoingMaxAge: 0,

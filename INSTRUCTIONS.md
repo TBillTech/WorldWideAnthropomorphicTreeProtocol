@@ -8,7 +8,7 @@ Follow instructions
 
 ## Next steps
 
-Focus: Carefully read TODO.md, and start work on section C. Transport Node WebTransport emulator.
+Focus: Fix all linter errors, except for webtransport_communication.js, which is currently under development.
 
 Relevant `TODO.md` is under path: js_client_lib
 Relevant `README.md` is under path: js_client_lib
@@ -45,6 +45,7 @@ Relevant `README.md` is under path: js_client_lib
 
 ## After you Finish
 
+- If you made any code changes, ALWAYS run linter, and fix all errors and warnings UNLESS the prior instruction details specifically say otherwise.
 - If you made any code changes, ALWAYS run unit tests.  For C++ see CLAUDE.md.
 - If there are ANY unit test failures, try hard to fix them all. If this seems too difficult consult with the user and get detailed about debugging.
 - If you made any code changes, update the TODO.md and check all completed tasks.
