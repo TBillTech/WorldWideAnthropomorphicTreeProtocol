@@ -74,6 +74,9 @@ struct wwatp_quic_session_t {
   atomic<uint16_t> next_request_id{2}; // client-chosen WWATP request ids (even preferred)
   thread io_thread;
   atomic<int> open_streams{0};
+  // Map logical stream id -> stream*, to support queries like readReady
+  std::mutex streams_mu;
+  std::unordered_map<uint16_t, wwatp_quic_stream_t*> streams_by_lid;
 };
 
 struct wwatp_quic_stream_t {
@@ -119,13 +122,30 @@ static inline uint64_t sum_chunk_bytes(const chunks& v) {
   return s;
 }
 
+// Sum of on-wire bytes (header + payload) for each chunk; helpful for zero-payload heartbeats
+static inline uint64_t sum_chunk_wire_bytes(const chunks& v) {
+  uint64_t s = 0;
+  for (auto const& ch : v) {
+    try {
+      auto w = ch.get_wire_size();
+      // Defensive: if header incomplete, fall back to stored size
+      if (w == 0) w = ch.stored_size();
+      s += w;
+    } catch (...) {
+      try { s += ch.stored_size(); } catch (...) {}
+    }
+  }
+  return s;
+}
+
 static inline void log_first_payload_header(const char* tag, const shared_span<>& sp) {
   if (sp.get_signal_type() == payload_chunk_header::GLOBAL_SIGNAL_TYPE) {
     try {
       auto& hdr = const_cast<shared_span<>&>(sp).get_signal<payload_chunk_header>();
-      std::cerr << tag << " payload_hdr{rid=" << hdr.request_id
-                << ", sig=" << static_cast<int>(hdr.signal)
-                << ", len=" << hdr.data_length << "}" << std::endl;
+  std::cerr << tag << " payload_hdr{rid=" << hdr.request_id
+        << ", sig=" << static_cast<int>(hdr.signal)
+        << ", wire=" << const_cast<shared_span<>&>(sp).get_wire_size()
+        << ", payload_len=" << hdr.data_length << "}" << std::endl;
     } catch (...) {
       // ignore
     }
@@ -153,13 +173,12 @@ static inline stream_callback_fn make_stream_cb(wwatp_quic_stream_t* st) {
   return [st](const StreamIdentifier& sid, chunks& to_process) -> chunks {
     // Assert stream id matches 
     assert(st->sid == sid);
-    if (g_verbose) {
-      std::cerr << "ffi.cb: sid.logical=" << sid.logical_id
+    if (g_verbose && !to_process.empty()) {
+      std::cerr << "ffi.cb.in: sid.logical=" << sid.logical_id
                 << " incoming.count=" << to_process.size()
-                << " incoming.bytes=" << sum_chunk_bytes(to_process) << std::endl;
-      if (!to_process.empty()) {
-        log_first_payload_header("ffi.cb.in.first", to_process.front());
-      }
+                << " incoming.payload_bytes=" << sum_chunk_bytes(to_process)
+                << " incoming.wire_bytes=" << sum_chunk_wire_bytes(to_process) << std::endl;
+      log_first_payload_header("ffi.cb.in.first", to_process.front());
     }
     // 1) Consume incoming into st->incoming
     if (!to_process.empty()) {
@@ -190,13 +209,12 @@ static inline stream_callback_fn make_stream_cb(wwatp_quic_stream_t* st) {
         st->sent_any = true;
       }
     }
-    if (g_verbose) {
-      std::cerr << "ffi.cb: sid.logical=" << sid.logical_id
+    if (g_verbose && !produced.empty()) {
+      std::cerr << "ffi.cb.out: sid.logical=" << sid.logical_id
                 << " produced.count=" << produced.size()
-                << " produced.bytes=" << sum_chunk_bytes(produced) << std::endl;
-      if (!produced.empty()) {
-        log_first_payload_header("ffi.cb.out.first", produced.front());
-      }
+                << " produced.payload_bytes=" << sum_chunk_bytes(produced)
+                << " produced.wire_bytes=" << sum_chunk_wire_bytes(produced) << std::endl;
+      log_first_payload_header("ffi.cb.out.first", produced.front());
     }
     return produced;
   };
@@ -301,6 +319,11 @@ wwatp_quic_stream_t* wwatp_quic_open_bidi_stream(wwatp_quic_session_t* session, 
     return nullptr;
   }
   session->open_streams.fetch_add(1);
+  // Track by logical id for quick lookup
+  {
+    lock_guard<mutex> lk(session->streams_mu);
+    session->streams_by_lid[st->sid.logical_id] = st;
+  }
   return st;
 }
 
@@ -333,6 +356,7 @@ int64_t wwatp_quic_stream_write(wwatp_quic_stream_t* stream, const uint8_t* data
   {
     lock_guard<mutex> lk(stream->m);
     if (len > 0 && data) {
+      bool logged_arg_header = false;
       // If data appears to already be WWATP wire-framed (header first byte indicates
       // known GLOBAL_SIGNAL_TYPE 1 or 2), then parse into shared_span directly and enqueue.
       // Otherwise, wrap raw payload bytes into payload_chunk_header using current request signal.
@@ -343,6 +367,11 @@ int64_t wwatp_quic_stream_write(wwatp_quic_stream_t* stream, const uint8_t* data
           shared_span<> sp(std::span<const uint8_t>(data + off, len - off));
           // Ensure request_id matches this stream's logical id for WWATP semantics
           try { sp.set_request_id(stream->request_id); } catch (...) {}
+          if (g_verbose && !logged_arg_header && sp.get_signal_type() == payload_chunk_header::GLOBAL_SIGNAL_TYPE) {
+            // Log the payload header as provided in the argument
+            log_first_payload_header("ffi.write.arg.first", sp);
+            logged_arg_header = true;
+          }
           // Determine complete wire size for this chunk and advance
           size_t wire = 0;
           try { wire = sp.get_wire_size(); } catch (...) { wire = sp.stored_size(); }
@@ -360,6 +389,10 @@ int64_t wwatp_quic_stream_write(wwatp_quic_stream_t* stream, const uint8_t* data
         payload_chunk_header hdr(stream->request_id, req_signal, 0 /* set by flatten */);
         shared_span<> composed(hdr, std::span<const uint8_t>(data, len));
         auto vec = composed.flatten_with_signal(hdr);
+        if (g_verbose && !vec.empty()) {
+          // Log the synthesized header that will be sent to encode this argument
+          log_first_payload_header("ffi.write.arg.wrap.first", vec.front());
+        }
         for (auto &sp : vec) stream->outgoing.emplace_back(std::move(sp));
       }
     }
@@ -464,6 +497,14 @@ void wwatp_quic_stream_close(wwatp_quic_stream_t* stream) {
   // Best-effort deregistration; ignore errors
   try { stream->session->qc->deregisterResponseHandler(stream->sid); } catch (...) {}
   stream->session->open_streams.fetch_sub(1);
+  // Remove from lookup map
+  try {
+    lock_guard<mutex> lk(stream->session->streams_mu);
+    auto it = stream->session->streams_by_lid.find(stream->sid.logical_id);
+    if (it != stream->session->streams_by_lid.end() && it->second == stream) {
+      stream->session->streams_by_lid.erase(it);
+    }
+  } catch (...) {}
   delete stream;
 }
 
@@ -474,6 +515,21 @@ const char* wwatp_quic_last_error(void) {
 void wwatp_quic_stream_set_wwatp_signal(wwatp_quic_stream_t *stream, uint8_t signal) {
   if (!stream) { g_last_error = "invalid stream"; return; }
   stream->wwatp_signal = signal;
+}
+
+int wwatp_quic_read_ready(wwatp_quic_session_t *session, uint16_t logical_stream_id) {
+  if (!session) { g_last_error = "invalid session"; return WWATP_QUIC_ERR_PARAM; }
+  wwatp_quic_stream_t* st = nullptr;
+  try {
+    lock_guard<mutex> lk(session->streams_mu);
+    auto it = session->streams_by_lid.find(logical_stream_id);
+    if (it != session->streams_by_lid.end()) st = it->second;
+  } catch (...) {
+    st = nullptr;
+  }
+  if (!st) return WWATP_QUIC_ERR_PARAM;
+  lock_guard<mutex> lk(st->m);
+  return !st->incoming.empty() ? 1 : 0;
 }
 
 } // extern "C"

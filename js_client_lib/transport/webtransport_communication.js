@@ -109,16 +109,59 @@ export default class WebTransportCommunication extends Communication {
     // Pump request/response queues if the underlying transport supports it (Node emulator path).
     processRequestStream() {
         try {
+            let did = false;
             if (this.transport && typeof this.transport.processRequestStream === 'function') {
-                return !!this.transport.processRequestStream();
+                did = !!this.transport.processRequestStream();
             }
+            // After pumping native queues, proactively nudge reads on all active streams.
+            // This helps surface any bytes that were queued by native callbacks immediately.
+            try {
+                for (const [sidKey, ent] of this._streams.entries()) {
+                    // Prefer the original sid object if we stored it; fall back to the key string.
+                    const sid = ent && ent.sid ? ent.sid : sidKey;
+                    // Fire-and-forget; nudgeRead will gate on transport.readReady when available.
+                    this.nudgeRead(sid);
+                }
+            } catch (_) {}
+            return did;
         } catch {}
         return false;
     }
 
+    // Proactively trigger a single read on a persistent Node emulator stream to pull any queued bytes.
+    async nudgeRead(sid) {
+        try {
+            const isNodeEmulator = !!(this.transport && (
+                typeof this.transport.processRequestStream === 'function' ||
+                typeof this.transport.setRequestSignalForCurrentStream === 'function' ||
+                (this.transport && typeof this.transport.getClientConnectionId === 'function')
+            ));
+            if (!isNodeEmulator) return;
+            const sidKey = String(sid);
+            const ent = this._streams.get(sidKey);
+            if (!ent || !ent.reader) return;
+            // Gate on transport-provided readiness hint when available to avoid hot-loop reads
+            try {
+                if (this.transport && typeof this.transport.readReady === 'function') {
+                    // If readReady returns falsy, skip the actual read for now
+                    const ready = !!this.transport.readReady(sid);
+                    if (!ready) return;
+                }
+            } catch (_) {}
+            // Fire and forget a single read; if data arrives, emit it.
+            const { value, done } = await ent.reader.read();
+            if (!done && value instanceof Uint8Array && value.byteLength > 0) {
+                this._emitResponseEvent(sid, { type: 'response', ok: true, status: 200, data: value });
+                this._trace.info('stream.response', { sid, bytes: value.byteLength });
+            }
+        } catch (_) {
+            // best-effort nudge only
+        }
+    }
+
     async sendRequest(sid, _request, data = null, options = {}) {
         if (!this.transport) throw new Error('Not connected');
-        const { timeoutMs = 0, signal, requestSignal } = options || {};
+        const { timeoutMs = 0, signal, requestSignal, isHeartbeat = false } = options || {};
         const isNodeEmulator = !!(this.transport && (
             typeof this.transport.processRequestStream === 'function' ||
             typeof this.transport.setRequestSignalForCurrentStream === 'function' ||
@@ -126,18 +169,18 @@ export default class WebTransportCommunication extends Communication {
         ));
 
         // Stream acquisition strategy:
-        // - Node emulator: keep a persistent bidi stream per sid (for heartbeats and native pumping)
+        // - Node emulator: keep a persistent bidi stream per sid and reuse it for heartbeats and reads
         // - Polyfill/browser: use a fresh bidi stream per request (our polyfill responds once per stream)
         const sidKey = String(sid);
         let entry;
         let created = false;
-        if (isNodeEmulator) {
+    if (isNodeEmulator) {
             entry = this._streams.get(sidKey);
             if (!entry) {
                 const bidi = await this.transport.createBidirectionalStream();
                 const writer = bidi.writable.getWriter();
                 const reader = bidi.readable.getReader();
-                entry = { bidi, writer, reader };
+                entry = { bidi, writer, reader, sid };
                 this._streams.set(sidKey, entry);
                 created = true;
                 this._trace.inc('streams.open');
@@ -149,17 +192,44 @@ export default class WebTransportCommunication extends Communication {
                     }
                 } catch {}
             }
+            // Heartbeats share the same persistent stream so the native layer keeps the same logical id.
+            // Do NOT open a new stream for heartbeats on the Node emulator.
         } else {
             // Ephemeral stream for polyfill/browser environments
             const bidi = await this.transport.createBidirectionalStream();
             const writer = bidi.writable.getWriter();
             const reader = bidi.readable.getReader();
-            entry = { bidi, writer, reader };
+            entry = { bidi, writer, reader, sid };
             created = true;
             this._trace.inc('streams.open');
             this._trace.info('stream.open', { sid });
         }
         const { writer, reader } = entry;
+
+        // Start a lightweight background reader pump for persistent Node emulator streams
+        if (isNodeEmulator && !isHeartbeat && created) {
+            const ent = this._streams.get(sidKey);
+            ent._reading = false;
+            ent._pumpId = setInterval(async () => {
+                // If stream has been closed/removed, stop the pump
+                const current = this._streams.get(sidKey);
+                if (!current || current !== ent) { try { clearInterval(ent._pumpId); } catch {} return; }
+                if (ent._reading) return;
+                ent._reading = true;
+                try {
+                    const { value, done } = await ent.reader.read();
+                    if (done) { /* keep interval; reader may signal done transiently */ }
+                    else if (value instanceof Uint8Array && value.byteLength > 0) {
+                        this._emitResponseEvent(sid, { type: 'response', ok: true, status: 200, data: value });
+                        this._trace.info('stream.response', { sid, bytes: value.byteLength });
+                    }
+                } catch (e) {
+                    this._trace.warn('stream.read.error', { sid, error: String(e && e.message || e) });
+                } finally {
+                    ent._reading = false;
+                }
+            }, 20);
+        }
 
         let aborted = false;
         let timeoutId = null;
@@ -179,19 +249,18 @@ export default class WebTransportCommunication extends Communication {
         }
 
         try {
-            // Write request body as-is. For native Node emulator, keep stream open for heartbeats.
-            // For pure WebTransport/polyfills (no native pump), close writer to flush response.
+            // Write request body as-is. On Node emulator persistent streams we intentionally keep the
+            // writer open (no FIN) so that heartbeats can be written on the same logical stream id.
             if (data) {
                 for await (const chunk of toAsyncChunks(data)) {
                     if (aborted) throw new DOMException('Aborted', 'AbortError');
                     await writer.write(chunk);
                 }
             }
+            // For non-emulator environments (or when using ephemeral streams), FIN after write.
+            // For Node emulator persistent streams, DO NOT FIN here; we'll FIN during closeStream(sid).
             if (!isNodeEmulator) {
                 try {
-                    // In polyfill/browser, wait a short, bounded time for writer.close() so the handler can
-                    // produce a response. If close() never resolves (some tests simulate this), the race timeout
-                    // prevents hanging and the read loop will honor timeoutMs.
                     const closeP = writer.close?.();
                     const waitMs = Math.max(10, Math.min(1000, Number(timeoutMs) || 100));
                     if (closeP && typeof closeP.then === 'function') {
@@ -202,9 +271,19 @@ export default class WebTransportCommunication extends Communication {
                     }
                 } catch {}
             }
-            // For Node emulator, keep stream open; it will be closed explicitly when the request completes.
+            // Keep the stream's reader open; for Node emulator, the persistent reader remains until explicit closeStream(sid).
 
             // Read response with bounded wait:
+            // For Node emulator persistent streams, skip inline read and rely on the background
+            // reader pump started above to emit responses. Heartbeats remain ephemeral and use
+            // the short bounded read path below.
+            if (isNodeEmulator) {
+                this._trace.info('stream.defer.read', { sid });
+                // Proactively nudge a read once to pick up any bytes enqueued by the native callback.
+                try { await this.nudgeRead(sid); } catch {}
+                return { ok: true, status: 202, data: new Uint8Array(0) };
+            }
+            
             // - If we see some data, use a small drain window to accumulate.
             // - If we see no data at all within maxWaitMs, return without emitting (let caller/heartbeats drive progress).
             const chunks = [];
@@ -260,15 +339,17 @@ export default class WebTransportCommunication extends Communication {
             this._trace.warn('stream.error', { sid, error: String(err && err.message || err) });
             throw err;
         } finally {
-            // Persistent streams (Node emulator): keep locks and stream open for future heartbeats.
-            // Ephemeral streams (polyfill/browser): close and release now.
+            // Cleanup locks conditionally based on transport type
+            // - Browser/polyfill ephemeral streams: fully cancel
+            // - Node emulator persistent streams: keep reader attached; only release writer lock
             if (!isNodeEmulator) {
-                // Do not await close here; some polyfills can override close() to never resolve
                 try { reader.cancel?.('done'); } catch {}
                 try { reader.releaseLock?.(); } catch {}
                 try { writer.releaseLock?.(); } catch {}
+            } else {
+                // Persistent Node emulator stream: keep reader attached for background pump
+                try { writer.releaseLock?.(); } catch {}
             }
-            // Do not close persistent streams here; they will be closed explicitly when the request completes.
             if (signal) {
                 try { signal.removeEventListener('abort', onAbort); } catch {}
             }
@@ -282,6 +363,7 @@ export default class WebTransportCommunication extends Communication {
         const entry = this._streams.get(sidKey);
         if (!entry) return;
         this._streams.delete(sidKey);
+    try { if (entry._pumpId) { clearInterval(entry._pumpId); entry._pumpId = null; } } catch {}
         try {
             // Attempt a graceful FIN then cancel reader to free native stream
             try { await entry.writer.close?.(); } catch {}

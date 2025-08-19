@@ -7,6 +7,8 @@ import {
   chunkToWire,
   decodeFromChunks,
   encodeToChunks,
+  canDecodeChunks_SequentialNotification,
+  decodeChunks_SequentialNotification,
   WWATP_SIGNAL,
   decode_label,
   encode_maybe_tree_node,
@@ -30,7 +32,7 @@ function parseRequest(bytes) {
   const signal = chunks[0]?.header?.signal ?? 0;
   const requestId = chunks[0]?.header?.request_id ?? 0;
   const payload = decodeFromChunks(chunks);
-  return { signal, requestId, payload };
+  return { signal, requestId, payload, chunks };
 }
 
 // Simple notification store shared by all clients for tests
@@ -79,7 +81,7 @@ export function createWWATPHandler(serverBackend) {
   try { store.syncFromBackend(serverBackend); } catch (_) {}
 
   return function handler(_request, dataBytes) {
-    const { signal, requestId, payload } = parseRequest(dataBytes);
+    const { signal, requestId, payload, chunks } = parseRequest(dataBytes);
     const respond = (respPayload, respSignal) => {
       const chunks = encodeToChunks(respPayload, { signal: respSignal, requestId });
       // concat
@@ -163,9 +165,22 @@ export function createWWATPHandler(serverBackend) {
         return respond(enc, WWATP_SIGNAL.SIGNAL_WWATP_PROCESS_NOTIFICATION_RESPONSE);
       }
       case WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST: {
-        // Request encodes a SequentialNotification where only signalCount is meaningful
-        const { value: seq } = decode_sequential_notification(payload, 0);
-        const since = seq.signalCount >>> 0;
+        // Request encodes a SequentialNotification where only signalCount is meaningful.
+        // Prefer chunk-based decode; fall back to legacy buffer-based if needed.
+        let since = 0;
+        try {
+          const nxt = canDecodeChunks_SequentialNotification(0, chunks);
+          if (nxt) {
+            const { value: sn } = decodeChunks_SequentialNotification(0, chunks);
+            since = sn.signalCount >>> 0;
+          } else {
+            const { value: seq } = decode_sequential_notification(payload, 0);
+            since = seq.signalCount >>> 0;
+          }
+        } catch (_) {
+          const { value: seq } = decode_sequential_notification(payload, 0);
+          since = seq.signalCount >>> 0;
+        }
   // Before answering, sync with the authoritative backend so direct changes are observed
   store.syncFromBackend(serverBackend);
   const vec = store.getSince(since);

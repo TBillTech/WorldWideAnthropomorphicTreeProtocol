@@ -569,6 +569,77 @@ export function decodeChunks_MaybeTreeNode(startChunk, chunks) {
 	return { nextChunk: end, value: Just(node) };
 }
 
+// ---- Chunk-based SequentialNotification (C++ parity) ----
+// Encode a SequentialNotification as:
+//   long_string("<signalCount> <label>") followed by Maybe<TreeNode> chunks
+export function encodeChunks_SequentialNotification(requestId, signal, sn) {
+	const seq = (sn?.signalCount >>> 0) || 0;
+	const label = String(sn?.notification?.labelRule || '');
+	const text = `${seq} ${label}`;
+	const strChunks = encodeChunks_long_string(requestId, signal, text);
+	const maybeChunks = encodeChunks_MaybeTreeNode(requestId, signal, sn?.notification?.maybeNode ?? Nothing);
+	return [...strChunks, ...maybeChunks];
+}
+
+export function canDecodeChunks_SequentialNotification(startChunk, chunks) {
+	const afterStr = canDecodeChunks_long_string(startChunk, chunks);
+	if (!afterStr) return null;
+	const maybeEnd = canDecodeChunks_MaybeTreeNode(afterStr, chunks);
+	return maybeEnd || null;
+}
+
+export function decodeChunks_SequentialNotification(startChunk, chunks) {
+	const { nextChunk: afterStr, value: text } = decodeChunks_long_string(startChunk, chunks);
+	// text is "<signalCount> <label>"
+	const sp = text.indexOf(' ');
+	const signalCount = sp >= 0 ? parseInt(text.slice(0, sp), 10) >>> 0 : (parseInt(text, 10) >>> 0);
+	const labelRule = sp >= 0 ? text.slice(sp + 1) : '';
+	const { nextChunk, value: maybeNode } = decodeChunks_MaybeTreeNode(afterStr, chunks);
+	return { nextChunk, value: { signalCount, notification: { labelRule, maybeNode } } };
+}
+
+// Vector<SequentialNotification> using chunk-based encoding (C++ parity)
+// Count is encoded as a label (stringified number) in a single chunk
+export function encodeChunks_VectorSequentialNotification(requestId, signal, vec) {
+	const countStr = String((vec?.length ?? 0) >>> 0);
+	const out = encodeChunks_label(requestId, signal, countStr);
+	for (const sn of (vec || [])) {
+		out.push(...encodeChunks_SequentialNotification(requestId, signal, sn));
+	}
+	return out;
+}
+
+export function canDecodeChunks_VectorSequentialNotification(startChunk, chunks) {
+	const afterCount = canDecodeChunks_label(startChunk, chunks);
+	if (!afterCount) return null;
+	const { value: countStr } = decodeChunks_label(startChunk, chunks);
+	// Strictly require decimal digits for count; otherwise it's not a valid chunk-based vector
+	if (!/^\d+$/.test(countStr)) return null;
+	const n = parseInt(countStr, 10) >>> 0;
+	let idx = afterCount;
+	for (let i = 0; i < n; i++) {
+		const nxt = canDecodeChunks_SequentialNotification(idx, chunks);
+		if (!nxt) return null;
+		idx = nxt;
+	}
+	return idx;
+}
+
+export function decodeChunks_VectorSequentialNotification(startChunk, chunks) {
+	const afterCount = canDecodeChunks_label(startChunk, chunks);
+	if (!afterCount) throw new Error('cannot decode vector count');
+	const { value: countStr } = decodeChunks_label(startChunk, chunks);
+	const n = parseInt(countStr, 10) >>> 0;
+	const out = [];
+	let idx = afterCount;
+	for (let i = 0; i < n; i++) {
+		const { nextChunk, value } = decodeChunks_SequentialNotification(idx, chunks);
+		out.push(value);
+		idx = nextChunk;
+	}
+	return { nextChunk: idx, value: out };
+}
+
 export function encodeChunks_VectorTreeNode(requestId, signal, nodes) {
 	const countStr = String(nodes.length >>> 0);
 	const out = encodeChunks_label(requestId, signal, countStr);
@@ -583,6 +654,7 @@ export function canDecodeChunks_VectorTreeNode(startChunk, chunks) {
 	const afterCount = canDecodeChunks_label(startChunk, chunks);
 	if (!afterCount) return null;
 	const { value: countStr } = decodeChunks_label(startChunk, chunks);
+	if (!/^\d+$/.test(countStr)) return null;
 	const count = parseInt(countStr, 10) >>> 0;
 	let idx = afterCount;
 	for (let i = 0; i < count; i++) {

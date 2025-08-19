@@ -5,13 +5,16 @@ import {
 	chunkToWire,
 	chunkFromWire,
 	encode_transaction,
-	encode_sequential_notification,
+		encodeChunks_SequentialNotification,
 	encode_label,
 	encode_maybe_tree_node,
 	encode_vec_tree_node,
 	decode_maybe_tree_node,
 	decode_vec_tree_node,
+		decodeChunks_VectorSequentialNotification,
+	canDecodeChunks_VectorSequentialNotification,
 	decode_vec_sequential_notification,
+	can_decode_vec_sequential_notification,
 	encodeToChunks,
 	decodeFromChunks,
 	WWATP_SIGNAL,
@@ -254,21 +257,41 @@ export default class HTTP3TreeMessage {
 
 	// getJournal(last_notification: SequentialNotification)
 	encodeGetJournalRequest(lastNotification) {
-		// Per C++ tests, when sending to server, drop label and treenode
+		// Build chunk-based encoding to match C++: long_string("<count> <label>") + Maybe<TreeNode>
 		const sanitized = {
-			signalCount: lastNotification.signalCount >>> 0,
+			signalCount: (lastNotification?.signalCount >>> 0) || 0,
 			notification: { labelRule: '', maybeNode: Nothing },
 		};
-	const payload = encode_sequential_notification(sanitized);
-	this.requestChunks = encodeToChunks(payload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST, requestId: this.requestId });
+		this.requestChunks = encodeChunks_SequentialNotification(this.requestId, WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST, sanitized);
 		this.isInitialized = true;
 		this.requestComplete = true;
 		return this;
 	}
 	decodeGetJournalResponse() {
+		// Prefer chunk-based decoding; fallback to buffer-based for compatibility
+		try {
+			if (canDecodeChunks_VectorSequentialNotification(0, this.responseChunks)) {
+				const { value } = decodeChunks_VectorSequentialNotification(0, this.responseChunks);
+				return value;
+			}
+		} catch (_) { /* fallback below */ }
+		// If the response is a single payload chunk containing legacy buffer-encoded vector,
+		// try decoding directly from that chunk payload to avoid mis-detecting chunk-based forms.
+		if (this.responseChunks.length === 1) {
+			const only = this.responseChunks[0];
+			try {
+				if (can_decode_vec_sequential_notification(only.payload ?? new Uint8Array(0), 0)) {
+					const { value } = decode_vec_sequential_notification(only.payload, 0);
+					return value;
+				}
+			} catch (_) { /* continue */ }
+		}
 		const bytes = decodeFromChunks(this.responseChunks);
-		const { value } = decode_vec_sequential_notification(bytes, 0);
-		return value;
+		if (can_decode_vec_sequential_notification(bytes, 0)) {
+			const { value } = decode_vec_sequential_notification(bytes, 0);
+			return value;
+		}
+		return [];
 	}
 
 	// Utilities to access chunks as wire bytes (for transport adapters)

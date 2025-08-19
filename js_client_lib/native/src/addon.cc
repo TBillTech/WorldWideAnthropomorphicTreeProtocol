@@ -150,6 +150,19 @@ Napi::Value SessionProcessRequestStream(const Napi::CallbackInfo& info) {
   return Number::New(env, static_cast<double>(rc));
 }
 
+Napi::Value ReadReady(const Napi::CallbackInfo& info) {
+  Env env = info.Env();
+  if (!info[0].IsExternal() || !info[1].IsNumber()) {
+    Napi::TypeError::New(env, "(session, sid:uint16) required").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  auto sess = info[0].As<External<wwatp_quic_session_t>>().Data();
+  uint32_t sid = info[1].As<Number>().Uint32Value();
+  int rc = wwatp_quic_read_ready(sess, static_cast<uint16_t>(sid & 0xffff));
+  if (rc < 0) return Boolean::New(env, false);
+  return Boolean::New(env, rc > 0);
+}
+
 Object Init(Env env, Object exports) {
   exports.Set("lastError", Function::New(env, LastError));
   exports.Set("createSession", Function::New(env, CreateSession));
@@ -160,6 +173,7 @@ Object Init(Env env, Object exports) {
   exports.Set("closeStream", Function::New(env, StreamClose));
   exports.Set("setRequestSignal", Function::New(env, StreamSetRequestSignal));
   exports.Set("processRequestStream", Function::New(env, SessionProcessRequestStream));
+  exports.Set("readReady", Function::New(env, ReadReady));
   return exports;
 }
 

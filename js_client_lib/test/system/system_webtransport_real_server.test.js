@@ -78,6 +78,13 @@ async function waitForServerReady(proc, port = 12345, host = '127.0.0.1', timeou
 }
 
 async function spawnServer() {
+  // Allow disabling server spawn to attach an external/debug-launched server instead.
+  // If WWATP_SKIP_SPAWN_SERVER=1 or WWATP_EXTERNAL_SERVER=1, wait for UDP bind and return null.
+  const skip = String(process.env.WWATP_SKIP_SPAWN_SERVER || process.env.WWATP_EXTERNAL_SERVER || '').toLowerCase();
+  if (skip === '1' || skip === 'true' || skip === 'yes' || skip === 'on') {
+    await waitForServerReady({ once: () => {} }, 12345, '127.0.0.1', 15000);
+    return null;
+  }
   if (!fs.existsSync(SERVER_BIN)) throw new Error(`Server binary not found at ${SERVER_BIN}`);
   ensureSandboxAndDataDirs();
   const proc = child_process.spawn(SERVER_BIN, [CONFIG], { cwd: ROOT });
@@ -109,6 +116,35 @@ function killServer(proc, signal = 'SIGTERM', timeoutMs = 5000) {
 const wtDescribe = describe.sequential;
 
 wtDescribe('System (WebTransport real server)', () => {
+  // Drive the updater until a promise resolves or timeout elapses.
+  async function awaitWithMaintain(updater, comm, p, timeoutMs = 8000, tickMs = 20) {
+    let done = false; let val; let err;
+    p.then((v) => { done = true; val = v; }).catch((e) => { done = true; err = e; });
+    const start = Date.now();
+    let i = 0;
+    while (!done && (Date.now() - start) < timeoutMs) {
+      await updater.maintainRequestHandlers(comm, 0);
+      // stderr instrumentation after each maintain tick
+      try {
+        const backs = typeof updater.getBackends === 'function' ? updater.getBackends() : [];
+        const pending = backs.reduce((s, b) => s + (Array.isArray(b?.pendingRequests_) ? b.pendingRequests_.length : 0), 0);
+        const waits = backs.reduce((s, b) => s + (b?.waits_ instanceof Map ? b.waits_.size : 0), 0);
+        const ongoing = updater?.ongoingRequests_ instanceof Map ? updater.ongoingRequests_.size : 0;
+        const hb = updater?._hbTimers instanceof Map ? updater._hbTimers.size : 0;
+        const streams = comm?._streams instanceof Map ? comm._streams.size : 0;
+        const cid = typeof comm?.connectionId === 'function' ? comm.connectionId() : '';
+        const stats = await (comm?.transport?.getStats?.() || Promise.resolve({ bytesSent: 0, bytesReceived: 0 }));
+        // eslint-disable-next-line no-console
+        console.error(`[awaitMaintain] tick=${i++} pending=${pending} waits=${waits} ongoing=${ongoing} hb=${hb} streams=${streams} sent=${stats.bytesSent||0} recv=${stats.bytesReceived||0} cid=${cid}`);
+      } catch (_) { /* best-effort */ }
+      // Tiny delay to avoid a tight loop; Node timers are coarse, this is fine
+      await new Promise((r) => setTimeout(r, tickMs));
+    }
+    if (!done) throw new Error('timeout awaiting response');
+    if (err) throw err;
+    return val;
+  }
+
   it('upsert a test node and fetch it back via WebTransportCommunication', async () => {
     // Pre-checks
     if (!fs.existsSync(SERVER_BIN)) {
@@ -145,12 +181,19 @@ wtDescribe('System (WebTransport real server)', () => {
 
       // Updater + backend
       const updater = new Http3ClientBackendUpdater('wt', '127.0.0.1', 12345);
-      const local = new SimpleBackend();
-      const be = updater.addBackend(
-        local,
+      const localA = new SimpleBackend();
+      const be_A = updater.addBackend(
+        localA,
         true,
         new Request({ scheme: 'https', authority: '127.0.0.1:12345', path: '/init/wwatp/' }),
-        60
+        0 // Journal requests not in this test
+      );
+      const localB = new SimpleBackend();
+      const be_B = updater.addBackend(
+        localB,
+        true,
+        new Request({ scheme: 'https', authority: '127.0.0.1:12345', path: '/init/wwatp/' }),
+        0 // Journal requests not in this test
       );
 
       // Build a simple node and upsert
@@ -165,23 +208,19 @@ wtDescribe('System (WebTransport real server)', () => {
       node.insertProperty(0, 'popularity', 42n, 'uint64');
       node.insertPropertyString(1, 'diet', 'string', 'omnivore');
 
-      // Blocking-mode pattern (like libcurl tests):
-      // 1) queue request -> 2) call maintainRequestHandlers(connector) once -> 3) await with timeout
-      const upOkP = be.upsertNode([node]);
-      await updater.maintainRequestHandlers(comm, 0);
-      const upOk = await Promise.race([
-        upOkP,
-        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for upsert response')), 8000)),
-      ]);
+      // Queue request, then drive the updater in a short loop until it resolves
+      const upOk = await awaitWithMaintain(updater, comm, be_A.upsertNode([node]), 8000);
+      // eslint-disable-next-line no-console
+      console.error(`[awaitMaintain] upsert resolved: ${upOk}`);
       expect(!!upOk).toBe(true);
+      // eslint-disable-next-line no-console
+      console.error(`[awaitMaintain] getNode resolved: ${!!(maybe && maybe.isJust && maybe.isJust())}`);
 
-      // Fetch it back
-      const getP = be.getNode('e2e_webtransport_node');
-      await updater.maintainRequestHandlers(comm, 0);
-      const maybe = await Promise.race([
-        getP,
-        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for getNode response')), 8000)),
-      ]);
+      // Sync be_B from server, then fetch it back from be_B
+      const full = await awaitWithMaintain(updater, comm, be_B.requestFullTreeSync(), 10000);
+      // eslint-disable-next-line no-console
+      console.error(`[awaitMaintain] fullTreeSync resolved: ${Array.isArray(full) ? full.length : 'n/a'}`);
+      const maybe = be_B.getNode('e2e_webtransport_node');
       expect(maybe && typeof maybe.isJust === 'function').toBe(true);
       expect(maybe && maybe.isJust && maybe.isJust()).toBe(true);
 
@@ -191,9 +230,10 @@ wtDescribe('System (WebTransport real server)', () => {
 
       await comm.close();
     } finally {
-  await killServer(server);
+  // Only kill if we spawned it here; when using external server, leave it running
+  if (server) await killServer(server);
       // Restore global
       try { if (orig) globalThis.WebTransport = orig; else delete globalThis.WebTransport; } catch {}
     }
-  }, 5000);
+  }, 20000);
 });

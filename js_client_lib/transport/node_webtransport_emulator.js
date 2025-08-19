@@ -45,6 +45,7 @@ export default class NodeWebTransportEmulator {
   this._pumpId = null; // background pump interval id
   // Numeric client connection id if available from native addon (best-effort)
   this._clientCid = undefined;
+  // Readiness is determined per-stream via native addon; no local flags.
 
     this.closed = new Promise((res, rej) => { this._closedResolve = res; this._closedReject = rej; });
     this.draining = new Promise((res) => { this._drainingResolve = res; });
@@ -113,7 +114,7 @@ export default class NodeWebTransportEmulator {
       this._pumpId = setInterval(() => {
         try {
           const rc = this._nq.processRequestStream(this._session);
-          if (rc > 0) this._trace.inc('proc.progress', rc);
+          if (rc > 0) { this._trace.inc('proc.progress', rc); }
         } catch {}
       }, period);
     }
@@ -277,6 +278,22 @@ export default class NodeWebTransportEmulator {
     } catch {
       return false;
     }
+  }
+
+  // Readiness hint for readable data for a specific logical stream id (sid).
+  // Prefer the native addon's per-stream readReady(session,sid) when available;
+  // return false if the addon doesn't provide it.
+  readReady(sid) {
+    try {
+      if (this._nq && typeof this._nq.readReady === 'function' && this._session) {
+        const lid = (sid && typeof sid === 'object' && typeof sid.logicalId === 'number')
+          ? sid.logicalId
+          : Number(sid);
+        if (!Number.isFinite(lid)) return false;
+        return !!this._nq.readReady(this._session, lid);
+      }
+    } catch {}
+    return false;
   }
 
   async createUnidirectionalStream() {

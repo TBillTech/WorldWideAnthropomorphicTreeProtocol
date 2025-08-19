@@ -51,6 +51,11 @@ wwatp_quic_stream_t *wwatp_quic_open_bidi_stream(wwatp_quic_session_t *session, 
 // Returns 1 if any progress was made, 0 if idle, negative value on error.
 int wwatp_quic_process_request_stream(wwatp_quic_session_t *session);
 
+// Query whether there are readable bytes pending for the given logical stream id.
+// Returns 1 if the stream exists and has pending readable data, 0 if no data available,
+// and a negative error code if the session/stream is invalid.
+int wwatp_quic_read_ready(wwatp_quic_session_t *session, uint16_t logical_stream_id);
+
 // Set the WWATP request signal (e.g., 0x17 for GET_FULL_TREE_REQUEST) for the first
 // request emission on this stream. If not set, a default may be used.
 void wwatp_quic_stream_set_wwatp_signal(wwatp_quic_stream_t *stream, uint8_t signal);

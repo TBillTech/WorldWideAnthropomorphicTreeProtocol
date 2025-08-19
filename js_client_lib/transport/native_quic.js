@@ -37,6 +37,7 @@ export function tryLoadNativeQuic() {
     function openBidiStream(sess, p) { return addon.openBidiStream(sess, p); }
   function setRequestSignal(st, sig) { try { addon.setRequestSignal(st, sig >>> 0); } catch {} }
   function processRequestStream(sess) { try { return Number(addon.processRequestStream(sess)) || 0; } catch { return 0; } }
+    function readReady(sess, sid) { try { return !!addon.readReady?.(sess, Number(sid) >>> 0); } catch { return false; } }
     function write(st, data, endStream = true) {
       const u8 = Buffer.isBuffer(data) ? new Uint8Array(data) : (data instanceof Uint8Array ? data : new Uint8Array());
       return Number(addon.write(st, u8, !!endStream));
@@ -46,7 +47,7 @@ export function tryLoadNativeQuic() {
   function lastError() { try { return addon.lastError(); } catch { return 'unknown'; } }
   // Optional: expose numeric client CID if addon supports it
   function getClientConnectionId(sess) { try { return addon.getClientConnectionId?.(sess); } catch { return undefined; } }
-  return { libPath: '(napi addon)', types: {}, createSession, closeSession, openBidiStream, setRequestSignal, write, read, closeStream, lastError, getClientConnectionId, processRequestStream };
+  return { libPath: '(napi addon)', types: {}, createSession, closeSession, openBidiStream, setRequestSignal, write, read, closeStream, lastError, getClientConnectionId, processRequestStream, readReady };
   }
   // If addon not found, return null (no fallback).
   return null;

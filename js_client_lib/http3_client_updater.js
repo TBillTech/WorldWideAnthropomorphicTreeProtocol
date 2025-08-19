@@ -5,7 +5,7 @@
 /* eslint-env node */
 import Http3ClientBackend from './http3_client.js';
 import { tracer } from './transport/instrumentation.js';
-import { chunkFromWire, chunkToWire, WWATP_SIGNAL, decodeFromChunks, canDecodeChunks_MaybeTreeNode, canDecodeChunks_VectorTreeNode, can_decode_vec_sequential_notification, PayloadChunkHeader } from './interface/http3_tree_message_helpers.js';
+import { chunkFromWire, chunkToWire, WWATP_SIGNAL, SIGNAL_HEARTBEAT, decodeFromChunks, canDecodeChunks_MaybeTreeNode, canDecodeChunks_VectorTreeNode, canDecodeChunks_VectorSequentialNotification, can_decode_vec_sequential_notification, PayloadChunkHeader } from './interface/http3_tree_message_helpers.js';
 
 export default class Http3ClientBackendUpdater {
 	constructor(name = 'default', ipAddr = 'localhost', port = 443) {
@@ -194,9 +194,17 @@ export default class Http3ClientBackendUpdater {
 							// Empty allowed (treat as true) or bool
 							if (payload.byteLength === 0 || payload.byteLength >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_PROCESS_NOTIFICATION_RESPONSE;
 							break;
-						case WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST:
-							if (can_decode_vec_sequential_notification(payload, 0)) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE;
+						case WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST: {
+							if (canDecodeChunks_VectorSequentialNotification(0, msg.responseChunks)) {
+								readySignal = WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE;
+								break;
+							}
+							const buf = decodeFromChunks(msg.responseChunks);
+							if (can_decode_vec_sequential_notification(buf, 0)) {
+								readySignal = WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE;
+							}
 							break;
+						}
 						default:
 							break;
 					}
@@ -261,6 +269,14 @@ export default class Http3ClientBackendUpdater {
 			for (const p of parts) { wire.set(p, o); o += p.byteLength; }
 		}
 
+		// Targeted debug: log the first request chunk header sizes
+		try {
+			const first = msg.requestChunks && msg.requestChunks[0];
+			if (first && first.header && Object.prototype.hasOwnProperty.call(first.header, 'data_length')) {
+				this._trace.info('send.arg.first', { sid, rid: msg.requestId, sig: first.header.signal, wire: (first.header.data_length | 0) + 6, payload_len: first.header.data_length | 0 });
+			}
+		} catch (_) {}
+
 		// Track ongoing
 		this.ongoingRequests_.set(sidKey, { sid, backend, msg, isJournal });
 
@@ -273,7 +289,7 @@ export default class Http3ClientBackendUpdater {
 			// Start heartbeat loop for WWATP requests after initial send; server may only release
 			// results upon receiving a HEARTBEAT on a subsequent stream with the same logical request id.
 			const hbDisabled = (() => { try { const v = globalThis?.process?.env?.WWATP_DISABLE_HB; if (!v) return false; const s = String(v).toLowerCase(); return s === '1' || s === 'true' || s === 'yes' || s === 'on'; } catch { return false; } })();
-			if (!hbDisabled && (typeof request.isWWATP === 'function' ? request.isWWATP() : String(request.path || '').includes('wwatp/'))) {
+			if (!hbDisabled && connector.hasResponseHandler?.(sid) && (typeof request.isWWATP === 'function' ? request.isWWATP() : String(request.path || '').includes('wwatp/'))) {
 				const loop = async () => {
 					if (finished) {
 						const t = this._hbTimers.get(sidKey); if (t) clearInterval(t); this._hbTimers.delete(sidKey);
@@ -287,10 +303,12 @@ export default class Http3ClientBackendUpdater {
 						return;
 					}
 					try {
-						const hbHeader = new PayloadChunkHeader(logicalReqId, WWATP_SIGNAL.SIGNAL_HEARTBEAT & 0xff, 0);
+						const hbHeader = new PayloadChunkHeader(logicalReqId, SIGNAL_HEARTBEAT & 0xff, 0);
 						const hbWire = chunkToWire({ header: hbHeader, payload: new Uint8Array(0) });
-						// Reuse the original StreamIdentifier for heartbeats so logicalId stays constant
-						const r = await connector.sendRequest(sid, request, hbWire, { timeoutMs: 2000 });
+						// Reuse the original StreamIdentifier for routing; open a fresh native stream for the heartbeat
+						// while keeping the original response stream readable. Tag as heartbeat so the transport
+						// can optimize (ephemeral write-only on Node emulator).
+						const r = await connector.sendRequest(sid, request, hbWire, { timeoutMs: 2000, requestSignal: SIGNAL_HEARTBEAT, isHeartbeat: true });
 						this._trace.inc('hb.sent');
 						this._trace.info('hb.tick', { sid, rid: msg.requestId, bytes: r?.data?.byteLength || 0 });
 						// Response bytes (if any) will be delivered to the original handler via _emitResponseEvent(sid,...)
