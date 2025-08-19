@@ -107,12 +107,20 @@ export default class Http3ClientBackendUpdater {
 				this.#dispatchOne(connector, backend, jmsg, /*isJournal*/ true);
 			}
 		}
+
+		// 3) Like the C++ service's responseCycle, pump the connector's request/response queues once.
+		try {
+			if (typeof connector.processRequestStream === 'function') {
+				connector.processRequestStream();
+			}
+		} catch (_) { /* best-effort only */ }
 	}
 
 	// Internal: send a single HTTP3TreeMessage over the connector
 	async #dispatchOne(connector, backend, msg, isJournal) {
 		const request = backend.getRequestUrlInfo();
 		const sid = connector.getNewRequestStreamIdentifier(request);
+		const logicalReqId = (sid && sid.logicalId) ? (sid.logicalId & 0xffff) : (msg.requestId & 0xffff);
 		const sidKey = String(sid);
 		let finished = false;
 		this._trace.info('send.start', { sid, rid: msg.requestId, isJournal });
@@ -221,6 +229,12 @@ export default class Http3ClientBackendUpdater {
 						if (isJournal) backend.setJournalRequestComplete(this.lastTime_);
 						// stop any heartbeat for this request
 						const t = this._hbTimers.get(sidKey); if (t) clearInterval(t); this._hbTimers.delete(sidKey);
+						// Close the persistent stream for this sid if the transport supports it
+						try {
+							if (typeof connector.closeStream === 'function') {
+								(async () => { try { await connector.closeStream(sid); } catch {} })();
+							}
+						} catch (_) {}
 					}
 				} catch (_) {}
 			}
@@ -228,19 +242,18 @@ export default class Http3ClientBackendUpdater {
 		connector.registerResponseHandler(sid, handleEvent);
 
 		// Build request wire bytes by concatenating all request chunks
+		// IMPORTANT: Align WWATP payload request_id with the stream logical id (server expects this)
 		const parts = [];
-		for (const chunk of msg.requestChunks) parts.push(chunkToWire(chunk));
-		// Important for curl-based transport: append a zero-length HEARTBEAT chunk
-		// immediately after the request on WWATP endpoints. This ensures servers that
-		// flush responses only after seeing a follow-up message on the same stream
-		// will produce a response within this single request burst.
-		try {
-			const isWWATP = typeof request.isWWATP === 'function' ? request.isWWATP() : String(request.path || '').includes('wwatp/');
-			if (isWWATP) {
-				const hbHeader = new PayloadChunkHeader(msg.requestId & 0xffff, WWATP_SIGNAL.SIGNAL_HEARTBEAT & 0xff, 0);
-				parts.push(chunkToWire({ header: hbHeader, payload: new Uint8Array(0) }));
+		for (const chunk of msg.requestChunks) {
+			try {
+				const hdr = { ...(chunk.header || {}) };
+				// Force request_id to logical stream id for on-wire semantics
+				hdr.request_id = logicalReqId;
+				parts.push(chunkToWire({ header: hdr, payload: chunk.payload }));
+			} catch {
+				parts.push(chunkToWire(chunk));
 			}
-		} catch (_) {}
+		}
 		const total = parts.reduce((s, p) => s + p.byteLength, 0);
 		const wire = new Uint8Array(total);
 		{
@@ -253,7 +266,9 @@ export default class Http3ClientBackendUpdater {
 
 		// Fire request
 		try {
-			await connector.sendRequest(sid, request, wire);
+			// Pass WWATP request signal to WebTransport to set native request signal framing.
+			const reqSig = (msg.requestChunks && msg.requestChunks[0] && msg.requestChunks[0].header && msg.requestChunks[0].header.signal) | 0;
+			await connector.sendRequest(sid, request, wire, { requestSignal: reqSig });
 			this._trace.info('send.done', { sid, rid: msg.requestId });
 			// Start heartbeat loop for WWATP requests after initial send; server may only release
 			// results upon receiving a HEARTBEAT on a subsequent stream with the same logical request id.
@@ -272,16 +287,13 @@ export default class Http3ClientBackendUpdater {
 						return;
 					}
 					try {
-						const hbHeader = new PayloadChunkHeader(msg.requestId & 0xffff, WWATP_SIGNAL.SIGNAL_HEARTBEAT & 0xff, 0);
+						const hbHeader = new PayloadChunkHeader(logicalReqId, WWATP_SIGNAL.SIGNAL_HEARTBEAT & 0xff, 0);
 						const hbWire = chunkToWire({ header: hbHeader, payload: new Uint8Array(0) });
-						const hbSid = connector.getNewRequestStreamIdentifier(request);
-						const r = await connector.sendRequest(hbSid, request, hbWire, { timeoutMs: 2000 });
+						// Reuse the original StreamIdentifier for heartbeats so logicalId stays constant
+						const r = await connector.sendRequest(sid, request, hbWire, { timeoutMs: 2000 });
 						this._trace.inc('hb.sent');
-						this._trace.info('hb.tick', { sid: hbSid, rid: msg.requestId, bytes: r?.data?.byteLength || 0 });
-						if (r && r.data instanceof Uint8Array && r.data.byteLength) {
-							// Feed returned bytes through the same handler logic
-							handleEvent({ data: r.data });
-						}
+						this._trace.info('hb.tick', { sid, rid: msg.requestId, bytes: r?.data?.byteLength || 0 });
+						// Response bytes (if any) will be delivered to the original handler via _emitResponseEvent(sid,...)
 					} catch (e) { this._trace.warn('hb.error', { error: String(e && e.message || e) }); }
 				};
 				const id = setInterval(loop, 100);

@@ -47,6 +47,10 @@ void wwatp_quic_close_session(wwatp_quic_session_t *session);
 // path must be a UTF-8 string like "/init/wwatp/". Returns NULL on failure.
 wwatp_quic_stream_t *wwatp_quic_open_bidi_stream(wwatp_quic_session_t *session, const char *path);
 
+// Pump the underlying connector request/response queues once.
+// Returns 1 if any progress was made, 0 if idle, negative value on error.
+int wwatp_quic_process_request_stream(wwatp_quic_session_t *session);
+
 // Set the WWATP request signal (e.g., 0x17 for GET_FULL_TREE_REQUEST) for the first
 // request emission on this stream. If not set, a default may be used.
 void wwatp_quic_stream_set_wwatp_signal(wwatp_quic_stream_t *stream, uint8_t signal);

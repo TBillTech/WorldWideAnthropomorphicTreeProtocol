@@ -36,11 +36,15 @@ export default class NodeWebTransportEmulator {
     this._drainingResolve = null;
     this._bytesSent = 0;
     this._bytesReceived = 0;
-    this._protocol = 'h3';
+  this._protocol = 'h3';
     this._reliability = 'reliable-only';
     this._congestionControl = options?.congestionControl || 'default';
   this._openStreams = new Set();
+  this._lastOpened = null;
   this._trace = tracer('NodeWebTransportEmulator');
+  this._pumpId = null; // background pump interval id
+  // Numeric client connection id if available from native addon (best-effort)
+  this._clientCid = undefined;
 
     this.closed = new Promise((res, rej) => { this._closedResolve = res; this._closedReject = rej; });
     this.draining = new Promise((res) => { this._drainingResolve = res; });
@@ -75,7 +79,7 @@ export default class NodeWebTransportEmulator {
     const initPromise = (async () => {
   const nq = tryLoadNativeQuic();
       if (!nq) throw new Error('Native QUIC addon not available');
-      this._nq = nq;
+  this._nq = nq;
       const opts = {
         url: `${u.protocol}//${u.host}`,
       };
@@ -92,7 +96,28 @@ export default class NodeWebTransportEmulator {
       // Create a single connection (session)
   this._trace.info('session.create', { url: opts.url });
   this._session = this._nq.createSession(opts);
+  // Try to retrieve a stable numeric client connection id from addon if exposed
+  try {
+    const cid = typeof this._nq.getClientConnectionId === 'function'
+      ? this._nq.getClientConnectionId(this._session)
+      : undefined;
+    if (cid !== undefined && cid !== null) this._clientCid = Number(cid);
+  } catch (_) {}
   this._trace.info('session.ready');
+  // Start a lightweight background pump to drive native request/response processing,
+  // mirroring libcurl's multi interface behavior. This ensures progress even when
+  // callers don't invoke processRequestStream frequently.
+  try {
+    if (!this._pumpId && this._nq && typeof this._nq.processRequestStream === 'function') {
+      const period = Math.max(5, Number(this.options?.pumpIntervalMs ?? 20));
+      this._pumpId = setInterval(() => {
+        try {
+          const rc = this._nq.processRequestStream(this._session);
+          if (rc > 0) this._trace.inc('proc.progress', rc);
+        } catch {}
+      }, period);
+    }
+  } catch {}
       // If creation failed, createSession would have thrown.
     })();
     // Attach a catch to avoid unhandled rejection warnings, but keep ready as the original promise
@@ -103,6 +128,8 @@ export default class NodeWebTransportEmulator {
   get reliability() { return this._reliability; }
   get congestionControl() { return this._congestionControl; }
   get protocol() { return this._protocol; }
+  // Optional helper for consumers to read numeric client CID
+  async getClientConnectionId() { return this._clientCid; }
 
   async close(closeInfo = {}) {
     // Graceful close: free session
@@ -112,7 +139,8 @@ export default class NodeWebTransportEmulator {
         try { this._nq?.closeStream(st); } catch {}
         this._openStreams.delete(st);
       }
-      if (this._session && this._nq) {
+  if (this._pumpId) { try { clearInterval(this._pumpId); } catch {} this._pumpId = null; }
+  if (this._session && this._nq) {
         this._trace.info('session.close');
         this._nq.closeSession(this._session);
       }
@@ -147,6 +175,7 @@ export default class NodeWebTransportEmulator {
   const st = this._nq.openBidiStream(this._session, path);
     if (!st) throw new Error('Failed to open bidirectional stream');
   this._openStreams.add(st);
+  this._lastOpened = st;
   this._trace.inc('streams.open');
   // Avoid coercing native handle to primitive; just tag type safely
   const safeTag = (x) => { try { return Object.prototype.toString.call(x); } catch { return undefined; } };
@@ -189,28 +218,29 @@ export default class NodeWebTransportEmulator {
 
     // Readable
     let done = false;
-  const reader = {
+    const reader = {
       async read() {
         if (done) return { value: undefined, done: true };
-        // Poll native read for a short window to avoid premature EOF on empty reads.
-        const maxAttempts = 100; // ~2s at 20ms + 0ms read time
-        for (let i = 0; i < maxAttempts; i++) {
-          const out = self._nq.read(st, 65536, 50);
-          if (out instanceof Uint8Array) {
-            if (out.byteLength > 0) {
-              self._bytesReceived += out.byteLength;
-              self._trace.inc('bytes.recv', out.byteLength);
-              return { value: out, done: false };
-            }
-            // Zero-length indicates FIN/EOF
-            done = true;
-            return { value: undefined, done: true };
+        // Try a short blocking read from native; if no data, yield control but keep stream open.
+        const out = self._nq.read(st, 65536, 100);
+        if (out instanceof Uint8Array) {
+          if (out.byteLength > 0) {
+            self._bytesReceived += out.byteLength;
+            self._trace.inc('bytes.recv', out.byteLength);
+            return { value: out, done: false };
           }
-          // Small delay before retrying
+          // Treat zero-length as "no data yet" (do NOT assume FIN) — keep waiting.
           await new Promise((r) => setTimeout(r, 20));
+          return { value: undefined, done: false };
         }
-        done = true;
-        return { value: undefined, done: true };
+        // If addon indicates FIN with a special token, respect it (optional API contract)
+        if (out && typeof out === 'object' && out.fin === true) {
+          done = true;
+          return { value: undefined, done: true };
+        }
+        // No data available within timeout; yield cooperatively and let caller decide.
+        await new Promise((r) => setTimeout(r, 20));
+        return { value: undefined, done: false };
       },
       async cancel(_reason) {
         done = true;
@@ -231,6 +261,24 @@ export default class NodeWebTransportEmulator {
     };
   }
 
+  // Optional: Tag the WWATP request signal for the most recently opened stream
+  setRequestSignalForCurrentStream(sig) {
+    if (!this._lastOpened || !this._nq?.setRequestSignal) return;
+    try { this._nq.setRequestSignal(this._lastOpened, sig >>> 0); } catch {}
+  }
+
+  // Pump the underlying native connector request/response queues once.
+  // Returns true if any progress was made.
+  processRequestStream() {
+    if (!this._nq || !this._session || typeof this._nq.processRequestStream !== 'function') return false;
+    try {
+      const rc = this._nq.processRequestStream(this._session);
+      return rc > 0;
+    } catch {
+      return false;
+    }
+  }
+
   async createUnidirectionalStream() {
     // Not implemented: servers currently expect bidi for requests
     throw new Error('createUnidirectionalStream not implemented');
@@ -238,5 +286,16 @@ export default class NodeWebTransportEmulator {
 
   createSendGroup() {
     return { add: async () => {}, wait: async () => {} };
+  }
+
+  // Allow explicit close of the most recent stream for a given sid in our simple model.
+  // In this emulator, we don't track sid->native stream mapping, so close the last opened.
+  async closeStream(_sid) {
+    if (!this._lastOpened) return;
+    try { this._nq?.closeStream(this._lastOpened); } catch {}
+    this._openStreams.delete(this._lastOpened);
+    this._trace.inc('streams.closed');
+    this._trace.info('stream.closed', { idTag: Object.prototype.toString.call(this._lastOpened), count: this._openStreams.size });
+    this._lastOpened = null;
   }
 }

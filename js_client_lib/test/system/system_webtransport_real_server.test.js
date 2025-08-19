@@ -17,12 +17,11 @@ import {
   tryLoadNativeQuic,
 } from '../../index.js';
 
-// Gate on env flag
+// Previously gated on env flags; now we always execute the suite and rely on
+// in-test prechecks to early-return when prerequisites aren't available.
 const e2e = (process.env.WWATP_E2E || '').toString().toLowerCase();
 const full = (process.env.WWATP_E2E_FULL || '').toString().toLowerCase();
-const SHOULD_RUN = (e2e === '1' || e2e === 'true' || e2e === 'yes' || e2e === 'on') &&
-                   (full === '1' || full === 'true' || full === 'yes' || full === 'on');
-console.info('[system_webtransport_real_server.test] WWATP_E2E=%s, SHOULD_RUN=%s', process.env.WWATP_E2E, SHOULD_RUN);
+console.info('[system_webtransport_real_server.test] WWATP_E2E=%s (no skip gate)', process.env.WWATP_E2E);
 
 const ROOT = path.resolve(__dirname, '../../..');
 const SERVER_BIN = path.join(ROOT, 'build', 'wwatp_server');
@@ -83,6 +82,13 @@ async function spawnServer() {
   ensureSandboxAndDataDirs();
   const proc = child_process.spawn(SERVER_BIN, [CONFIG], { cwd: ROOT });
   proc.on('error', () => {});
+  // Pipe server output for diagnostics during the test
+  try {
+    proc.stdout?.setEncoding?.('utf-8');
+    proc.stderr?.setEncoding?.('utf-8');
+    proc.stdout?.on?.('data', (d) => { try { process.stdout.write(`[server stdout] ${d}`); } catch {} });
+    proc.stderr?.on?.('data', (d) => { try { process.stderr.write(`[server stderr] ${d}`); } catch {} });
+  } catch {}
   await waitForServerReady(proc, 12345, '127.0.0.1', 15000);
   return proc;
 }
@@ -100,9 +106,9 @@ function killServer(proc, signal = 'SIGTERM', timeoutMs = 5000) {
   });
 }
 
-const wtDescribe = SHOULD_RUN ? describe.sequential : describe.skip;
+const wtDescribe = describe.sequential;
 
-wtDescribe('System (WebTransport – real server)', () => {
+wtDescribe('System (WebTransport real server)', () => {
   it('upsert a test node and fetch it back via WebTransportCommunication', async () => {
     // Pre-checks
     if (!fs.existsSync(SERVER_BIN)) {
@@ -123,7 +129,7 @@ wtDescribe('System (WebTransport – real server)', () => {
     process.env.WWATP_CERT = CERT_FILE;
     process.env.WWATP_KEY = KEY_FILE;
     process.env.WWATP_INSECURE = '1'; // allow self-signed
-  process.env.WWATP_TRACE = process.env.WWATP_TRACE || '1'; // enable tracing
+    process.env.WWATP_TRACE = process.env.WWATP_TRACE || '1'; // enable tracing
 
   // Polyfill WebTransport global with Node emulator class
     const { default: NodeWebTransportEmulator } = await import('../../transport/node_webtransport_emulator.js');
@@ -140,20 +146,12 @@ wtDescribe('System (WebTransport – real server)', () => {
       // Updater + backend
       const updater = new Http3ClientBackendUpdater('wt', '127.0.0.1', 12345);
       const local = new SimpleBackend();
-      const SIMPLE = String(process.env.WWATP_E2E_SIMPLE || '').toLowerCase();
-      const FULL = String(process.env.WWATP_E2E_FULL || '').toLowerCase();
-      const simpleMode = (SIMPLE === '1' || SIMPLE === 'true' || SIMPLE === 'yes' || SIMPLE === 'on') || !(FULL === '1' || FULL === 'true' || FULL === 'yes' || FULL === 'on');
       const be = updater.addBackend(
         local,
         true,
         new Request({ scheme: 'https', authority: '127.0.0.1:12345', path: '/init/wwatp/' }),
-        simpleMode ? 0 : 60
+        60
       );
-
-      // Optional simplified smoke mode: do a single upsert/get without starting the periodic loop
-  if (!simpleMode) {
-        updater.start(comm, 0, 50);
-      }
 
       // Build a simple node and upsert
       const node = new TreeNode({
@@ -167,40 +165,35 @@ wtDescribe('System (WebTransport – real server)', () => {
       node.insertProperty(0, 'popularity', 42n, 'uint64');
       node.insertPropertyString(1, 'diet', 'string', 'omnivore');
 
-      let okUpsert;
-  // Disable heartbeats to avoid noisy stream flood in native e2e
-  process.env.WWATP_DISABLE_HB = '1';
-  if (simpleMode) {
-        // Enqueue first, then drive a single maintain tick
-        const p = be.upsertNode([node]);
-        updater.maintainRequestHandlers(comm, 0);
-        okUpsert = await p;
-      } else {
-        okUpsert = await be.upsertNode([node]);
-      }
-      expect(okUpsert).toBe(true);
+      // Blocking-mode pattern (like libcurl tests):
+      // 1) queue request -> 2) call maintainRequestHandlers(connector) once -> 3) await with timeout
+      const upOkP = be.upsertNode([node]);
+      await updater.maintainRequestHandlers(comm, 0);
+      const upOk = await Promise.race([
+        upOkP,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for upsert response')), 8000)),
+      ]);
+      expect(!!upOk).toBe(true);
 
       // Fetch it back
-      let maybe;
-      if (simpleMode) {
-        const p = be.getNode('e2e_webtransport_node');
-        updater.maintainRequestHandlers(comm, 0);
-        maybe = await p;
-      } else {
-        maybe = await be.getNode('e2e_webtransport_node');
-      }
+      const getP = be.getNode('e2e_webtransport_node');
+      await updater.maintainRequestHandlers(comm, 0);
+      const maybe = await Promise.race([
+        getP,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout waiting for getNode response')), 8000)),
+      ]);
+      expect(maybe && typeof maybe.isJust === 'function').toBe(true);
       expect(maybe && maybe.isJust && maybe.isJust()).toBe(true);
 
       // Optional: verify description round-trip (server may adjust versions)
       const got = maybe.getOrElse(null);
       expect(got.getDescription()).toBe('hello from webtransport e2e');
 
-  updater.stop();
       await comm.close();
     } finally {
   await killServer(server);
       // Restore global
       try { if (orig) globalThis.WebTransport = orig; else delete globalThis.WebTransport; } catch {}
     }
-  }, 25000);
+  }, 5000);
 });

@@ -15,6 +15,9 @@
 #include <condition_variable>
 #include <chrono>
 #include <cstring>
+#include <iostream>
+#include <cassert>
+#include <cstdlib>
 #include <boost/asio.hpp>
 #include <yaml-cpp/yaml.h>
 
@@ -52,6 +55,12 @@ static inline bool parse_url(const string &url, ParsedUrl &out) {
 }
 
 static const char* g_last_error = "";
+static bool g_verbose = [](){
+  const char* v = ::getenv("WWATP_QUIC_FFI_VERBOSE");
+  if (!v) return false;
+  // treat any non-empty, non-"0" value as true
+  return v[0] != '\0' && !(v[0] == '0' && v[1] == '\0');
+}();
 } // namespace
 
 // Define the opaque structs in global namespace to match header typedefs
@@ -79,11 +88,12 @@ struct wwatp_quic_stream_t {
 
   // Buffers/state bridged by the worker callback
   mutex m;
-  vector<uint8_t> outgoing;
+  chunks outgoing; // vector<shared_span<>> to ship pre-framed request chunks
   bool half_close{false}; // set when end_stream requested and outgoing drained
-  vector<uint8_t> incoming;
+  chunks incoming; // vector<shared_span<>> of received chunks awaiting read
   bool remote_eos{false};
   bool sent_any{false}; // whether we've emitted at least one payload chunk
+  size_t incoming_head_offset{0}; // partial-consumption offset within the first payload chunk
 };
 
 namespace {
@@ -101,18 +111,62 @@ static inline Request make_request(const wwatp_quic_session_t* sess, const strin
 
 // Create a lambda that moves incoming chunks into stream->incoming and returns
 // any pending outgoing chunks prepared as WWATP payload frames
+static inline uint64_t sum_chunk_bytes(const chunks& v) {
+  uint64_t s = 0;
+  for (auto const& ch : v) {
+    try { s += ch.size(); } catch (...) {}
+  }
+  return s;
+}
+
+static inline void log_first_payload_header(const char* tag, const shared_span<>& sp) {
+  if (sp.get_signal_type() == payload_chunk_header::GLOBAL_SIGNAL_TYPE) {
+    try {
+      auto& hdr = const_cast<shared_span<>&>(sp).get_signal<payload_chunk_header>();
+      std::cerr << tag << " payload_hdr{rid=" << hdr.request_id
+                << ", sig=" << static_cast<int>(hdr.signal)
+                << ", len=" << hdr.data_length << "}" << std::endl;
+    } catch (...) {
+      // ignore
+    }
+  }
+}
+
+static inline void log_stream_state(const char* tag, wwatp_quic_stream_t* st) {
+  if (!g_verbose || !st) return;
+  lock_guard<mutex> lk(st->m);
+  std::cerr << tag << ": sid.logical=" << st->sid.logical_id
+            << " outgoing.count=" << st->outgoing.size()
+            << " incoming.count=" << st->incoming.size()
+            << " remote_eos=" << (st->remote_eos ? 1 : 0)
+            << " half_close=" << (st->half_close ? 1 : 0)
+            << std::endl;
+  if (!st->outgoing.empty()) {
+    log_first_payload_header("  out.first", st->outgoing.front());
+  }
+  if (!st->incoming.empty()) {
+    log_first_payload_header("  in.first", st->incoming.front());
+  }
+}
+
 static inline stream_callback_fn make_stream_cb(wwatp_quic_stream_t* st) {
-  return [st](const StreamIdentifier& /*sid*/, chunks& to_process) -> chunks {
+  return [st](const StreamIdentifier& sid, chunks& to_process) -> chunks {
+    // Assert stream id matches 
+    assert(st->sid == sid);
+    if (g_verbose) {
+      std::cerr << "ffi.cb: sid.logical=" << sid.logical_id
+                << " incoming.count=" << to_process.size()
+                << " incoming.bytes=" << sum_chunk_bytes(to_process) << std::endl;
+      if (!to_process.empty()) {
+        log_first_payload_header("ffi.cb.in.first", to_process.front());
+      }
+    }
     // 1) Consume incoming into st->incoming
     if (!to_process.empty()) {
       lock_guard<mutex> lk(st->m);
       for (auto &ch : to_process) {
+        // Track EOS conditions from incoming chunks
         if (ch.get_signal_type() == payload_chunk_header::GLOBAL_SIGNAL_TYPE) {
-          // Append payload bytes
-          for (auto b : ch.range<uint8_t>()) {
-            st->incoming.push_back(b);
-          }
-          // If server signals FINAL, note EOS
           if (ch.get_signal_signal() == payload_chunk_header::SIGNAL_WWATP_RESPONSE_FINAL) {
             st->remote_eos = true;
           }
@@ -122,40 +176,27 @@ static inline stream_callback_fn make_stream_cb(wwatp_quic_stream_t* st) {
             st->remote_eos = true;
           }
         }
+        // Move entire chunk into incoming queue for later read() flattening
+        st->incoming.emplace_back(std::move(ch));
       }
     }
 
-    // 2) Produce outgoing if available
+    // 2) Produce outgoing if available: move all queued chunks out
     chunks produced;
-    vector<uint8_t> send_now;
-    bool mark_final = false;
     {
       lock_guard<mutex> lk(st->m);
       if (!st->outgoing.empty()) {
-        send_now.swap(st->outgoing);
-        mark_final = st->half_close; // if half_close set and we're draining all
-        // We will keep half_close true so no more writes after drain
-      } else if (st->half_close && !st->sent_any) {
-        // Allow zero-length final requests (e.g., GET_FULL_TREE has no body).
-        mark_final = true;
+        produced.swap(st->outgoing);
+        st->sent_any = true;
       }
     }
-    // Choose the WWATP request signal to use for outgoing payload chunks
-    uint8_t req_signal = st->wwatp_signal ? st->wwatp_signal
-                                          : payload_chunk_header::SIGNAL_WWATP_GET_FULL_TREE_REQUEST;
-    if (!send_now.empty()) {
-      payload_chunk_header hdr(st->request_id, req_signal, 0 /* set by flatten */);
-      shared_span<> composed(hdr, std::span<const uint8_t>(send_now.data(), send_now.size()));
-      auto vec = composed.flatten_with_signal(hdr);
-      for (auto &sp : vec) produced.emplace_back(sp);
-      st->sent_any = true;
-    } else if (mark_final) {
-      // Send a zero-length payload chunk carrying the request signal
-      payload_chunk_header hdr(st->request_id, req_signal, 0);
-      shared_span<> composed(hdr, std::span<const uint8_t>());
-      auto vec = composed.flatten_with_signal(hdr);
-      for (auto &sp : vec) produced.emplace_back(sp);
-      st->sent_any = true;
+    if (g_verbose) {
+      std::cerr << "ffi.cb: sid.logical=" << sid.logical_id
+                << " produced.count=" << produced.size()
+                << " produced.bytes=" << sum_chunk_bytes(produced) << std::endl;
+      if (!produced.empty()) {
+        log_first_payload_header("ffi.cb.out.first", produced.front());
+      }
     }
     return produced;
   };
@@ -241,9 +282,18 @@ wwatp_quic_stream_t* wwatp_quic_open_bidi_stream(wwatp_quic_session_t* session, 
   // Register response handler so processRequestStream can pump
   try {
     Request req = make_request(session, st->path);
-  st->sid = session->qc->getNewRequestStreamIdentifier(req);
-  // Server expects request_id to equal stream logical_id for WWATP chunk streams
-  st->request_id = st->sid.logical_id;
+    if (g_verbose) {
+      std::cerr << "ffi.open: req.scheme=" << req.scheme
+                << " authority=" << req.authority
+                << " path=" << req.path
+                << " method=" << req.method
+                << " urgency=" << static_cast<int>(req.pri.urgency)
+                << " inc=" << static_cast<int>(req.pri.inc)
+                << std::endl;
+    }
+    st->sid = session->qc->getNewRequestStreamIdentifier(req);
+    // Server expects request_id to equal stream logical_id for WWATP chunk streams
+    st->request_id = st->sid.logical_id;
     session->qc->registerResponseHandler(st->sid, make_stream_cb(st));
   } catch (...) {
     delete st;
@@ -254,6 +304,28 @@ wwatp_quic_stream_t* wwatp_quic_open_bidi_stream(wwatp_quic_session_t* session, 
   return st;
 }
 
+int wwatp_quic_process_request_stream(wwatp_quic_session_t* session) {
+  if (!session || !session->qc) { g_last_error = "invalid session"; return WWATP_QUIC_ERR_PARAM; }
+  try {
+    if (g_verbose) {
+      std::cerr << "ffi.proc: session=" << static_cast<const void*>(session)
+                << " host=" << session->host
+                << " port=" << session->port
+                << " open_streams=" << session->open_streams.load()
+                << std::endl;
+    }
+    bool did = session->qc->processRequestStream();
+    if (g_verbose) {
+      std::cerr << "ffi.proc.done: session=" << static_cast<const void*>(session)
+                << " did=" << (did ? 1 : 0) << std::endl;
+    }
+    return did ? 1 : 0;
+  } catch (...) {
+    g_last_error = "processRequestStream exception";
+    return WWATP_QUIC_ERR_IO;
+  }
+}
+
 int64_t wwatp_quic_stream_write(wwatp_quic_stream_t* stream, const uint8_t* data, size_t len, int end_stream) {
   if (!stream || (!data && len)) { g_last_error = "invalid stream/data"; return WWATP_QUIC_ERR_PARAM; }
   if (stream->closed) { g_last_error = "stream closed"; return WWATP_QUIC_ERR_IO; }
@@ -261,19 +333,44 @@ int64_t wwatp_quic_stream_write(wwatp_quic_stream_t* stream, const uint8_t* data
   {
     lock_guard<mutex> lk(stream->m);
     if (len > 0 && data) {
-      stream->outgoing.insert(stream->outgoing.end(), data, data + len);
+      // If data appears to already be WWATP wire-framed (header first byte indicates
+      // known GLOBAL_SIGNAL_TYPE 1 or 2), then parse into shared_span directly and enqueue.
+      // Otherwise, wrap raw payload bytes into payload_chunk_header using current request signal.
+      if (len >= 1 && (data[0] == signal_chunk_header::GLOBAL_SIGNAL_TYPE || data[0] == payload_chunk_header::GLOBAL_SIGNAL_TYPE)) {
+        size_t off = 0;
+        while (off < len) {
+          // Construct a shared_span from the remaining bytes (this copies into pool-managed chunks)
+          shared_span<> sp(std::span<const uint8_t>(data + off, len - off));
+          // Ensure request_id matches this stream's logical id for WWATP semantics
+          try { sp.set_request_id(stream->request_id); } catch (...) {}
+          // Determine complete wire size for this chunk and advance
+          size_t wire = 0;
+          try { wire = sp.get_wire_size(); } catch (...) { wire = sp.stored_size(); }
+          if (wire == 0 || wire > (len - off)) {
+            // Defensive: if header incomplete or malformed, stop to avoid infinite loop
+            break;
+          }
+          stream->outgoing.emplace_back(std::move(sp));
+          off += wire;
+        }
+      } else {
+        // Not pre-framed: wrap as WWATP payload chunk(s) with the stream's configured signal
+        uint8_t req_signal = stream->wwatp_signal ? stream->wwatp_signal
+                                                  : payload_chunk_header::SIGNAL_WWATP_GET_FULL_TREE_REQUEST;
+        payload_chunk_header hdr(stream->request_id, req_signal, 0 /* set by flatten */);
+        shared_span<> composed(hdr, std::span<const uint8_t>(data, len));
+        auto vec = composed.flatten_with_signal(hdr);
+        for (auto &sp : vec) stream->outgoing.emplace_back(std::move(sp));
+      }
     }
     if (end_stream) stream->half_close = true;
   }
-
-  // Pump once to hand data to IO thread via callback
-  try {
-    (void)stream->session->qc->processRequestStream();
-  } catch (...) {
-    g_last_error = "write pump failed";
-    return WWATP_QUIC_ERR_IO;
+  if (g_verbose) {
+    std::cerr << "ffi.write: sid.logical=" << stream->sid.logical_id
+              << " len=" << len
+              << " end_stream=" << end_stream << std::endl;
+    log_stream_state("ffi.write.state", stream);
   }
-
   return static_cast<int64_t>(len);
 }
 
@@ -287,21 +384,51 @@ int64_t wwatp_quic_stream_read(wwatp_quic_stream_t* stream, uint8_t* buf, size_t
     {
       lock_guard<mutex> lk(stream->m);
       if (!stream->incoming.empty()) {
-        size_t n = min(buf_len, stream->incoming.size());
-        memcpy(buf, stream->incoming.data(), n);
-        stream->incoming.erase(stream->incoming.begin(), stream->incoming.begin() + n);
-        return static_cast<int64_t>(n);
+        size_t copied = 0;
+        while (copied < buf_len && !stream->incoming.empty()) {
+          auto &ch = stream->incoming.front();
+          if (ch.get_signal_type() == payload_chunk_header::GLOBAL_SIGNAL_TYPE) {
+            // Iterate bytes, skip already-consumed offset
+            size_t off = stream->incoming_head_offset;
+            size_t skipped = 0;
+            auto it = ch.begin<uint8_t>();
+            auto it_end = ch.end<uint8_t>();
+            for (; it != it_end && skipped < off; ++it) { ++skipped; }
+            // Copy up to buf_len - copied bytes
+            while (it != it_end && copied < buf_len) {
+              buf[copied++] = *it;
+              ++it;
+              ++off;
+            }
+            // Determine if we've consumed the entire chunk
+            if (it == it_end) {
+              stream->incoming_head_offset = 0;
+              stream->incoming.erase(stream->incoming.begin());
+            } else {
+              // Save partial consumption offset and break to return copied bytes
+              stream->incoming_head_offset = off;
+              break;
+            }
+          } else if (ch.get_signal_type() == signal_chunk_header::GLOBAL_SIGNAL_TYPE) {
+            // Observe close-stream signals as EOS and drop the chunk
+            auto sig = ch.get_signal<signal_chunk_header>().signal;
+            if (sig == signal_chunk_header::SIGNAL_CLOSE_STREAM) {
+              stream->remote_eos = true;
+            }
+            stream->incoming.erase(stream->incoming.begin());
+            stream->incoming_head_offset = 0;
+          } else {
+            // Unknown chunk type; drop to avoid stalling
+            stream->incoming.erase(stream->incoming.begin());
+            stream->incoming_head_offset = 0;
+          }
+        }
+        if (copied > 0) {
+          if (g_verbose) { log_stream_state("ffi.read.bytes", stream); }
+          return static_cast<int64_t>(copied);
+        }
       }
-      if (stream->remote_eos) return 0; // clean EOS
-    }
-
-    // Pump once; if nothing arrives, optionally wait
-    try {
-      bool did = stream->session->qc->processRequestStream();
-      (void)did;
-    } catch (...) {
-      g_last_error = "read pump failed";
-      return WWATP_QUIC_ERR_IO;
+      if (stream->remote_eos) { if (g_verbose) { log_stream_state("ffi.read.eos", stream); } return 0; } // clean EOS
     }
 
     {
@@ -312,10 +439,12 @@ int64_t wwatp_quic_stream_read(wwatp_quic_stream_t* stream, uint8_t* buf, size_t
 
     if (timeout_ms == 0) {
       // Non-blocking: nothing available now
+      if (g_verbose) { log_stream_state("ffi.read.nb", stream); }
       return 0;
     }
     auto elapsed = duration_cast<milliseconds>(steady_clock::now() - start).count();
     if (elapsed >= timeout_ms) {
+      if (g_verbose) { log_stream_state("ffi.read.timeout", stream); }
       return WWATP_QUIC_ERR_TIMEOUT;
     }
     this_thread::sleep_for(chrono::milliseconds(5));
@@ -328,6 +457,9 @@ void wwatp_quic_stream_close(wwatp_quic_stream_t* stream) {
   // Note: The caller MUST NOT call this function more than once for the same pointer;
   // this guard prevents an explicit double-delete path but cannot make use-after-free safe.
   if (stream->closed) { return; }
+  if (g_verbose) {
+    std::cerr << "ffi.close: sid.logical=" << stream->sid.logical_id << std::endl;
+  }
   stream->closed = true;
   // Best-effort deregistration; ignore errors
   try { stream->session->qc->deregisterResponseHandler(stream->sid); } catch (...) {}

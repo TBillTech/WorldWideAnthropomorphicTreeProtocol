@@ -1,6 +1,7 @@
 #include <napi.h>
 #include <stdint.h>
 #include <string.h>
+#include <atomic>
 extern "C" {
 #include "quic_connector_c.h"
 }
@@ -120,6 +121,35 @@ Napi::Value StreamClose(const Napi::CallbackInfo& info) {
   return env.Undefined();
 }
 
+Napi::Value StreamSetRequestSignal(const Napi::CallbackInfo& info) {
+  Env env = info.Env();
+  if (!info[0].IsExternal() || !info[1].IsNumber()) {
+    Napi::TypeError::New(env, "(stream, signal:uint8) required").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  auto st = info[0].As<External<wwatp_quic_stream_t>>().Data();
+  uint32_t sig = info[1].As<Number>().Uint32Value();
+  wwatp_quic_stream_set_wwatp_signal(st, static_cast<uint8_t>(sig & 0xff));
+  return env.Undefined();
+}
+
+Napi::Value SessionProcessRequestStream(const Napi::CallbackInfo& info) {
+  Env env = info.Env();
+  if (!info[0].IsExternal()) {
+    Napi::TypeError::New(env, "(session) required").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  auto sess = info[0].As<External<wwatp_quic_session_t>>().Data();
+  // Verbose instrumentation: count calls and print rc when WWATP_QUIC_FFI_VERBOSE is set
+  static bool v = [](){ const char* p = ::getenv("WWATP_QUIC_FFI_VERBOSE"); return p && *p && !(p[0]=='0' && p[1]=='\0'); }();
+  static std::atomic<uint64_t> call_count{0};
+  uint64_t n = 0;
+  if (v) { n = ++call_count; fprintf(stderr, "addon.proc[%llu]: calling native processRequestStream...\n", (unsigned long long)n); }
+  int rc = wwatp_quic_process_request_stream(sess);
+  if (v) { fprintf(stderr, "addon.proc[%llu].done: rc=%d\n", (unsigned long long)n, rc); }
+  return Number::New(env, static_cast<double>(rc));
+}
+
 Object Init(Env env, Object exports) {
   exports.Set("lastError", Function::New(env, LastError));
   exports.Set("createSession", Function::New(env, CreateSession));
@@ -128,6 +158,8 @@ Object Init(Env env, Object exports) {
   exports.Set("write", Function::New(env, StreamWrite));
   exports.Set("read", Function::New(env, StreamRead));
   exports.Set("closeStream", Function::New(env, StreamClose));
+  exports.Set("setRequestSignal", Function::New(env, StreamSetRequestSignal));
+  exports.Set("processRequestStream", Function::New(env, SessionProcessRequestStream));
   return exports;
 }
 

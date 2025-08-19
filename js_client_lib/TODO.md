@@ -176,11 +176,11 @@ Browser runtime constraints
 3) E2E test using WebTransportCommunication with http3_client_backend_updater
 
   The Following tests need to be added to the system_real_server.text.js.  
-  - [x] upsert a test node and fetch it back via WebTransportCommunication (In place of LibcurlTransport, for example)
-  - [x] WebTransportCommunication testBackendLogically
-  - [x] WebTransportCommunication test roundtrip
-  - [x] Verify implementation of testPeerNotification test in js_client_lib/test/backend_testbed/backend_testbed.js (use test_instances/catch2_unit_tests/backend_testbed.cpp for reference)
-  - [x] WebTransportCommunication testPeerNotification (which will verify that notifications are working via WebTransportCommunication)
+  - [X] upsert a test node and fetch it back via WebTransportCommunication (In place of LibcurlTransport, for example)
+  - [ ] WebTransportCommunication testBackendLogically
+  - [ ] WebTransportCommunication test roundtrip
+  - [ ] Verify implementation of testPeerNotification test in js_client_lib/test/backend_testbed/backend_testbed.js (use test_instances/catch2_unit_tests/backend_testbed.cpp for reference)
+  - [ ] WebTransportCommunication testPeerNotification (which will verify that notifications are working via WebTransportCommunication)
 
 ## E. Serialization and binary safety
 
