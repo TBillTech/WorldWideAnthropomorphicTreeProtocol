@@ -384,7 +384,6 @@ export default class WebTransportCommunication extends Communication {
             // reader pump started above to emit responses. Heartbeats remain ephemeral and use
             // the short bounded read path below.
             if (isNodeEmulator) {
-                this._trace.info('stream.defer.read', { sid });
                 // Proactively nudge a read once to pick up any bytes enqueued by the native callback.
                 try { await this.nudgeRead(sid); } catch {}
                 return { ok: true, status: 202, data: new Uint8Array(0) };

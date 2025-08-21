@@ -1,0 +1,34 @@
+config:
+  child_names: [backends, frontends]
+  backends:
+    child_names: [static_simple, initialized_simple, local_blocking_simple, local_blocking_threadsafe]
+    static_simple:
+      type: simple
+    initialized_simple:
+      type: simple
+    local_blocking_simple:
+      type: simple
+    local_blocking_threadsafe:
+      type: threadsafe
+      backend: local_blocking_simple
+  frontends:
+    child_names: [http3_server]
+    http3_server:
+      config.yaml:
+        type: http3_server
+        name: localhost
+        ip: 127.0.0.1
+        port: 12346
+        private_key_file: test_instances/data/private_key.pem
+        cert_file: test_instances/data/cert.pem
+        quiet: true
+        send_trailers: false
+        log_path: test_instances/sandbox/
+        static_load: true
+      child_names: [init]
+      init:
+        child_names: [wwatp]
+        wwatp:
+          backend: initialized_simple
+      index.html: test_instances/data/libtest_index.html
+      randombytes.bin: test_instances/data/randombytes.bin

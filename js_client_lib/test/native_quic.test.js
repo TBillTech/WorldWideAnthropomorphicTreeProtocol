@@ -7,7 +7,8 @@ import dgram from 'node:dgram';
 
 const ROOT = path.resolve(__dirname, '../..');
 const SERVER_BIN = path.join(ROOT, 'build', 'wwatp_server');
-const CONFIG = path.join(ROOT, 'js_client_lib', 'test', 'resources', 'wwatp_server_config.yaml');
+// Use dedicated config with unique port 12346 for native tests
+const CONFIG = path.join(ROOT, 'js_client_lib', 'test', 'resources', 'wwatp_server_config.native.yaml');
 const DATA_DIR = path.join(ROOT, 'test_instances', 'data');
 const CERT_FILE = path.join(DATA_DIR, 'cert.pem');
 const KEY_FILE = path.join(DATA_DIR, 'private_key.pem');
@@ -25,7 +26,7 @@ async function isUdpPortInUse(port, host = '127.0.0.1') {
   });
 }
 
-async function waitForServerReady(proc, port = 12345, host = '127.0.0.1', timeoutMs = 15000) {
+async function waitForServerReady(proc, port = 12346, host = '127.0.0.1', timeoutMs = 15000) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -41,18 +42,33 @@ async function waitForServerReady(proc, port = 12345, host = '127.0.0.1', timeou
 }
 
 async function spawnServerIfNeeded() {
-  const inUse = await isUdpPortInUse(12345, '127.0.0.1');
+  const PORT = 12346;
+  const inUse = await isUdpPortInUse(PORT, '127.0.0.1');
   if (inUse) return { proc: null, started: false };
   if (!fs.existsSync(SERVER_BIN)) return { proc: null, started: false };
   if (!fs.existsSync(CONFIG)) return { proc: null, started: false };
   if (!haveCerts()) return { proc: null, started: false };
   const proc = child_process.spawn(SERVER_BIN, [CONFIG], { cwd: ROOT });
   proc.on('error', () => {});
-  await waitForServerReady(proc);
+  await waitForServerReady(proc, PORT);
+  // Allow brief settle to complete startup
+  await new Promise((r) => setTimeout(r, 300));
   return { proc, started: true };
 }
 
-function killServer(proc) { try { proc?.kill('SIGINT'); } catch {} }
+async function killServer(proc, signal = 'SIGINT', timeoutMs = 5000, cooldownMs = 500) {
+  if (!proc) return;
+  await new Promise((resolve) => {
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+    try {
+      proc.once('exit', () => done());
+      proc.kill(signal);
+      setTimeout(() => done(), timeoutMs);
+    } catch (_) { done(); }
+  });
+  await new Promise((r) => setTimeout(r, Math.max(0, cooldownMs | 0)));
+}
 
 describe('NativeQuic (FFI POC)', () => {
   it('addon is present or test is skipped', () => {
@@ -66,11 +82,12 @@ describe('NativeQuic (FFI POC)', () => {
   });
 
   it('opens a session and stream against local server', async () => {
+    const PORT = 12346;
     const { proc, started } = await spawnServerIfNeeded();
     try {
       const nq = NativeQuic();
       if (!nq) { expect(nq).toBeNull(); return; }
-      const url = 'https://127.0.0.1:12345';
+      const url = `https://127.0.0.1:${PORT}`;
       const opts = haveCerts()
         ? { url, cert_file: CERT_FILE, key_file: KEY_FILE }
         : { url, insecure_skip_verify: true };
@@ -88,7 +105,7 @@ describe('NativeQuic (FFI POC)', () => {
       nq.closeStream(st);
       nq.closeSession(sess);
     } finally {
-      if (started) killServer(proc);
+      if (started) await killServer(proc);
     }
   }, 20000);
 });

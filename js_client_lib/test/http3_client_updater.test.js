@@ -15,7 +15,7 @@ function buildResponseForGetNode(_requestBytes) {
 }
 
 describe('Http3ClientBackendUpdater', () => {
-  it('flushes pending request and routes response', async () => {
+  it('flushes a raw WWATP GET_NODE request and routes response', async () => {
     const comm = new MockCommunication();
     const updater = new Http3ClientBackendUpdater('t', 'local', 0);
     const local = new SimpleBackend();
@@ -26,19 +26,23 @@ describe('Http3ClientBackendUpdater', () => {
       return buildResponseForGetNode(data);
     });
 
-    // Issue a request through backend
-    const p = be.getNode('root/test');
+  // Build a WWATP GET_NODE request manually (since be.getNode is local-only)
+  const msg = new HTTP3TreeMessage();
+  msg.setRequestId(1);
+  msg.encodeGetNodeRequest('root/test');
+  be.pendingRequests_.push(msg);
 
-    // Maintain once to flush queue; send + immediate response by mock
-    await updater.maintainRequestHandlers(comm, 0);
+  // Maintain once to flush queue; mock returns immediately
+  await updater.maintainRequestHandlers(comm, 0);
 
-    const res = await p; // blocking mode resolves
+  // Wait for backend to process and populate local cache via response
+  const res = local.getNode('root/test');
     expect(res.isJust()).toBe(true);
-    const n = res.getOrElse(null);
-    expect(n.getLabelRule()).toBe('root/test');
+  const n = res.getOrElse(null);
+  expect(n.getLabelRule()).toBe('root/test');
 
     // Verify local cache updated
-    const cached = be.localBackend_.getNode('root/test');
-    expect(cached.isJust()).toBe(true);
+  const cached = be.localBackend_.getNode('root/test');
+  expect(cached.isJust()).toBe(true);
   });
 });

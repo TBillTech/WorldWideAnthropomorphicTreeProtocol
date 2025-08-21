@@ -6,12 +6,10 @@
 
 import Communication from './communication.js';
 
-let Curl, CurlMulti, CurlFeature, CurlHttpVersion;
+let Curl, CurlHttpVersion;
 try {
   const lib = await import('node-libcurl');
-  Curl = lib.Curl;
-  CurlMulti = lib.CurlMulti;
-  CurlFeature = lib.CurlFeature;
+  Curl = lib.Curl; // high-level handle with events, setOpt, perform
   CurlHttpVersion = lib.CurlHttpVersion || lib.CurlHttpVersion; // alias safety
 } catch {
   throw new Error('node-libcurl is not installed. Install it in this workspace to use libcurl_transport.');
@@ -28,13 +26,44 @@ function buildUrl(req) {
   return `${scheme}://${authority}${path}`;
 }
 
+function getCurlVersionInfo() {
+  try {
+    if (Curl && typeof Curl.getVersionInfoString === 'function') {
+      return Curl.getVersionInfoString();
+    }
+  } catch {}
+  return '';
+}
+
+function ensureHttp3Supported() {
+  const v = getCurlVersionInfo();
+  if (!v) return; // best effort; let runtime error surface if missing
+  // Look for HTTP3 feature or linked QUIC libs
+  const hasHttp3 = /HTTP\/?3/i.test(v) || /nghttp3|ngtcp2|quiche/i.test(v);
+  if (!hasHttp3) {
+    throw new Error(`libcurl lacks HTTP/3 support. Please check version info`);
+  }
+}
+
+function tryForceHttp3(handle) {
+  try {
+    if (CurlHttpVersion && Object.prototype.hasOwnProperty.call(CurlHttpVersion, 'V3')) {
+      handle.setOpt(Curl.option.HTTP_VERSION, CurlHttpVersion.V3);
+    } else {
+      // If the constant is missing (older node-libcurl), defer to default;
+      // ensureHttp3Supported() will have thrown earlier in unsupported envs.
+    }
+  } catch (_) {
+    // Ignore; we'll rely on server defaults or the environment will fail fast elsewhere.
+  }
+}
+
 // Minimal connection pool keyed by authority; keeps one Multi and one Curl handle for reuse.
 export default class LibcurlTransport extends Communication {
   constructor() {
     super();
     this._cid = 'libcurl:multi-h3';
-    this._multi = null;
-    this._easy = null; // main connection seed to establish QUIC session
+    this._warm = null; // optional warm-up handle
     this._authority = null;
     this._connected = false;
   }
@@ -45,14 +74,18 @@ export default class LibcurlTransport extends Communication {
     if (this._connected) return true;
     this._authority = req.authority;
 
-    this._multi = new CurlMulti();
+    if (!Curl) {
+      throw new Error('node-libcurl is present but Curl API is unavailable.');
+    }
 
-    // Seed an easy handle to create the H3 connection. We keep it around for reuse.
-    this._easy = new Curl();
-    this._easy.enable(CurlFeature.Raw);
-    this._easy.setOpt('URL', buildUrl({ ...req, path: '/' }));
-    this._easy.setOpt('HTTP_VERSION', CurlHttpVersion.V3); // force HTTP/3
-    this._easy.setOpt('HTTPHEADER', [
+  // Verify libcurl has HTTP/3 to provide a clear, early diagnostic
+  ensureHttp3Supported();
+
+    // Warm-up with a simple HEAD to establish connection semantics. Not strictly required.
+    const h = new Curl();
+  h.setOpt(Curl.option.URL, buildUrl({ ...req, path: '/index.html' }));
+  tryForceHttp3(h);
+    h.setOpt(Curl.option.HTTPHEADER, [
       'accept: application/octet-stream',
       'content-type: application/octet-stream',
     ]);
@@ -61,21 +94,18 @@ export default class LibcurlTransport extends Communication {
     const key = envFlag('WWATP_KEY');
     const ca = envFlag('WWATP_CA');
     const insecure = envFlag('WWATP_INSECURE');
-    if (cert) this._easy.setOpt('SSLCERT', cert);
-    if (key) this._easy.setOpt('SSLKEY', key);
-    if (ca) this._easy.setOpt('CAINFO', ca);
-    if (insecure) this._easy.setOpt('SSL_VERIFYPEER', false);
+    if (cert) h.setOpt(Curl.option.SSLCERT, cert);
+    if (key) h.setOpt(Curl.option.SSLKEY, key);
+    if (ca) h.setOpt(Curl.option.CAINFO, ca);
+    if (insecure) h.setOpt(Curl.option.SSL_VERIFYPEER, false);
 
-    // Use a HEAD request to warm up the connection
-    this._easy.setOpt('CUSTOMREQUEST', 'HEAD');
-
-    // Quietly ignore data
-    this._easy.setOpt('WRITEFUNCTION', () => 0);
+    h.setOpt(Curl.option.NOBODY, true); // HEAD-like
+    h.setOpt(Curl.option.WRITEFUNCTION, () => 0);
 
     await new Promise((resolve, reject) => {
-      this._easy.on('end', () => resolve());
-      this._easy.on('error', (err) => reject(err));
-      this._multi.addHandle(this._easy);
+      h.on('end', () => { try { h.close(); } catch {} resolve(); });
+      h.on('error', (err) => { try { h.close(); } catch {} reject(err); });
+      h.perform();
     });
 
     this._connected = true;
@@ -84,11 +114,9 @@ export default class LibcurlTransport extends Communication {
 
   async close() {
     try {
-      if (this._easy) this._easy.close();
-      if (this._multi) this._multi.close();
+      if (this._warm) this._warm.close();
     } finally {
-      this._easy = null;
-      this._multi = null;
+      this._warm = null;
       this._connected = false;
     }
     return true;
@@ -103,10 +131,9 @@ export default class LibcurlTransport extends Communication {
     const method = (request.method || (data ? 'POST' : 'GET')).toUpperCase();
 
     const handle = new Curl();
-    handle.enable(CurlFeature.Raw);
-    handle.setOpt('URL', url);
-    handle.setOpt('HTTP_VERSION', CurlHttpVersion.V3);
-    handle.setOpt('HTTPHEADER', [
+    handle.setOpt(Curl.option.URL, url);
+  tryForceHttp3(handle);
+    handle.setOpt(Curl.option.HTTPHEADER, [
       'accept: application/octet-stream',
       'content-type: application/octet-stream',
     ]);
@@ -115,26 +142,26 @@ export default class LibcurlTransport extends Communication {
     const key = envFlag('WWATP_KEY');
     const ca = envFlag('WWATP_CA');
     const insecure = envFlag('WWATP_INSECURE');
-    if (cert) handle.setOpt('SSLCERT', cert);
-    if (key) handle.setOpt('SSLKEY', key);
-    if (ca) handle.setOpt('CAINFO', ca);
-    if (insecure) handle.setOpt('SSL_VERIFYPEER', false);
+  if (cert) handle.setOpt(Curl.option.SSLCERT, cert);
+  if (key) handle.setOpt(Curl.option.SSLKEY, key);
+  if (ca) handle.setOpt(Curl.option.CAINFO, ca);
+  if (insecure) handle.setOpt(Curl.option.SSL_VERIFYPEER, false);
 
     if (method === 'GET') {
-      handle.setOpt('CUSTOMREQUEST', 'GET');
+      handle.setOpt(Curl.option.CUSTOMREQUEST, 'GET');
     } else if (method === 'POST') {
-      handle.setOpt('POST', true);
+  handle.setOpt(Curl.option.POST, true);
     } else {
-      handle.setOpt('CUSTOMREQUEST', method);
+      handle.setOpt(Curl.option.CUSTOMREQUEST, method);
     }
 
     const bodyBuf = data ? Buffer.from(data) : null;
     if (bodyBuf) {
       // Provide exact-sized upload via READFUNCTION
       let offset = 0;
-      handle.setOpt('UPLOAD', true);
-      handle.setOpt('INFILESIZE', bodyBuf.length);
-      handle.setOpt('READFUNCTION', (buf) => {
+      handle.setOpt(Curl.option.UPLOAD, true);
+      handle.setOpt(Curl.option.INFILESIZE, bodyBuf.length);
+      handle.setOpt(Curl.option.READFUNCTION, (buf) => {
         const remaining = bodyBuf.length - offset;
         if (remaining <= 0) return 0;
         const toCopy = Math.min(buf.length, remaining);
@@ -145,10 +172,10 @@ export default class LibcurlTransport extends Communication {
     }
 
     const timeoutMs = options.timeoutMs ?? 10000;
-    handle.setOpt('TIMEOUT_MS', timeoutMs);
+    handle.setOpt(Curl.option.TIMEOUT_MS, timeoutMs);
 
     const chunks = [];
-    handle.setOpt('WRITEFUNCTION', (buf, size, nmemb) => {
+    handle.setOpt(Curl.option.WRITEFUNCTION, (buf, size, nmemb) => {
       // The library will pass a Buffer already; just capture it
       chunks.push(Buffer.from(buf));
       return size * nmemb;
@@ -170,7 +197,7 @@ export default class LibcurlTransport extends Communication {
         resolve({ ok: false, status: 0, error: msg, data: new Uint8Array() });
       });
 
-      this._multi.addHandle(handle);
+      handle.perform();
     });
   }
 }

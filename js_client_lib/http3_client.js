@@ -110,12 +110,16 @@ export default class Http3ClientBackend extends Backend {
 	}
 
 	upsertNode(nodes) {
+		// Eagerly update local cache to reflect intended state; server/journal will converge if needed.
+		try { this.localBackend_.upsertNode(nodes); } catch (_) {}
 		const msg = new HTTP3TreeMessage().setRequestId(this._nextRequestId()).encodeUpsertNodeRequest(nodes);
 		const waitP = this._enqueue(msg, 'bool');
 		return this.blockingMode_ ? this.awaitBoolResponse(waitP) : true;
 	}
 
 	deleteNode(labelRule) {
+		// Reflect deletion locally immediately; server/journal will confirm
+		try { this.localBackend_.deleteNode(String(labelRule)); } catch (_) {}
 		const msg = new HTTP3TreeMessage().setRequestId(this._nextRequestId()).encodeDeleteNodeRequest(String(labelRule));
 		const waitP = this._enqueue(msg, 'bool');
 		return this.blockingMode_ ? this.awaitBoolResponse(waitP) : true;
@@ -284,46 +288,39 @@ export default class Http3ClientBackend extends Backend {
 				break;
 			}
 			case WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE: {
-				const notifications = http3TreeMessage.decodeGetJournalResponse();
-				if (!Array.isArray(notifications) || notifications.length === 0) {
+					const notifications = http3TreeMessage.decodeGetJournalResponse();
+					if (!Array.isArray(notifications) || notifications.length === 0) {
+						this.journalRequestWaiting_ = false;
+						if (waiter) finish(true);
+						break;
+					}
+					// Detect gaps relative to our last seen sequence, but always apply notifications.
+					const SENTINEL = 0xFFFFFFFF >>> 0;
+					let expected = (this.lastNotification_?.signalCount >>> 0) || 0;
+					let notificationGap = false;
+					let lastNonSentinel = null;
+					for (const sn of notifications) {
+						// Apply to local cache regardless of gap status
+						this.processOneNotification(sn);
+						const seq = (sn?.signalCount >>> 0);
+						if (seq !== SENTINEL) {
+							if (seq !== ((expected + 1) >>> 0)) notificationGap = true;
+							expected = seq;
+							lastNonSentinel = sn;
+						}
+					}
+					if (notificationGap) {
+						// Prefer a targeted mutable page tree sync when defined; otherwise full tree.
+						const rule = String(this.mutablePageTreeLabelRule_ || '');
+						if (rule.length > 0) this.requestPageTree(rule); else this.requestFullTreeSync();
+					} else {
+						// No gap -> lift any notification block immediately
+						this.notificationBlock_ = false;
+					}
+					if (lastNonSentinel) this.updateLastNotification(lastNonSentinel);
 					this.journalRequestWaiting_ = false;
 					if (waiter) finish(true);
 					break;
-				}
-				// Detect gaps in sequence numbers, skipping sentinel (uint64_t)-1 which maps to 0xFFFFFFFF here
-				const SENTINEL = 0xFFFFFFFF >>> 0;
-				let notificationGap = false;
-				let curIndex = notifications[0]?.signalCount >>> 0;
-				let lastNotification = notifications[0];
-				for (const sn of notifications) {
-					if (!notificationGap) this.processOneNotification(sn);
-					const seq = (sn?.signalCount >>> 0);
-					if (seq === SENTINEL) {
-						// unsolicited, ignore for ordering
-						continue;
-					}
-					if (curIndex !== SENTINEL) {
-						if (seq !== ((curIndex + 1) >>> 0)) notificationGap = true;
-					}
-					curIndex = seq;
-					lastNotification = sn;
-				}
-				if (notificationGap) {
-					// Try to request only the mutable page tree; fall back to a full tree sync
-					const rule = String(this.mutablePageTreeLabelRule_ || '');
-					if (rule.length > 0) {
-						this.requestPageTree(rule);
-					} else {
-						this.requestFullTreeSync();
-					}
-				} else {
-					// No gap: clear the notification block immediately
-					this.notificationBlock_ = false;
-				}
-				if (lastNotification) this.updateLastNotification(lastNotification);
-				this.journalRequestWaiting_ = false;
-				if (waiter) finish(true);
-				break;
 			}
 			default: {
 				// Unknown signal: treat as success for boolean-style waits to be resilient to
@@ -371,14 +368,14 @@ export default class Http3ClientBackend extends Backend {
 
 	// ---- Local helper to request a page tree from server without blocking
 	// Used by journaling when an out-of-order JournalResponse is received.
-	requestPageTree(pageNodeLabelRule) {
+	requestPageTree(pageNodeLabelRule, options = {}) {
 		// Enqueue a non-blocking server fetch to refresh local cache.
 		// Returns true immediately; updater will handle response and update localBackend_.
 		const rule = String(pageNodeLabelRule ?? this.mutablePageTreeLabelRule_);
 		const msg = new HTTP3TreeMessage()
 			.setRequestId(this._nextRequestId())
 			.encodeGetPageTreeRequest(rule);
-		if (options.journal) msg.setJournalRequest(true);
+		if (options && options.journal) msg.setJournalRequest(true);
 		// Do not create a waiter; this is fire-and-forget for cache warm-up
 		this.pendingRequests_.push(msg);
         // Set the notification block to avoid sending notifications back to the server upon response

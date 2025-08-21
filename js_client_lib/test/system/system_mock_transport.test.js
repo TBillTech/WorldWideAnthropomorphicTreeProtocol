@@ -31,9 +31,10 @@ describe('System (mock transport) – end-to-end', () => {
     tbServer.addNotesPageTree();
 
     // Sync client A via getFullTree
-    const full = clientA.getFullTree();
-    await maintain();
-    const vec = await full;
+  // Kick a journal poll to populate client cache from server via handler
+  clientA.requestFullTreeSync();
+  await maintain();
+  const vec = clientA.getFullTree();
     expect(Array.isArray(vec)).toBe(true);
     // Now run logical test on client A's local cache
     const tbClientA = new BackendTestbed(localA, { shouldTestChanges: true });
@@ -67,8 +68,8 @@ describe('System (mock transport) – end-to-end', () => {
     const { createLionNodes } = await import('../backend_testbed/backend_testbed.js');
     serverBackend.upsertNode(createLionNodes());
 
-    // Journal tick – A should pull notification
-    await maintain();
+  // Journal tick – A should pull notification
+  await maintain();
 
     // From B: delete lion
     serverBackend.deleteNode('lion');

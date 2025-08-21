@@ -16,6 +16,7 @@ const SHOULD_RUN = e2e === '1' || e2e === 'true' || e2e === 'yes' || e2e === 'on
 console.info('[system_real_server.test] WWATP_E2E=%s, SHOULD_RUN=%s', process.env.WWATP_E2E, SHOULD_RUN);
 const ROOT = path.resolve(__dirname, '../../..');
 const SERVER_BIN = path.join(ROOT, 'build', 'wwatp_server');
+// Real server test continues to use the default config and port 12345
 const CONFIG = path.join(ROOT, 'js_client_lib', 'test', 'resources', 'wwatp_server_config.yaml');
 const DATA_DIR = path.join(ROOT, 'test_instances', 'data');
 const SANDBOX_DIR = path.join(ROOT, 'test_instances', 'sandbox');
@@ -85,12 +86,24 @@ async function spawnServer() {
   proc.on('error', () => {});
   // Wait until UDP bind is observed
   await waitForServerReady(proc, 12345, '127.0.0.1', 15000);
+  // Small settle delay to allow server to finish initialization (frontends/backends wiring)
+  await new Promise((r) => setTimeout(r, 300));
   return proc;
 }
 
-function killServer(proc) {
+async function killServer(proc, signal = 'SIGINT', timeoutMs = 5000, cooldownMs = 500) {
   if (!proc) return;
-  try { proc.kill('SIGINT'); } catch (_) {}
+  await new Promise((resolve) => {
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+    try {
+      proc.once('exit', () => done());
+      proc.kill(signal);
+      setTimeout(() => done(), timeoutMs);
+    } catch (_) { done(); }
+  });
+  // Cooldown to allow OS to fully release sockets and file handles
+  await new Promise((r) => setTimeout(r, Math.max(0, cooldownMs | 0)));
 }
 
 // Force this suite to run sequentially (no parallel sub-tests) when enabled
@@ -116,7 +129,7 @@ realServerDescribe('System (real server) – integration readiness', () => {
       const inUse = await isUdpPortInUse(12345, '127.0.0.1');
       expect(inUse).toBe(true);
     } finally {
-      killServer(server);
+      await killServer(server);
     }
   }, 20000);
 
@@ -152,7 +165,7 @@ realServerDescribe('System (real server) – integration readiness', () => {
       expect(last.status).toBe(0);
       expect(Number.isFinite(bytes) && bytes > 0).toBe(true);
     } finally {
-      killServer(server);
+      await killServer(server);
     }
   }, 20000);
 
@@ -185,9 +198,9 @@ realServerDescribe('System (real server) – integration readiness', () => {
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-      } catch (_) {
+      } catch (err) {
         // Skip this WWATP flow if node-libcurl isn't installed or fails to init
-        console.warn('[libcurl] Skipping testBackendLogically: libcurl not available');
+        console.warn('[libcurl] Skipping testBackendLogically: libcurl not available. Error:', err && (err.message || err));
         return;
       }
 
@@ -212,7 +225,6 @@ realServerDescribe('System (real server) – integration readiness', () => {
       await updater.maintainRequestHandlers(transport, 0);
       expect(await Promise.race([up3, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting parrot')), 8000))])).toBe(true);
 
-      // Upsert notes page tree
       const up4 = client.upsertNode([createNotesPageTree()]);
       await updater.maintainRequestHandlers(transport, 0);
       expect(await Promise.race([up4, new Promise((_, r) => setTimeout(() => r(new Error('timeout upserting notes page')), 8000))])).toBe(true);
@@ -230,7 +242,7 @@ realServerDescribe('System (real server) – integration readiness', () => {
       const tbClient = new BackendTestbed(local, { shouldTestChanges: true });
       tbClient.testBackendLogically('');
     } finally {
-      killServer(server);
+      await killServer(server);
     }
   }, 20000);
 
@@ -258,8 +270,8 @@ realServerDescribe('System (real server) – integration readiness', () => {
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-      } catch (_) {
-        console.warn('[libcurl] Skipping testBackendLogically: libcurl not available');
+      } catch (err) {
+        console.warn('[libcurl] Skipping testBackendLogically: libcurl not available. Error:', err && (err.message || err));
         return; // Skip if libcurl not present
       }
 
@@ -303,7 +315,7 @@ realServerDescribe('System (real server) – integration readiness', () => {
       const tbB = new BackendTestbed(localB, { shouldTestChanges: true });
       tbB.testBackendLogically('');
     } finally {
-      killServer(server);
+      await killServer(server);
     }
   }, 25000);
 
@@ -329,8 +341,8 @@ realServerDescribe('System (real server) – integration readiness', () => {
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-      } catch (_) {
-        console.warn('[libcurl] Skipping testDeleteElephant: libcurl not available');
+      } catch (err) {
+        console.warn('[libcurl] Skipping testDeleteElephant: libcurl not available. Error:', err && (err.message || err));
         return; // Skip if libcurl not present
       }
 
@@ -380,7 +392,7 @@ realServerDescribe('System (real server) – integration readiness', () => {
       // Ensure all elephant-related nodes are gone on B
       checkMultipleDeletedNode(localB, createElephantNodes());
     } finally {
-      killServer(server);
+      await killServer(server);
     }
   }, 25000);
 
@@ -412,8 +424,8 @@ realServerDescribe('System (real server) – integration readiness', () => {
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-      } catch (_) {
-        console.warn('[libcurl] Skipping testBackendLogically: libcurl not available');
+      } catch (err) {
+        console.warn('[libcurl] Skipping testBackendLogically: libcurl not available. Error:', err && (err.message || err));
         return; // skip if libcurl not present
       }
 
@@ -456,7 +468,7 @@ realServerDescribe('System (real server) – integration readiness', () => {
         expect(back.getLabelRule()).toBe(label);
       }
     } finally {
-      killServer(server);
+  await killServer(server);
     }
   }, 25000);
 });

@@ -8,10 +8,7 @@ Follow instructions
 
 ## Next steps
 
-Focus: Work on getting system_webtransport_real_server test running correctly.  Currently, the upsert node is failing, because the data is garbled and possibly escaped incorrectly by the time it gets to the quic_connector_c layer. 
-
-I've found some issues in the code having to do with the parity between c++ and javascript http3_message_helpers.
-Let's work on fixing this up.  Let's address these issues one at a time. 
+Focus:  
 
 Relevant `TODO.md` is under path: js_client_lib
 Relevant `README.md` is under path: js_client_lib

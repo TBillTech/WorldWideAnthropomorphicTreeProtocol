@@ -13,31 +13,19 @@ function makeNode(label) {
 }
 
 describe('Http3ClientBackend basics', () => {
-  it('queues a getNode request and resolves in blocking mode', async () => {
+  it('getNode reads from local cache without enqueuing network', async () => {
     const local = new SimpleBackend();
     const request = { scheme: 'https', authority: 'example.com', path: '/wwatp/tree' };
     const backend = new Http3ClientBackend(local, true, request, 0, Nothing);
 
-    // Issue request
-    const promise = backend.getNode('animals/lion');
-    expect(backend.hasNextRequest()).toBe(true);
-    const req = backend.popNextRequest();
+    // Seed local cache
+    const lion = makeNode('animals/lion');
+    local.upsertNode([lion]);
 
-  // Simulate server creating a response with the same requestId
-    const msg = new HTTP3TreeMessage();
-    msg.setRequestId(req.requestId);
-    msg.setSignal(Http3Helpers.WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_RESPONSE);
-  // Encode Maybe<TreeNode>(Just(node)) as response payload using chunk-based helper
-  msg.responseChunks = Http3Helpers.encodeChunks_MaybeTreeNode(msg.requestId, msg.signal, Just(makeNode('animals/lion')));
-
-    backend.processHTTP3Response(msg);
-
-    const maybeNode = await promise;
-    expect(maybeNode.isJust()).toBe(true);
-    expect(maybeNode.getOrElse(null).labelRule).toBe('animals/lion');
-
-    // Local cache should be updated
-    const cached = local.getNode('animals/lion');
-    expect(cached.isJust()).toBe(true);
+    // Non-mutating read should not enqueue any request
+    const maybe = backend.getNode('animals/lion');
+    expect(backend.hasNextRequest()).toBe(false);
+    expect(maybe.isJust()).toBe(true);
+    expect(maybe.getOrElse(null).labelRule).toBe('animals/lion');
   });
 });

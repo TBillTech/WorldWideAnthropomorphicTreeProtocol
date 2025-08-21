@@ -53,7 +53,7 @@ class NotificationStore {
   // Compute notifications by diffing current backend state vs snapshot.
   syncFromBackend(serverBackend) {
     try {
-      const vec = serverBackend.getFullTree?.() || [];
+  const vec = serverBackend.getFullTree?.() || [];
       const current = new Set(vec.map((n) => n.getLabelRule()));
       // Additions or updates: for simplicity, treat all new labels as creations
       for (const n of vec) {

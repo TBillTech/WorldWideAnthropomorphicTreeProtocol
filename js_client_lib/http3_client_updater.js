@@ -77,7 +77,7 @@ export default class Http3ClientBackendUpdater {
 	}
 
 	// Core: allocate streams for pending requests and periodic journal polls.
-	maintainRequestHandlers(connector, time = 0) {
+	async maintainRequestHandlers(connector, time = 0) {
 		this.lastTime_ = Number(time) || 0;
 		// Throttle noisy trace to at most once per second
 		try {
@@ -91,11 +91,12 @@ export default class Http3ClientBackendUpdater {
 		}
 
 		// 1) Flush normal pending requests
+		const pending = [];
 		for (const backend of this.backends_) {
 			while (backend.hasNextRequest()) {
 				const msg = backend.popNextRequest();
 				this._trace.info('dispatch.request', { rid: msg.requestId, backend: backend.getName?.() });
-				this.#dispatchOne(connector, backend, msg, /*isJournal*/ false);
+				pending.push(this.#dispatchOne(connector, backend, msg, /*isJournal*/ false));
 			}
 		}
 
@@ -104,7 +105,7 @@ export default class Http3ClientBackendUpdater {
 			if (backend.needToSendJournalRequest(this.lastTime_)) {
 				const jmsg = backend.solicitJournalRequest();
 				this._trace.info('dispatch.journal', { rid: jmsg.requestId, backend: backend.getName?.() });
-				this.#dispatchOne(connector, backend, jmsg, /*isJournal*/ true);
+				pending.push(this.#dispatchOne(connector, backend, jmsg, /*isJournal*/ true));
 			}
 		}
 
@@ -114,6 +115,11 @@ export default class Http3ClientBackendUpdater {
 				connector.processRequestStream();
 			}
 		} catch (_) { /* best-effort only */ }
+
+		// Await all dispatched requests to complete (response received and processed)
+		if (pending.length) {
+			try { await Promise.allSettled(pending); } catch (_) { /* ignore */ }
+		}
 	}
 
 	// Internal: send a single HTTP3TreeMessage over the connector
@@ -123,6 +129,8 @@ export default class Http3ClientBackendUpdater {
 		const logicalReqId = (sid && sid.logicalId) ? (sid.logicalId & 0xffff) : (msg.requestId & 0xffff);
 		const sidKey = String(sid);
 		let finished = false;
+		let doneResolve;
+		const donePromise = new Promise((res) => { doneResolve = res; });
 		this._trace.info('send.start', { sid, rid: msg.requestId, isJournal });
 
 		// Register response handler first to avoid races
@@ -148,17 +156,14 @@ export default class Http3ClientBackendUpdater {
 							if (sig === WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL) sawFinal = true;
 							else if (sig !== undefined && sig !== WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_CONTINUE) lastTyped = sig;
 						} catch (_) {}
-						// Filter out transport heartbeats and WWATP final acks from accumulation to avoid corrupting payload decoding
+						// Filter out transport heartbeats from accumulation to avoid corrupting payload decoding
 						try {
 							const sig = chunk.header?.signal;
 							if (sig === SIGNAL_HEARTBEAT) {
 								// Ignore heartbeat frames entirely
 								o += read; continue;
 							}
-							if (isWWATPReq && sig === WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL) {
-								// Heartbeat acks from server often use RESPONSE_FINAL with small payload; exclude from WWATP message payloads
-								o += read; continue;
-							}
+							// Do not exclude WWATP RESPONSE_FINAL; some servers reply with FINAL-only for boolean ops
 						} catch (_) {}
 						msg.pushResponseChunk(chunk);
 						o += read;
@@ -229,7 +234,26 @@ export default class Http3ClientBackendUpdater {
 						// For WWATP requests, do not process typed response frames until canDecode marks the payload ready.
 						// Early decode attempts can race with chunk accumulation and cause transient decode errors.
 						if (isWWATPReq) {
-							return; // wait for more chunks/heartbeats
+							// Special-case: some WWATP ops complete with FINAL-only and no typed response.
+							// If we saw a FINAL and the request was a boolean-style op, process now.
+							if (sawFinal) {
+								const boolish = (
+									reqSig === WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_REQUEST ||
+									reqSig === WWATP_SIGNAL.SIGNAL_WWATP_DELETE_NODE_REQUEST ||
+									reqSig === WWATP_SIGNAL.SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_REQUEST ||
+									reqSig === WWATP_SIGNAL.SIGNAL_WWATP_CLOSE_TRANSACTION_LAYERS_REQUEST ||
+									reqSig === WWATP_SIGNAL.SIGNAL_WWATP_NOTIFY_LISTENERS_REQUEST ||
+									reqSig === WWATP_SIGNAL.SIGNAL_WWATP_PROCESS_NOTIFICATION_REQUEST ||
+									reqSig === WWATP_SIGNAL.SIGNAL_WWATP_APPLY_TRANSACTION_REQUEST
+								);
+								if (boolish) {
+									msg.signal = WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL;
+									backend.processHTTP3Response(msg);
+									shouldCleanup = true;
+									return;
+								}
+							}
+							return; // wait for more chunks
 						}
 						// Non-WWATP flows: prefer a typed response signal if present; otherwise mark FINAL.
 						if (lastTyped !== null) msg.signal = lastTyped; else if (sawFinal) msg.signal = WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL;
@@ -258,6 +282,7 @@ export default class Http3ClientBackendUpdater {
 								(async () => { try { await connector.closeStream(sid); } catch {} })();
 							}
 						} catch (_) {}
+						try { if (doneResolve) doneResolve(true); } catch (_) {}
 					}
 				} catch (_) {}
 			}
@@ -342,6 +367,9 @@ export default class Http3ClientBackendUpdater {
 			// Attempt to resolve a waiting promise with failure via processHTTP3Response default path
 			try { backend.processHTTP3Response(msg); } catch (_) {}
 		}
+
+		// Ensure caller can await completion even if no response arrives (timeouts not modeled here)
+		return donePromise;
 	}
 }
 

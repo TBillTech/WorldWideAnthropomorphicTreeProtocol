@@ -23,9 +23,9 @@ describe('System (node webtransport mock) – end-to-end', () => {
     tbServer.addAnimalsToBackend();
     tbServer.addNotesPageTree();
 
-    const full = clientA.getFullTree();
-    await maintain();
-    const vec = await full;
+  clientA.requestFullTreeSync();
+  await maintain();
+  const vec = clientA.getFullTree();
     expect(Array.isArray(vec)).toBe(true);
 
     const tbClientA = new BackendTestbed(localA, { shouldTestChanges: true });

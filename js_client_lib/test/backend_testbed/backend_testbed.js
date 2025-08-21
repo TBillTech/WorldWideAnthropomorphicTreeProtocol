@@ -29,8 +29,9 @@ export function createAnimalNode(animal, description, propertyInfos, version, ch
     version: version instanceof TreeNodeVersion ? version : new TreeNodeVersion(version || {}),
     childNames,
     propertyData,
-    queryHowTo: Just(queryHowTo),
-    qaSequence: Just(qaSequence),
+    // Treat empty strings as Nothing to match chunk-based decode semantics
+    queryHowTo: (typeof queryHowTo === 'string' && queryHowTo.length === 0) ? Nothing : Just(queryHowTo),
+    qaSequence: (typeof qaSequence === 'string' && qaSequence.length === 0) ? Nothing : Just(qaSequence),
   });
 }
 

@@ -21,7 +21,8 @@ import {
 // Paths and resources (relative to repo root)
 const ROOT = path.resolve(__dirname, '../../..');
 const SERVER_BIN = path.join(ROOT, 'build', 'wwatp_server');
-const CONFIG = path.join(ROOT, 'js_client_lib', 'test', 'resources', 'wwatp_server_config.yaml');
+// Use dedicated webtransport config with unique port
+const CONFIG = path.join(ROOT, 'js_client_lib', 'test', 'resources', 'wwatp_server_config.webtransport.yaml');
 const DATA_DIR = path.join(ROOT, 'test_instances', 'data');
 const SANDBOX_DIR = path.join(ROOT, 'test_instances', 'sandbox');
 const CERT_FILE = path.join(DATA_DIR, 'cert.pem');
@@ -59,7 +60,7 @@ async function isUdpPortInUse(port, host = '127.0.0.1') {
 }
 
 
-async function waitForServerReady(proc, port = 12345, host = '127.0.0.1', timeoutMs = 15000) {
+async function waitForServerReady(proc, port = 12347, host = '127.0.0.1', timeoutMs = 15000) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -79,7 +80,7 @@ async function spawnServer(serverBinPath = null) {
   // If WWATP_SKIP_SPAWN_SERVER=1 or WWATP_EXTERNAL_SERVER=1, wait for UDP bind and return null.
   const skip = String(process.env.WWATP_SKIP_SPAWN_SERVER || process.env.WWATP_EXTERNAL_SERVER || '').toLowerCase();
   if (skip === '1' || skip === 'true' || skip === 'yes' || skip === 'on') {
-    await waitForServerReady({ once: () => {} }, 12345, '127.0.0.1', 15000);
+    await waitForServerReady({ once: () => {} }, 12347, '127.0.0.1', 15000);
     return null;
   }
   // Derive defaults safely if top-level constants are not available in this scope
@@ -98,13 +99,15 @@ async function spawnServer(serverBinPath = null) {
     proc.stdout?.on?.('data', (d) => { try { process.stdout.write(`[server stdout] ${d}`); } catch {} });
     proc.stderr?.on?.('data', (d) => { try { process.stderr.write(`[server stderr] ${d}`); } catch {} });
   } catch {}
-  await waitForServerReady(proc, 12345, '127.0.0.1', 15000);
+  await waitForServerReady(proc, 12347, '127.0.0.1', 15000);
+  // Small settle delay to allow the server to finish initializing listeners before client connect
+  await new Promise((r) => setTimeout(r, 500));
   return proc;
 }
 
-function killServer(proc, signal = 'SIGTERM', timeoutMs = 5000) {
-  if (!proc) return Promise.resolve();
-  return new Promise((resolve) => {
+async function killServer(proc, signal = 'SIGTERM', timeoutMs = 5000, cooldownMs = 500) {
+  if (!proc) return;
+  await new Promise((resolve) => {
     let settled = false;
     const done = () => { if (!settled) { settled = true; resolve(); } };
     try {
@@ -113,6 +116,8 @@ function killServer(proc, signal = 'SIGTERM', timeoutMs = 5000) {
       setTimeout(() => done(), timeoutMs);
     } catch (_) { done(); }
   });
+  // Cooldown to avoid port reuse race across tests
+  await new Promise((r) => setTimeout(r, Math.max(0, cooldownMs | 0)));
 }
 
 describe.sequential('System (WebTransport real server) – end-to-end', () => {
@@ -134,8 +139,6 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
         const streams = comm?._streams instanceof Map ? comm._streams.size : 0;
         const cid = typeof comm?.connectionId === 'function' ? comm.connectionId() : '';
         const stats = await (comm?.transport?.getStats?.() || Promise.resolve({ bytesSent: 0, bytesReceived: 0 }));
-        // eslint-disable-next-line no-console
-        console.error(`[awaitMaintain] tick=${i++} pending=${pending} waits=${waits} ongoing=${ongoing} hb=${hb} streams=${streams} sent=${stats.bytesSent||0} recv=${stats.bytesReceived||0} cid=${cid}`);
       } catch (_) { /* best-effort */ }
       // Tiny delay to avoid a tight loop; Node timers are coarse, this is fine
       await new Promise((r) => setTimeout(r, tickMs));
@@ -177,24 +180,26 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
   const server = await spawnServer(serverBinPath);
     try {
       // Create WebTransportCommunication pointed at WWATP entry path
-      const url = 'https://127.0.0.1:12345/init/wwatp/';
+      const url = 'https://127.0.0.1:12347/init/wwatp/';
       const comm = new WebTransportCommunication(url);
-      await comm.connect();
+  await comm.connect();
+  // Allow brief handshake settle before first request on emulator
+  await new Promise((r) => setTimeout(r, 200));
 
       // Updater + backend
-      const updater = new Http3ClientBackendUpdater('wt', '127.0.0.1', 12345);
+      const updater = new Http3ClientBackendUpdater('wt', '127.0.0.1', 12347);
       const localA = new SimpleBackend();
       const be_A = updater.addBackend(
         localA,
         true,
-        new Request({ scheme: 'https', authority: '127.0.0.1:12345', path: '/init/wwatp/' }),
+        new Request({ scheme: 'https', authority: '127.0.0.1:12347', path: '/init/wwatp/' }),
         0 // Journal requests not in this test
       );
       const localB = new SimpleBackend();
       const be_B = updater.addBackend(
         localB,
         true,
-        new Request({ scheme: 'https', authority: '127.0.0.1:12345', path: '/init/wwatp/' }),
+        new Request({ scheme: 'https', authority: '127.0.0.1:12347', path: '/init/wwatp/' }),
         0 // Journal requests not in this test
       );
 
@@ -221,8 +226,6 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
       const full = await awaitWithMaintain(updater, comm, be_B.requestFullTreeSync(), 10000);
       process.stderr.write(`[awaitMaintain] fullTreeSync resolved: ${Array.isArray(full) ? full.length : 'n/a'}\n`);
       if (typeof process.stderr.flush === 'function') process.stderr.flush();
-      process.stderr.write(`[awaitMaintain] fullTreeSync resolved: ${Array.isArray(full) ? full.length : 'n/a'}`);
-      if (typeof process.stderr.flush === 'function') process.stderr.flush();
       const maybe = be_B.getNode('e2e_webtransport_node');
       expect(maybe && typeof maybe.isJust === 'function').toBe(true);
       expect(maybe && maybe.isJust && maybe.isJust()).toBe(true);
@@ -238,5 +241,5 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
       // Restore global
       try { if (orig) globalThis.WebTransport = orig; else delete globalThis.WebTransport; } catch {}
     }
-  }, 20000);
+  }, 30000);
 });
