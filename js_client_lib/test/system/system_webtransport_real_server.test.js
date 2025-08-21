@@ -17,6 +17,13 @@ import {
   TreeNodeVersion,
   tryLoadNativeQuic,
 } from '../../index.js';
+import {
+  BackendTestbed,
+  createLionNodes,
+  createElephantNodes,
+  createParrotNodes,
+  createNotesPageTree,
+} from '../backend_testbed/backend_testbed.js';
 
 // Paths and resources (relative to repo root)
 const ROOT = path.resolve(__dirname, '../../..');
@@ -241,5 +248,84 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
       // Restore global
       try { if (orig) globalThis.WebTransport = orig; else delete globalThis.WebTransport; } catch {}
     }
+  }, 20000);
+
+  it('Add animals and notes and test backend logically', async () => {
+    // Preconditions
+    const rootDir = path.resolve(__dirname, '../../..');
+    const serverBinPath = path.join(rootDir, 'build', 'wwatp_server');
+    if (!fs.existsSync(serverBinPath)) {
+      return; // skip silently if no server built
+    }
+    const addon = tryLoadNativeQuic();
+    if (!addon) {
+      console.warn('[webtransport-e2e] Native QUIC addon not available; build js_client_lib/native first.');
+      return;
+    }
+    if (!haveCerts() && !tryGenerateSelfSignedCerts()) {
+      return; // skip if no certs and cannot generate
+    }
+
+    // mTLS env for emulator
+    process.env.WWATP_CERT = CERT_FILE;
+    process.env.WWATP_KEY = KEY_FILE;
+    process.env.WWATP_INSECURE = '1';
+    process.env.WWATP_TRACE = process.env.WWATP_TRACE || '1';
+
+    // Polyfill WebTransport with Node emulator
+    const { default: NodeWebTransportEmulator } = await import('../../transport/node_webtransport_emulator.js');
+    const orig = globalThis.WebTransport;
+    globalThis.WebTransport = NodeWebTransportEmulator;
+
+    const server = await spawnServer(serverBinPath);
+    try {
+      const url = 'https://127.0.0.1:12347/init/wwatp/';
+      const comm = new WebTransportCommunication(url);
+      await comm.connect();
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Updater with two client backends
+      const updater = new Http3ClientBackendUpdater('wt', '127.0.0.1', 12347);
+      const localA = new SimpleBackend();
+      const be_A = updater.addBackend(
+        localA,
+        true,
+        new Request({ scheme: 'https', authority: '127.0.0.1:12347', path: '/init/wwatp/' }),
+        0
+      );
+      const localB = new SimpleBackend();
+      const be_B = updater.addBackend(
+        localB,
+        true,
+        new Request({ scheme: 'https', authority: '127.0.0.1:12347', path: '/init/wwatp/' }),
+        0
+      );
+
+      // Seed server via be_A with animals and notes
+      const lionNodes = createLionNodes();
+      const elephantNodes = createElephantNodes();
+      const parrotNodes = createParrotNodes();
+      await awaitWithMaintain(updater, comm, be_A.upsertNode(lionNodes), 15000);
+      await awaitWithMaintain(updater, comm, be_A.upsertNode(elephantNodes), 15000);
+      await awaitWithMaintain(updater, comm, be_A.upsertNode(parrotNodes), 15000);
+      const notesNode = createNotesPageTree();
+      await awaitWithMaintain(updater, comm, be_A.upsertNode([notesNode]), 15000);
+
+      // Sync client B fully from server
+      const full = await awaitWithMaintain(updater, comm, be_B.requestFullTreeSync(), 20000);
+      // eslint-disable-next-line no-console
+      process.stderr.write(`[awaitMaintain] fullTreeSync resolved: ${Array.isArray(full) ? full.length : 'n/a'}\n`);
+      if (typeof process.stderr.flush === 'function') process.stderr.flush();
+
+      // Run logical test on be_B's local cache (do not mutate server during checks)
+      const tbLocalB = new BackendTestbed(localB, { shouldTestChanges: true });
+      tbLocalB.testBackendLogically('');
+
+      await comm.close();
+    } finally {
+      if (server) await killServer(server);
+      try { if (orig) globalThis.WebTransport = orig; else delete globalThis.WebTransport; } catch {}
+    }
   }, 30000);
 });
+
