@@ -228,6 +228,77 @@ export class BackendTestbed {
     }
     // Notification tests are handled in test file for now
   }
+
+  // Port of C++ BackendTestbed::testPeerNotification
+  // toBeModified: Backend performing the external mutations (peer)
+  // notificationDelay: ms to wait between peer action and local processNotifications
+  // labelPrefix: optional prefix for labels
+  async testPeerNotification(toBeModified, notificationDelay = 0, labelPrefix = '') {
+    if (!this.shouldTestNotifications || !this.shouldTestChanges) return;
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, Number(ms) | 0)));
+    const awaitIfPromise = async (v) => (v && typeof v.then === 'function' ? await v : v);
+
+    let lionCreated = false;
+    let lionDeleted = false;
+    const lionLabel = String(labelPrefix || '') + 'lion';
+
+    // Ensure clean state on the peer backend
+    await awaitIfPromise(toBeModified.deleteNode(lionLabel));
+
+    // Register listener on our local backend
+    const selfBackend = this.backend;
+    await awaitIfPromise(this.backend.registerNodeListener('lion_listener', lionLabel, false, (notifiedBackend, labelRule, maybeNode) => {
+      if (labelRule !== lionLabel) throw new Error(`Listener label mismatch: got ${labelRule}, expected ${lionLabel}`);
+      if (notifiedBackend !== selfBackend) throw new Error('Listener backend instance mismatch');
+      if (maybeNode && typeof maybeNode.isJust === 'function' && maybeNode.isJust()) {
+        const node = maybeNode.getOrElse(null);
+        if (node && typeof node.getLabelRule === 'function' && node.getLabelRule() === lionLabel) {
+          lionCreated = true;
+        }
+      } else {
+        // Nothing => deletion
+        lionDeleted = true;
+      }
+    }));
+
+    const prefixedLionNodes = prefixNodeLabels(labelPrefix || '', createLionNodes());
+
+    // Create on the peer
+    await awaitIfPromise(toBeModified.upsertNode(prefixedLionNodes));
+    await awaitIfPromise(toBeModified.processNotifications());
+    await sleep(notificationDelay);
+    await awaitIfPromise(this.backend.processNotifications());
+    if (!lionCreated) throw new Error('Expected lion node creation notification');
+
+    // Now delete on the peer
+    await awaitIfPromise(toBeModified.deleteNode(lionLabel));
+    await awaitIfPromise(toBeModified.processNotifications());
+    await sleep(notificationDelay);
+    await awaitIfPromise(this.backend.processNotifications());
+    if (!lionDeleted) throw new Error('Expected lion node deletion notification');
+
+    // Deregister and ensure no further notifications are observed
+    await awaitIfPromise(this.backend.deregisterNodeListener('lion_listener', lionLabel));
+    await awaitIfPromise(toBeModified.processNotifications());
+    await sleep(notificationDelay);
+    await awaitIfPromise(this.backend.processNotifications());
+
+    lionCreated = false;
+    lionDeleted = false;
+
+    await awaitIfPromise(toBeModified.upsertNode(prefixedLionNodes));
+    await awaitIfPromise(toBeModified.processNotifications());
+    await sleep(notificationDelay);
+    await awaitIfPromise(this.backend.processNotifications());
+    if (lionCreated) throw new Error('Listener should be deregistered; unexpected creation notification');
+
+    await awaitIfPromise(toBeModified.deleteNode(lionLabel));
+    await awaitIfPromise(toBeModified.processNotifications());
+    await sleep(notificationDelay);
+    await awaitIfPromise(this.backend.processNotifications());
+    if (lionDeleted) throw new Error('Listener should be deregistered; unexpected deletion notification');
+  }
 }
 
 // Test helpers

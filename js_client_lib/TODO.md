@@ -177,8 +177,8 @@ Browser runtime constraints
 
   The Following tests need to be added to the system_real_server.text.js.  
   - [X] upsert a test node and fetch it back via WebTransportCommunication (In place of LibcurlTransport, for example)
-  - [ ] WebTransportCommunication testBackendLogically
-  - [ ] WebTransportCommunication test roundtrip
+  - [X] WebTransportCommunication testBackendLogically
+  - [X] WebTransportCommunication test roundtrip
   - [ ] Verify implementation of testPeerNotification test in js_client_lib/test/backend_testbed/backend_testbed.js (use test_instances/catch2_unit_tests/backend_testbed.cpp for reference)
   - [ ] WebTransportCommunication testPeerNotification (which will verify that notifications are working via WebTransportCommunication)
 

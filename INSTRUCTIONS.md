@@ -8,7 +8,7 @@ Follow instructions
 
 ## Next steps
 
-Focus:  
+Focus: Next, write and run the WebTransportCommunication peer notification test to exercise journaling end-to-end using two clients. Use BackendTestbed.testPeerNotification now available in js.
 
 Relevant `TODO.md` is under path: js_client_lib
 Relevant `README.md` is under path: js_client_lib
