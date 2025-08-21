@@ -1,11 +1,12 @@
 // System-level test: WebTransportCommunication against real WWATP server via Node WebTransport emulator.
-// Skipped unless WWATP_E2E=1. Requires built server at build/wwatp_server and QUIC addon built.
+// Requires built server at build/wwatp_server and QUIC addon built. This suite runs regardless of WWATP_E2E,
+// but will skip internally if prerequisites are missing.
 
 import { describe, it, expect } from 'vitest';
-import fs from 'fs';
-import path from 'path';
-import dgram from 'dgram';
-import child_process from 'child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import dgram from 'node:dgram';
+import child_process from 'node:child_process';
 
 import {
   WebTransportCommunication,
@@ -17,12 +18,7 @@ import {
   tryLoadNativeQuic,
 } from '../../index.js';
 
-// Previously gated on env flags; now we always execute the suite and rely on
-// in-test prechecks to early-return when prerequisites aren't available.
-const e2e = (process.env.WWATP_E2E || '').toString().toLowerCase();
-const full = (process.env.WWATP_E2E_FULL || '').toString().toLowerCase();
-console.info('[system_webtransport_real_server.test] WWATP_E2E=%s (no skip gate)', process.env.WWATP_E2E);
-
+// Paths and resources (relative to repo root)
 const ROOT = path.resolve(__dirname, '../../..');
 const SERVER_BIN = path.join(ROOT, 'build', 'wwatp_server');
 const CONFIG = path.join(ROOT, 'js_client_lib', 'test', 'resources', 'wwatp_server_config.yaml');
@@ -62,13 +58,14 @@ async function isUdpPortInUse(port, host = '127.0.0.1') {
   });
 }
 
+
 async function waitForServerReady(proc, port = 12345, host = '127.0.0.1', timeoutMs = 15000) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     let settled = false;
     const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
     const fail = (err) => { if (!settled) { settled = true; reject(err); } };
-    proc.once('exit', (code) => fail(new Error(`server exited before ready, code=${code}`)));
+    proc?.once?.('exit', (code) => fail(new Error(`server exited before ready, code=${code}`)));
     const iv = setInterval(async () => {
       if (Date.now() - start > timeoutMs) { clearInterval(iv); fail(new Error('timeout waiting for UDP bind')); return; }
       const inUse = await isUdpPortInUse(port, host);
@@ -77,7 +74,7 @@ async function waitForServerReady(proc, port = 12345, host = '127.0.0.1', timeou
   });
 }
 
-async function spawnServer() {
+async function spawnServer(serverBinPath = null) {
   // Allow disabling server spawn to attach an external/debug-launched server instead.
   // If WWATP_SKIP_SPAWN_SERVER=1 or WWATP_EXTERNAL_SERVER=1, wait for UDP bind and return null.
   const skip = String(process.env.WWATP_SKIP_SPAWN_SERVER || process.env.WWATP_EXTERNAL_SERVER || '').toLowerCase();
@@ -85,9 +82,14 @@ async function spawnServer() {
     await waitForServerReady({ once: () => {} }, 12345, '127.0.0.1', 15000);
     return null;
   }
-  if (!fs.existsSync(SERVER_BIN)) throw new Error(`Server binary not found at ${SERVER_BIN}`);
+  // Derive defaults safely if top-level constants are not available in this scope
+  const rootDir = (typeof ROOT !== 'undefined' && ROOT) ? ROOT : path.resolve(__dirname, '../../..');
+  const bin = serverBinPath
+    || (typeof SERVER_BIN !== 'undefined' && SERVER_BIN)
+    || path.join(rootDir, 'build', 'wwatp_server');
+  if (!fs.existsSync(bin)) throw new Error(`Server binary not found at ${bin}`);
   ensureSandboxAndDataDirs();
-  const proc = child_process.spawn(SERVER_BIN, [CONFIG], { cwd: ROOT });
+  const proc = child_process.spawn(bin, [CONFIG], { cwd: rootDir });
   proc.on('error', () => {});
   // Pipe server output for diagnostics during the test
   try {
@@ -113,9 +115,7 @@ function killServer(proc, signal = 'SIGTERM', timeoutMs = 5000) {
   });
 }
 
-const wtDescribe = describe.sequential;
-
-wtDescribe('System (WebTransport real server)', () => {
+describe.sequential('System (WebTransport real server) – end-to-end', () => {
   // Drive the updater until a promise resolves or timeout elapses.
   async function awaitWithMaintain(updater, comm, p, timeoutMs = 8000, tickMs = 20) {
     let done = false; let val; let err;
@@ -146,8 +146,10 @@ wtDescribe('System (WebTransport real server)', () => {
   }
 
   it('upsert a test node and fetch it back via WebTransportCommunication', async () => {
-    // Pre-checks
-    if (!fs.existsSync(SERVER_BIN)) {
+    // Pre-checks (avoid referencing undeclared globals directly)
+    const rootDir = path.resolve(__dirname, '../../..');
+    const serverBinPath = path.join(rootDir, 'build', 'wwatp_server');
+    if (!fs.existsSync(serverBinPath)) {
       return; // skip silently if no server built
     }
     // QUIC addon required for Node emulator
@@ -172,7 +174,7 @@ wtDescribe('System (WebTransport real server)', () => {
     const orig = globalThis.WebTransport;
     globalThis.WebTransport = NodeWebTransportEmulator;
 
-  const server = await spawnServer();
+  const server = await spawnServer(serverBinPath);
     try {
       // Create WebTransportCommunication pointed at WWATP entry path
       const url = 'https://127.0.0.1:12345/init/wwatp/';
@@ -211,15 +213,16 @@ wtDescribe('System (WebTransport real server)', () => {
       // Queue request, then drive the updater in a short loop until it resolves
       const upOk = await awaitWithMaintain(updater, comm, be_A.upsertNode([node]), 8000);
       // eslint-disable-next-line no-console
-      console.error(`[awaitMaintain] upsert resolved: ${upOk}`);
+      process.stderr.write(`[awaitMaintain] upsert resolved: ${upOk}\n`);
+      if (typeof process.stderr.flush === 'function') process.stderr.flush();
       expect(!!upOk).toBe(true);
-      // eslint-disable-next-line no-console
-      console.error(`[awaitMaintain] getNode resolved: ${!!(maybe && maybe.isJust && maybe.isJust())}`);
 
       // Sync be_B from server, then fetch it back from be_B
       const full = await awaitWithMaintain(updater, comm, be_B.requestFullTreeSync(), 10000);
-      // eslint-disable-next-line no-console
-      console.error(`[awaitMaintain] fullTreeSync resolved: ${Array.isArray(full) ? full.length : 'n/a'}`);
+      process.stderr.write(`[awaitMaintain] fullTreeSync resolved: ${Array.isArray(full) ? full.length : 'n/a'}\n`);
+      if (typeof process.stderr.flush === 'function') process.stderr.flush();
+      process.stderr.write(`[awaitMaintain] fullTreeSync resolved: ${Array.isArray(full) ? full.length : 'n/a'}`);
+      if (typeof process.stderr.flush === 'function') process.stderr.flush();
       const maybe = be_B.getNode('e2e_webtransport_node');
       expect(maybe && typeof maybe.isJust === 'function').toBe(true);
       expect(maybe && maybe.isJust && maybe.isJust()).toBe(true);

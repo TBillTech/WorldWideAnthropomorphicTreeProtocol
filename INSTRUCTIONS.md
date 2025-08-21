@@ -8,12 +8,10 @@ Follow instructions
 
 ## Next steps
 
-Focus: Work on unit tests under the E2E test using WebTransportCommunication with http3_client_backend_updater section in TODO.md.  Use the following approach:
-  1) Turn all unit tests on, and don't skip any of them, and if any fail, pick up debugging there.
-  2) Choose the next needed unit test, and implement it.
-  3) Then go back to step 1.
+Focus: Work on getting system_webtransport_real_server test running correctly.  Currently, the upsert node is failing, because the data is garbled and possibly escaped incorrectly by the time it gets to the quic_connector_c layer. 
 
-This will ensure that we troubleshoot the test progressively from simpler tests to more complex.
+I've found some issues in the code having to do with the parity between c++ and javascript http3_message_helpers.
+Let's work on fixing this up.  Let's address these issues one at a time. 
 
 Relevant `TODO.md` is under path: js_client_lib
 Relevant `README.md` is under path: js_client_lib

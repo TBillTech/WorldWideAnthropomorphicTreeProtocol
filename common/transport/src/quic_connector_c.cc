@@ -152,20 +152,27 @@ static inline void log_first_payload_header(const char* tag, const shared_span<>
   }
 }
 
-static inline void log_stream_state(const char* tag, wwatp_quic_stream_t* st) {
+static inline void log_stream_state(const char* tag, wwatp_quic_stream_t* st, bool needLock = true) {
   if (!g_verbose || !st) return;
-  lock_guard<mutex> lk(st->m);
-  std::cerr << tag << ": sid.logical=" << st->sid.logical_id
-            << " outgoing.count=" << st->outgoing.size()
-            << " incoming.count=" << st->incoming.size()
-            << " remote_eos=" << (st->remote_eos ? 1 : 0)
-            << " half_close=" << (st->half_close ? 1 : 0)
-            << std::endl;
-  if (!st->outgoing.empty()) {
-    log_first_payload_header("  out.first", st->outgoing.front());
-  }
-  if (!st->incoming.empty()) {
-    log_first_payload_header("  in.first", st->incoming.front());
+  auto printer = [&]() {
+    std::cerr << tag << ": sid.logical=" << st->sid.logical_id
+              << " outgoing.count=" << st->outgoing.size()
+              << " incoming.count=" << st->incoming.size()
+              << " remote_eos=" << (st->remote_eos ? 1 : 0)
+              << " half_close=" << (st->half_close ? 1 : 0)
+              << std::endl;
+    if (!st->outgoing.empty()) {
+      log_first_payload_header("  out.first", st->outgoing.front());
+    }
+    if (!st->incoming.empty()) {
+      log_first_payload_header("  in.first", st->incoming.front());
+    }
+  };
+  if (needLock) {
+    lock_guard<mutex> lk(st->m);
+    printer();
+  } else {
+    printer();
   }
 }
 
@@ -402,7 +409,8 @@ int64_t wwatp_quic_stream_write(wwatp_quic_stream_t* stream, const uint8_t* data
     std::cerr << "ffi.write: sid.logical=" << stream->sid.logical_id
               << " len=" << len
               << " end_stream=" << end_stream << std::endl;
-    log_stream_state("ffi.write.state", stream);
+    // mutex is not locked here; allow log_stream_state to take lock
+    log_stream_state("ffi.write.state", stream, true);
   }
   return static_cast<int64_t>(len);
 }
@@ -411,57 +419,47 @@ int64_t wwatp_quic_stream_read(wwatp_quic_stream_t* stream, uint8_t* buf, size_t
   if (!stream || !buf) { g_last_error = "invalid stream/buf"; return WWATP_QUIC_ERR_PARAM; }
   using namespace std::chrono;
   auto start = steady_clock::now();
+  if (g_verbose) {
+    lock_guard<mutex> lk(stream->m);
+    std::cerr << "ffi.read.call: sid.logical=" << stream->sid.logical_id
+              << " buf_len=" << buf_len
+              << " timeout=" << timeout_ms
+              << " incoming.count=" << stream->incoming.size()
+              << " offset=" << stream->incoming_head_offset
+              << " remote_eos=" << (stream->remote_eos ? 1 : 0)
+              << std::endl;
+  }
 
   for (;;) {
-    // First, see if we already have bytes
+    // First, see if we already have a chunk queued
     {
       lock_guard<mutex> lk(stream->m);
       if (!stream->incoming.empty()) {
-        size_t copied = 0;
-        while (copied < buf_len && !stream->incoming.empty()) {
-          auto &ch = stream->incoming.front();
-          if (ch.get_signal_type() == payload_chunk_header::GLOBAL_SIGNAL_TYPE) {
-            // Iterate bytes, skip already-consumed offset
-            size_t off = stream->incoming_head_offset;
-            size_t skipped = 0;
-            auto it = ch.begin<uint8_t>();
-            auto it_end = ch.end<uint8_t>();
-            for (; it != it_end && skipped < off; ++it) { ++skipped; }
-            // Copy up to buf_len - copied bytes
-            while (it != it_end && copied < buf_len) {
-              buf[copied++] = *it;
-              ++it;
-              ++off;
-            }
-            // Determine if we've consumed the entire chunk
-            if (it == it_end) {
-              stream->incoming_head_offset = 0;
-              stream->incoming.erase(stream->incoming.begin());
-            } else {
-              // Save partial consumption offset and break to return copied bytes
-              stream->incoming_head_offset = off;
-              break;
-            }
-          } else if (ch.get_signal_type() == signal_chunk_header::GLOBAL_SIGNAL_TYPE) {
-            // Observe close-stream signals as EOS and drop the chunk
-            auto sig = ch.get_signal<signal_chunk_header>().signal;
-            if (sig == signal_chunk_header::SIGNAL_CLOSE_STREAM) {
-              stream->remote_eos = true;
-            }
-            stream->incoming.erase(stream->incoming.begin());
-            stream->incoming_head_offset = 0;
-          } else {
-            // Unknown chunk type; drop to avoid stalling
-            stream->incoming.erase(stream->incoming.begin());
-            stream->incoming_head_offset = 0;
-          }
+        auto &ch = stream->incoming.front();
+        // Directly copy the single on-wire chunk (header + payload)
+        size_t wire_sz = 0;
+        try { wire_sz = ch.use_chunk_size(); } catch (...) {
+          // Fall back to computed wire size
+          try { wire_sz = ch.get_wire_size(); } catch (...) { wire_sz = ch.stored_size(); }
         }
-        if (copied > 0) {
-          if (g_verbose) { log_stream_state("ffi.read.bytes", stream); }
-          return static_cast<int64_t>(copied);
+        if (wire_sz == 0) {
+          // Drop empty/malformed
+          stream->incoming.erase(stream->incoming.begin());
+          stream->incoming_head_offset = 0;
+          if (g_verbose) { log_stream_state("ffi.read.bytes(drop0)", stream, false); }
+        } else if (buf_len < wire_sz) {
+          g_last_error = "buffer too small for chunk";
+          return WWATP_QUIC_ERR_PARAM;
+        } else {
+          auto *chunk_ptr = ch.use_chunk();
+          memcpy(buf, chunk_ptr->data, wire_sz);
+          stream->incoming.erase(stream->incoming.begin());
+          stream->incoming_head_offset = 0;
+          if (g_verbose) { log_stream_state("ffi.read.bytes", stream, false); }
+          return static_cast<int64_t>(wire_sz);
         }
       }
-      if (stream->remote_eos) { if (g_verbose) { log_stream_state("ffi.read.eos", stream); } return 0; } // clean EOS
+      if (stream->remote_eos) { if (g_verbose) { log_stream_state("ffi.read.eos", stream, false); } return 0; } // clean EOS
     }
 
     {
@@ -472,12 +470,12 @@ int64_t wwatp_quic_stream_read(wwatp_quic_stream_t* stream, uint8_t* buf, size_t
 
     if (timeout_ms == 0) {
       // Non-blocking: nothing available now
-      if (g_verbose) { log_stream_state("ffi.read.nb", stream); }
+      if (g_verbose) { log_stream_state("ffi.read.nb", stream, true); }
       return 0;
     }
     auto elapsed = duration_cast<milliseconds>(steady_clock::now() - start).count();
     if (elapsed >= timeout_ms) {
-      if (g_verbose) { log_stream_state("ffi.read.timeout", stream); }
+      if (g_verbose) { log_stream_state("ffi.read.timeout", stream, true); }
       return WWATP_QUIC_ERR_TIMEOUT;
     }
     this_thread::sleep_for(chrono::milliseconds(5));

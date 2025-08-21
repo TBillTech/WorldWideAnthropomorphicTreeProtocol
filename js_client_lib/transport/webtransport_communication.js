@@ -5,40 +5,141 @@
 import Communication from './communication.js';
 import { tracer } from './instrumentation.js';
 
+// Global sequence for per-send dump files
+let __wwatp_dump_seq = 0;
+
 // Small helper to coerce various input types into async chunks for writing
-async function* toAsyncChunks(data) {
+// If env WWATP_REQUEST_DATA_DUMP_CHECK is set (Node only), mirror exactly the bytes yielded
+// into a unique file for each send, by appending a monotonically increasing sequence number
+// to the provided base filename. Callers can pass { skipDump: true } to avoid dumping
+// (e.g., for heartbeat frames).
+async function* toAsyncChunks(data, { skipDump = false } = {}) {
+    const isNode = typeof process !== 'undefined' && !!(process.versions && process.versions.node);
+    const dumpBase = isNode ? (process.env.WWATP_REQUEST_DATA_DUMP_CHECK || '') : '';
+    let dumpHandle = null;
+    let fsPromises = null;
+    let nodePath = null;
+    let finalDumpPath = '';
+    const nextDumpPath = (base) => {
+        try {
+            if (!nodePath || !base) return base;
+            const parsed = nodePath.parse(base);
+            const seq = (++__wwatp_dump_seq) >>> 0;
+            const name = parsed.name || '';
+            const ext = parsed.ext || '';
+            const dir = parsed.dir || '';
+            const fname = `${name}.${seq}${ext}`;
+            return nodePath.join(dir || '.', fname);
+        } catch { return base; }
+    };
+    const ensureDumpOpen = async (pathToOpen) => {
+        if (!pathToOpen || !isNode) return false;
+        if (!fsPromises) {
+            try {
+                fsPromises = await import('fs/promises');
+                nodePath = await import('path');
+            } catch (_) { fsPromises = null; }
+        }
+        if (!fsPromises) return false;
+        try {
+            // Ensure parent directory exists
+            const dir = nodePath?.dirname(pathToOpen) || '/tmp';
+            await fsPromises.mkdir(dir, { recursive: true }).catch(() => {});
+            // Open with truncate to overwrite on each request
+            dumpHandle = await fsPromises.open(pathToOpen, 'w');
+            return true;
+        } catch (_) { return false; }
+    };
+    const getPayloadLen = (u8) => {
+        try {
+            if (!(u8 instanceof Uint8Array)) return null;
+            if (u8.byteLength < 6) return null;
+            const st = u8[0] | 0;
+            if (st !== 2 /* SIGNAL_TYPE.PAYLOAD */) return null;
+            // little-endian u16 at offset 4
+            return ((u8[4] | 0) | ((u8[5] | 0) << 8)) >>> 0;
+        } catch { return null; }
+    };
+    const writeDump = async (chunk) => {
+        if (!dumpHandle || !chunk) return;
+        try { await dumpHandle.write(chunk); } catch (_) {}
+    };
+    const closeDump = async () => {
+        if (!dumpHandle) return;
+        try { await dumpHandle.close(); } catch (_) {}
+        dumpHandle = null;
+    };
     if (!data) return;
     if (data instanceof Uint8Array) {
+        if (!skipDump) {
+            const plen = getPayloadLen(data);
+            if (plen && dumpBase && !dumpHandle) { if (!nodePath) { try { nodePath = await import('path'); } catch {} } finalDumpPath = nextDumpPath(dumpBase); await ensureDumpOpen(finalDumpPath); }
+            if (plen && dumpHandle) { await writeDump(data); await closeDump(); }
+        }
         yield data;
         return;
     }
     if (data.buffer instanceof ArrayBuffer && typeof data.byteLength === 'number') {
-        yield new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength);
+        const u8 = new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength);
+        if (!skipDump) {
+            const plen = getPayloadLen(u8);
+            if (plen && dumpBase && !dumpHandle) { if (!nodePath) { try { nodePath = await import('path'); } catch {} } finalDumpPath = nextDumpPath(dumpBase); await ensureDumpOpen(finalDumpPath); }
+            if (plen && dumpHandle) { await writeDump(u8); await closeDump(); }
+        }
+        yield u8;
         return;
     }
     if (typeof data === 'string') {
-        yield new TextEncoder().encode(data);
+        const te = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+        const u8 = te ? te.encode(data) : Buffer.from(data, 'utf8');
+        if (!skipDump) {
+            const plen = getPayloadLen(u8);
+            if (plen && dumpBase && !dumpHandle) { if (!nodePath) { try { nodePath = await import('path'); } catch {} } finalDumpPath = nextDumpPath(dumpBase); await ensureDumpOpen(finalDumpPath); }
+            if (plen && dumpHandle) { await writeDump(u8); await closeDump(); }
+        }
+        yield u8;
         return;
     }
     // ReadableStream<Uint8Array>
     if (typeof data.getReader === 'function') {
         const reader = data.getReader();
         try {
+            let decided = false; let doDump = false;
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
-                if (value) yield value instanceof Uint8Array ? value : new Uint8Array(value);
+                if (value) {
+                    const u8 = value instanceof Uint8Array ? value : new Uint8Array(value);
+                    if (!skipDump && !decided) {
+                        const plen = getPayloadLen(u8);
+                        decided = true; doDump = !!(plen && dumpBase);
+                        if (doDump && !dumpHandle) { if (!nodePath) { try { nodePath = await import('path'); } catch {} } finalDumpPath = nextDumpPath(dumpBase); await ensureDumpOpen(finalDumpPath); }
+                    }
+                    if (doDump && dumpHandle) { await writeDump(u8); }
+                    yield u8;
+                }
             }
         } finally {
             try { reader.releaseLock?.(); } catch {}
+            if (!skipDump && dumpHandle) { await closeDump(); }
         }
         return;
     }
     // AsyncIterable
     if (Symbol.asyncIterator in Object(data)) {
+    let decided = false; let doDump = false;
         for await (const chunk of data) {
-            if (chunk) yield chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+            if (!chunk) continue;
+            const u8 = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+            if (!skipDump && !decided) {
+                const plen = getPayloadLen(u8);
+        decided = true; doDump = !!(plen && dumpBase);
+        if (doDump && !dumpHandle) { if (!nodePath) { try { nodePath = await import('path'); } catch {} } finalDumpPath = nextDumpPath(dumpBase); await ensureDumpOpen(finalDumpPath); }
+            }
+            if (doDump && dumpHandle) { await writeDump(u8); }
+            yield u8;
         }
+        if (!skipDump && dumpHandle) { await closeDump(); }
         return;
     }
 }
@@ -119,8 +220,8 @@ export default class WebTransportCommunication extends Communication {
                 for (const [sidKey, ent] of this._streams.entries()) {
                     // Prefer the original sid object if we stored it; fall back to the key string.
                     const sid = ent && ent.sid ? ent.sid : sidKey;
-                    // Fire-and-forget; nudgeRead will gate on transport.readReady when available.
-                    this.nudgeRead(sid);
+                    // Fire-and-forget, but schedule on next tick to avoid re-entrancy with native locks.
+                    setTimeout(() => { try { this.nudgeRead(sid); } catch {} }, 0);
                 }
             } catch (_) {}
             return did;
@@ -140,19 +241,18 @@ export default class WebTransportCommunication extends Communication {
             const sidKey = String(sid);
             const ent = this._streams.get(sidKey);
             if (!ent || !ent.reader) return;
-            // Gate on transport-provided readiness hint when available to avoid hot-loop reads
+            // Avoid concurrent reads on the same stream to prevent native mutex deadlocks.
+            if (ent._reading) { /* suppressed: this._trace.info('nudge.skip.busy', { sid }); */ return; }
+            ent._reading = true;
             try {
-                if (this.transport && typeof this.transport.readReady === 'function') {
-                    // If readReady returns falsy, skip the actual read for now
-                    const ready = !!this.transport.readReady(sid);
-                    if (!ready) return;
+                // Attempt a single read. Native read() has a short timeout, so this won't spin.
+                const { value, done } = await ent.reader.read();
+                if (!done && value instanceof Uint8Array && value.byteLength > 0) {
+                    this._emitResponseEvent(sid, { type: 'response', ok: true, status: 200, data: value });
+                    this._trace.info('stream.response', { sid, bytes: value.byteLength });
                 }
-            } catch (_) {}
-            // Fire and forget a single read; if data arrives, emit it.
-            const { value, done } = await ent.reader.read();
-            if (!done && value instanceof Uint8Array && value.byteLength > 0) {
-                this._emitResponseEvent(sid, { type: 'response', ok: true, status: 200, data: value });
-                this._trace.info('stream.response', { sid, bytes: value.byteLength });
+            } finally {
+                ent._reading = false;
             }
         } catch (_) {
             // best-effort nudge only
@@ -174,8 +274,9 @@ export default class WebTransportCommunication extends Communication {
         const sidKey = String(sid);
         let entry;
         let created = false;
-    if (isNodeEmulator) {
+        if (isNodeEmulator) {
             entry = this._streams.get(sidKey);
+            // For heartbeats, reuse the persistent stream so native/server can correlate progress.
             if (!entry) {
                 const bidi = await this.transport.createBidirectionalStream();
                 const writer = bidi.writable.getWriter();
@@ -185,15 +286,14 @@ export default class WebTransportCommunication extends Communication {
                 created = true;
                 this._trace.inc('streams.open');
                 this._trace.info('stream.open', { sid });
-                // If emulator exposes a way to tag WWATP request signal on the native stream, do it before first write
+                // If emulator exposes a way to tag WWATP request signal on the native stream, schedule it on next tick
                 try {
                     if (requestSignal !== undefined && typeof this.transport?.setRequestSignalForCurrentStream === 'function') {
-                        this.transport.setRequestSignalForCurrentStream(requestSignal >>> 0);
+                        setTimeout(() => { try { this.transport.setRequestSignalForCurrentStream(requestSignal >>> 0); } catch {} }, 0);
                     }
                 } catch {}
             }
             // Heartbeats share the same persistent stream so the native layer keeps the same logical id.
-            // Do NOT open a new stream for heartbeats on the Node emulator.
         } else {
             // Ephemeral stream for polyfill/browser environments
             const bidi = await this.transport.createBidirectionalStream();
@@ -218,10 +318,16 @@ export default class WebTransportCommunication extends Communication {
                 ent._reading = true;
                 try {
                     const { value, done } = await ent.reader.read();
-                    if (done) { /* keep interval; reader may signal done transiently */ }
-                    else if (value instanceof Uint8Array && value.byteLength > 0) {
-                        this._emitResponseEvent(sid, { type: 'response', ok: true, status: 200, data: value });
-                        this._trace.info('stream.response', { sid, bytes: value.byteLength });
+                    if (done) {
+                        // keep interval; reader may signal done transiently
+                    } else if (value instanceof Uint8Array && value.byteLength > 0) {
+                        try {
+                            this._emitResponseEvent(sid, { type: 'response', ok: true, status: 200, data: value });
+                            this._trace.info('stream.response', { sid, bytes: value.byteLength });
+                        } catch (handlerErr) {
+                            // If the registered handler throws (e.g., attempted early decode), log separately
+                            this._trace.warn('stream.handler.error', { sid, error: String(handlerErr && handlerErr.message || handlerErr) });
+                        }
                     }
                 } catch (e) {
                     this._trace.warn('stream.read.error', { sid, error: String(e && e.message || e) });
@@ -252,12 +358,12 @@ export default class WebTransportCommunication extends Communication {
             // Write request body as-is. On Node emulator persistent streams we intentionally keep the
             // writer open (no FIN) so that heartbeats can be written on the same logical stream id.
             if (data) {
-                for await (const chunk of toAsyncChunks(data)) {
+                for await (const chunk of toAsyncChunks(data, { skipDump: !!isHeartbeat })) {
                     if (aborted) throw new DOMException('Aborted', 'AbortError');
                     await writer.write(chunk);
                 }
             }
-            // For non-emulator environments (or when using ephemeral streams), FIN after write.
+            // For non-emulator environments, FIN after write.
             // For Node emulator persistent streams, DO NOT FIN here; we'll FIN during closeStream(sid).
             if (!isNodeEmulator) {
                 try {
@@ -340,7 +446,7 @@ export default class WebTransportCommunication extends Communication {
             throw err;
         } finally {
             // Cleanup locks conditionally based on transport type
-            // - Browser/polyfill ephemeral streams: fully cancel
+            // - Browser/polyfill streams: fully cancel
             // - Node emulator persistent streams: keep reader attached; only release writer lock
             if (!isNodeEmulator) {
                 try { reader.cancel?.('done'); } catch {}

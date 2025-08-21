@@ -7,6 +7,15 @@
 
 using namespace std;
 
+// All Pseudo codes below are for encode functions (decode and can_decode are not shown)
+// Pseudo codes focus on two issues:
+//   * whether data is written as clear text or binary
+//   * when and how many chunks are appended to the encoded list
+
+// Pseudo code for encode_label
+// 1. chunkList encoded starts empty
+// 2. Create a chunk with clear text version of string with length
+// 3. Append chunk to encoded
 chunkList encode_label(uint16_t request_id, uint8_t signal, const string& str) {
     chunkList encoded;
     if (str.size() > shared_span<>::chunk_size - sizeof(payload_chunk_header)) {
@@ -39,6 +48,11 @@ fplus::maybe<size_t> can_decode_label(size_t start_chunk, chunkList encoded) {
     return fplus::maybe<size_t>(start_chunk + 1);
 }
 
+// Pseudo code for encode_long_string
+// 1. chunkList encoded starts empty
+// 2. Create a chunk with binary size_t string length at beginning, filled with string data
+// 3. Append chunk to encoded
+// 4. Continue adding chunks for the remainder of the long string
 chunkList encode_long_string(uint16_t request_id, uint8_t signal, const string& str) {
     chunkList encoded;
     auto str_start = str.c_str();
@@ -97,6 +111,12 @@ fplus::maybe<size_t> can_decode_long_string(size_t start_chunk, chunkList encode
     return fplus::maybe<size_t>(expected_chunk);
 }
 
+// Pseudo code for encode_MaybeTreeNode
+// 1. If mnode is nothing, encode_long_string("Nothing") and return
+// 2. If mnode is just, oss = a string "Just " followed by the TreeNode (via ostream operator, not including the property data)
+// 3. Append 8 * 2 hex bytes to oss for the number of property data chunks.
+// 4. Start with encoded ChunkList = encode_long_string(oss);
+// 5. Append property data chunks to encoded
 chunkList encode_MaybeTreeNode(uint16_t request_id, uint8_t signal, const fplus::maybe<TreeNode>& mnode) {
     if (mnode.is_nothing()) {
         return encode_long_string(request_id, signal, "Nothing");
@@ -191,6 +211,10 @@ fplus::maybe<size_t> can_decode_MaybeTreeNode(size_t start_chunk, chunkList enco
     return fplus::maybe<size_t>(chunk_count + contents_size);
 }
 
+// Pseudo code for encode_SequentialNotification
+// 1. Create a string oss = notification sequence number + " " + node label notification is for;
+// 2. ChunkList encoded = encode_long_string(oss);
+// 3. Append encode_MaybeTreeNode(the node as modified when originating the notification)
 chunkList encode_SequentialNotification(uint16_t request_id, uint8_t signal, const SequentialNotification& notifications) {
     // The sequential nofitication is a pair of a uint64_t and a Notification,
     // and the Notification is a pair of a string and a maybe<TreeNode>.
@@ -256,6 +280,9 @@ fplus::maybe<size_t> can_decode_SequentialNotification(size_t start_chunk, chunk
     return can_decode_MaybeTreeNode(can_decode_structure.unsafe_get_just(), encoded);
 }
 
+// Pseudo code for encode_VectorSequentialNotification
+// 1. chunkList encoded = encode_label(notifications.size())
+// 2. for each notification in notifications, append encode_SequentialNotification(notification) to encoded
 chunkList encode_VectorSequentialNotification(uint16_t request_id, uint8_t signal, const vector<SequentialNotification>& notifications) {
     chunkList encoded = encode_label(request_id, signal, to_string(notifications.size()));
     for (const auto& notification : notifications) {
@@ -304,6 +331,11 @@ fplus::maybe<size_t> can_decode_VectorSequentialNotification(size_t start_chunk,
     return fplus::maybe<size_t>(current_offset);
 }
 
+// Pseudo code for encode_NewNodeVersion
+// 1. Create a string oss = "Nothing" if new_node_version optional version_number is nothing
+// 2. Otherwise oss = "Just" + " " + new_node_version version_number
+// 3. ChunkList encoded = encode_long_string(oss)
+// 4. Append encode_MaybeTreeNode() to encoded
 chunkList encode_NewNodeVersion(uint16_t request_id, uint8_t signal, const NewNodeVersion& new_node_version) {
     // The new node version is a decorated Notificaton similiar to the SequentialNotification.
     // It is a maybe uint16_t with a nofication label and a maybe<TreeNode>.
@@ -376,6 +408,10 @@ fplus::maybe<size_t> can_decode_NewNodeVersion(size_t start_chunk, chunkList enc
     return can_decode_MaybeTreeNode(can_decode_structure.unsafe_get_just(), encoded);
 }
 
+// Pseudo code for encode_SubTransaction
+// 1. ChunkList encoded = encode_label(number of descendant notifications in the sub transaction)
+// 2. Append encode_NewNodeVersion(main notification in the sub transaction) to encoded
+// 3. For each descendant notification in the sub transaction, append encode_NewNodeVersion(notification) to encoded
 chunkList encode_SubTransaction(uint16_t request_id, uint8_t signal, const SubTransaction& sub_transaction) {
     // The sub transaction is one NewNodeVerison plus a vector of one or more NewNodeVersions.
     // So the only thing to track beyond simply delegating to N NewNodeVersion encoders is 
@@ -463,6 +499,9 @@ fplus::maybe<size_t> can_decode_SubTransaction(size_t start_chunk, chunkList enc
     return current_chunk;
 }
 
+// Pseudo code for encode_Transaction
+// 1. chunkList encoded = encode_label(transaction.size())
+// 2. for each sub_transaction in transaction, append encode_SubTransaction(sub_transaction) to encoded
 chunkList encode_Transaction(uint16_t request_id, uint8_t signal, const Transaction& transaction) {
     // The transaction is a vector of SubTransactions.
     // So the only thing to track beyond simply delegating to N SubTransaction encoders is 
@@ -535,6 +574,9 @@ fplus::maybe<size_t> can_decode_Transaction(size_t start_chunk, chunkList encode
     return current_chunk;
 }
 
+// Pseudo code for encode_VectorTreeNode
+// 1. ChunkList encoded = encode_label(vector_size)
+// 2. for each node in the vector, append encode_MaybeTreeNode(node) to encoded
 chunkList encode_VectorTreeNode(uint16_t request_id, uint8_t signal, const std::vector<TreeNode>& nodes) {
     // The vector of tree nodes is a vector of TreeNodes.
     // So the only thing to track beyond simply delegating to N TreeNode encoders is 

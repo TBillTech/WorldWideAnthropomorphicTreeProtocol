@@ -17,3 +17,5 @@ Runtime:
 
 - `transport/native_quic.js` will prefer this addon if present; otherwise it falls back to the ffi-napi loader.
 - You can also set `WWATP_QUIC_SO` to help the FFI path when the addon is absent.
+- You can also set `WWATP_QUIC_FFI_VERBOSE`=1 to help debug FFI messaging and I/O. 
+

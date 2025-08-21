@@ -37,17 +37,33 @@ export function tryLoadNativeQuic() {
     function openBidiStream(sess, p) { return addon.openBidiStream(sess, p); }
   function setRequestSignal(st, sig) { try { addon.setRequestSignal(st, sig >>> 0); } catch {} }
   function processRequestStream(sess) { try { return Number(addon.processRequestStream(sess)) || 0; } catch { return 0; } }
-    function readReady(sess, sid) { try { return !!addon.readReady?.(sess, Number(sid) >>> 0); } catch { return false; } }
     function write(st, data, endStream = true) {
       const u8 = Buffer.isBuffer(data) ? new Uint8Array(data) : (data instanceof Uint8Array ? data : new Uint8Array());
       return Number(addon.write(st, u8, !!endStream));
     }
-    function read(st, maxLen = 65536, timeoutMs = 0) { return addon.read(st, maxLen >>> 0, timeoutMs >>> 0); }
+    function read(st, maxLen = 65536, timeoutMs = 0) {
+      const t = Math.max(0, Math.min(100, timeoutMs >>> 0));
+      const res = addon.read(st, maxLen >>> 0, t);
+      try {
+        if (t > 0) {
+          const isU8 = res instanceof Uint8Array;
+          const isFin = !!(res && typeof res === 'object' && res.fin === true);
+          if (!isU8 && !isFin) {
+            // Treat as a timeout from native read.
+            // Intentionally use console.error for visibility during debugging.
+            // Avoid including large objects; just log the fact and timeout value.
+            // eslint-disable-next-line no-console
+            console.error('[WWATP][NativeQuic] read timeout', { timeoutMs: t });
+          }
+        }
+      } catch {}
+      return res;
+    }
     function closeStream(st) { try { addon.closeStream(st); } catch {} }
   function lastError() { try { return addon.lastError(); } catch { return 'unknown'; } }
   // Optional: expose numeric client CID if addon supports it
   function getClientConnectionId(sess) { try { return addon.getClientConnectionId?.(sess); } catch { return undefined; } }
-  return { libPath: '(napi addon)', types: {}, createSession, closeSession, openBidiStream, setRequestSignal, write, read, closeStream, lastError, getClientConnectionId, processRequestStream, readReady };
+  return { libPath: '(napi addon)', types: {}, createSession, closeSession, openBidiStream, setRequestSignal, write, read, closeStream, lastError, getClientConnectionId, processRequestStream };
   }
   // If addon not found, return null (no fallback).
   return null;

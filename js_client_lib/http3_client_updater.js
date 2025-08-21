@@ -5,7 +5,7 @@
 /* eslint-env node */
 import Http3ClientBackend from './http3_client.js';
 import { tracer } from './transport/instrumentation.js';
-import { chunkFromWire, chunkToWire, WWATP_SIGNAL, SIGNAL_HEARTBEAT, decodeFromChunks, canDecodeChunks_MaybeTreeNode, canDecodeChunks_VectorTreeNode, canDecodeChunks_VectorSequentialNotification, can_decode_vec_sequential_notification, PayloadChunkHeader } from './interface/http3_tree_message_helpers.js';
+import { chunkFromWire, chunkToWire, WWATP_SIGNAL, SIGNAL_HEARTBEAT, decodeFromChunks, canDecodeChunks_MaybeTreeNode, canDecodeChunks_VectorTreeNode, canDecodeChunks_VectorSequentialNotification, PayloadChunkHeader } from './interface/http3_tree_message_helpers.js';
 
 export default class Http3ClientBackendUpdater {
 	constructor(name = 'default', ipAddr = 'localhost', port = 443) {
@@ -135,6 +135,9 @@ export default class Http3ClientBackendUpdater {
 					let o = 0;
 					let lastTyped = null;
 					let sawFinal = false;
+					// Determine the original request signal once for filtering
+					const reqSig = (msg.requestChunks && msg.requestChunks[0] && msg.requestChunks[0].header && msg.requestChunks[0].header.signal) | 0;
+					const isWWATPReq = (reqSig >= WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_REQUEST && reqSig <= WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST);
 					while (o < bytes.byteLength) {
 						const { chunk, read } = chunkFromWire(bytes.slice(o));
 						// Normalize request id to align with the original message id used for waiters
@@ -145,23 +148,37 @@ export default class Http3ClientBackendUpdater {
 							if (sig === WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL) sawFinal = true;
 							else if (sig !== undefined && sig !== WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_CONTINUE) lastTyped = sig;
 						} catch (_) {}
+						// Filter out transport heartbeats and WWATP final acks from accumulation to avoid corrupting payload decoding
+						try {
+							const sig = chunk.header?.signal;
+							if (sig === SIGNAL_HEARTBEAT) {
+								// Ignore heartbeat frames entirely
+								o += read; continue;
+							}
+							if (isWWATPReq && sig === WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL) {
+								// Heartbeat acks from server often use RESPONSE_FINAL with small payload; exclude from WWATP message payloads
+								o += read; continue;
+							}
+						} catch (_) {}
 						msg.pushResponseChunk(chunk);
 						o += read;
 					}
 
 					// Gate decoding using can_decode_* based on the original request's signal.
-					const reqSig = (msg.requestChunks && msg.requestChunks[0] && msg.requestChunks[0].header && msg.requestChunks[0].header.signal) | 0;
-		    const payload = decodeFromChunks(msg.responseChunks);
 					let readySignal = null;
 					switch (reqSig) {
 						case WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_REQUEST:
-			    if (canDecodeChunks_MaybeTreeNode(0, msg.responseChunks)) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_RESPONSE;
-							break;
-						case WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_REQUEST:
-							if (payload.byteLength >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_RESPONSE;
+			                if (canDecodeChunks_MaybeTreeNode(0, msg.responseChunks)) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_RESPONSE;
+						    break;
+						case WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_REQUEST: {
+							// Consider ready when we see a typed UPSERT_NODE_RESPONSE chunk or any non-empty payload
+							const hasTyped = !!msg.responseChunks.find((c) => (c?.header?.signal | 0) === WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_RESPONSE);
+							if (hasTyped) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_RESPONSE;
+							    break;
+						    }
 							break;
 						case WWATP_SIGNAL.SIGNAL_WWATP_DELETE_NODE_REQUEST:
-							if (payload.byteLength >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_DELETE_NODE_RESPONSE;
+							if (msg.responseChunks.length >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_DELETE_NODE_RESPONSE;
 							break;
 						case WWATP_SIGNAL.SIGNAL_WWATP_GET_PAGE_TREE_REQUEST:
 							if (canDecodeChunks_VectorTreeNode(0, msg.responseChunks)) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_GET_PAGE_TREE_RESPONSE;
@@ -170,37 +187,32 @@ export default class Http3ClientBackendUpdater {
 							if (canDecodeChunks_VectorTreeNode(0, msg.responseChunks)) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_QUERY_NODES_RESPONSE;
 							break;
 						case WWATP_SIGNAL.SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_REQUEST:
-							if (payload.byteLength >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_RESPONSE;
+							if (msg.responseChunks.length >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_RESPONSE;
 							break;
 						case WWATP_SIGNAL.SIGNAL_WWATP_CLOSE_TRANSACTION_LAYERS_REQUEST:
-							if (payload.byteLength >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_CLOSE_TRANSACTION_LAYERS_RESPONSE;
+							if (msg.responseChunks.length >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_CLOSE_TRANSACTION_LAYERS_RESPONSE;
 							break;
 						case WWATP_SIGNAL.SIGNAL_WWATP_APPLY_TRANSACTION_REQUEST:
-							if (payload.byteLength >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_APPLY_TRANSACTION_RESPONSE;
+							if (msg.responseChunks.length >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_APPLY_TRANSACTION_RESPONSE;
 							break;
 						case WWATP_SIGNAL.SIGNAL_WWATP_GET_FULL_TREE_REQUEST:
 							if (canDecodeChunks_VectorTreeNode(0, msg.responseChunks)) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_GET_FULL_TREE_RESPONSE;
 							break;
 						case WWATP_SIGNAL.SIGNAL_WWATP_REGISTER_LISTENER_REQUEST:
-							if (payload.byteLength >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_REGISTER_LISTENER_RESPONSE;
+							if (msg.responseChunks.length >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_REGISTER_LISTENER_RESPONSE;
 							break;
 						case WWATP_SIGNAL.SIGNAL_WWATP_DEREGISTER_LISTENER_REQUEST:
-							if (payload.byteLength >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_DEREGISTER_LISTENER_RESPONSE;
+							if (msg.responseChunks.length >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_DEREGISTER_LISTENER_RESPONSE;
 							break;
 						case WWATP_SIGNAL.SIGNAL_WWATP_NOTIFY_LISTENERS_REQUEST:
-							if (payload.byteLength >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_NOTIFY_LISTENERS_RESPONSE;
+							if (msg.responseChunks.length >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_NOTIFY_LISTENERS_RESPONSE;
 							break;
 						case WWATP_SIGNAL.SIGNAL_WWATP_PROCESS_NOTIFICATION_REQUEST:
 							// Empty allowed (treat as true) or bool
-							if (payload.byteLength === 0 || payload.byteLength >= 1) readySignal = WWATP_SIGNAL.SIGNAL_WWATP_PROCESS_NOTIFICATION_RESPONSE;
+							readySignal = WWATP_SIGNAL.SIGNAL_WWATP_PROCESS_NOTIFICATION_RESPONSE;
 							break;
 						case WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST: {
 							if (canDecodeChunks_VectorSequentialNotification(0, msg.responseChunks)) {
-								readySignal = WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE;
-								break;
-							}
-							const buf = decodeFromChunks(msg.responseChunks);
-							if (can_decode_vec_sequential_notification(buf, 0)) {
 								readySignal = WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE;
 							}
 							break;
@@ -214,15 +226,18 @@ export default class Http3ClientBackendUpdater {
 						backend.processHTTP3Response(msg);
 						shouldCleanup = true;
 					} else {
-						// Fallback: Prefer a typed response signal if present; otherwise mark FINAL for static asset flows.
+						// For WWATP requests, do not process typed response frames until canDecode marks the payload ready.
+						// Early decode attempts can race with chunk accumulation and cause transient decode errors.
+						if (isWWATPReq) {
+							return; // wait for more chunks/heartbeats
+						}
+						// Non-WWATP flows: prefer a typed response signal if present; otherwise mark FINAL.
 						if (lastTyped !== null) msg.signal = lastTyped; else if (sawFinal) msg.signal = WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL;
-						// If we got a typed non-continue signal or a FINAL, we can also clean up; otherwise keep waiting for more chunks.
 						if (msg.signal === WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL || (lastTyped !== null && lastTyped !== WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_CONTINUE)) {
 							backend.processHTTP3Response(msg);
 							shouldCleanup = true;
 						} else {
-							// Not enough yet; keep handler registered for more data
-							return;
+							return; // keep waiting
 						}
 					}
 				}
@@ -249,24 +264,21 @@ export default class Http3ClientBackendUpdater {
 		};
 		connector.registerResponseHandler(sid, handleEvent);
 
-		// Build request wire bytes by concatenating all request chunks
+		// Send each request chunk separately to preserve chunk boundaries on the server side.
 		// IMPORTANT: Align WWATP payload request_id with the stream logical id (server expects this)
-		const parts = [];
+		const perChunkWire = [];
 		for (const chunk of msg.requestChunks) {
 			try {
 				const hdr = { ...(chunk.header || {}) };
 				// Force request_id to logical stream id for on-wire semantics
 				hdr.request_id = logicalReqId;
-				parts.push(chunkToWire({ header: hdr, payload: chunk.payload }));
+				perChunkWire.push({ wire: chunkToWire({ header: hdr, payload: chunk.payload }), signal: hdr.signal | 0 });
 			} catch {
-				parts.push(chunkToWire(chunk));
+				// Fallback if header/payload shape unexpected
+				const w = chunkToWire(chunk);
+				const sig = (chunk && chunk.header && chunk.header.signal) | 0;
+				perChunkWire.push({ wire: w, signal: sig });
 			}
-		}
-		const total = parts.reduce((s, p) => s + p.byteLength, 0);
-		const wire = new Uint8Array(total);
-		{
-			let o = 0;
-			for (const p of parts) { wire.set(p, o); o += p.byteLength; }
 		}
 
 		// Targeted debug: log the first request chunk header sizes
@@ -280,11 +292,13 @@ export default class Http3ClientBackendUpdater {
 		// Track ongoing
 		this.ongoingRequests_.set(sidKey, { sid, backend, msg, isJournal });
 
-		// Fire request
+		// Fire request: send chunks sequentially to preserve boundaries
 		try {
-			// Pass WWATP request signal to WebTransport to set native request signal framing.
-			const reqSig = (msg.requestChunks && msg.requestChunks[0] && msg.requestChunks[0].header && msg.requestChunks[0].header.signal) | 0;
-			await connector.sendRequest(sid, request, wire, { requestSignal: reqSig });
+			for (let i = 0; i < perChunkWire.length; i++) {
+				const { wire: w, signal } = perChunkWire[i];
+				// Pass per-chunk signal to allow native layer to frame appropriately
+				await connector.sendRequest(sid, request, w, { requestSignal: signal });
+			}
 			this._trace.info('send.done', { sid, rid: msg.requestId });
 			// Start heartbeat loop for WWATP requests after initial send; server may only release
 			// results upon receiving a HEARTBEAT on a subsequent stream with the same logical request id.
@@ -310,7 +324,8 @@ export default class Http3ClientBackendUpdater {
 						// can optimize (ephemeral write-only on Node emulator).
 						const r = await connector.sendRequest(sid, request, hbWire, { timeoutMs: 2000, requestSignal: SIGNAL_HEARTBEAT, isHeartbeat: true });
 						this._trace.inc('hb.sent');
-						this._trace.info('hb.tick', { sid, rid: msg.requestId, bytes: r?.data?.byteLength || 0 });
+						// Suppress verbose heartbeat tick logs to reduce noise
+						// this._trace.info('hb.tick', { sid, rid: msg.requestId, bytes: r?.data?.byteLength || 0 });
 						// Response bytes (if any) will be delivered to the original handler via _emitResponseEvent(sid,...)
 					} catch (e) { this._trace.warn('hb.error', { error: String(e && e.message || e) }); }
 				};

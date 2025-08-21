@@ -203,48 +203,33 @@ function u8Concat(...parts) {
 	return out;
 }
 
-// label: uint8 length + bytes
+// All Pseudo codes below are for encode functions (decode and can_decode are not shown)
+// Pseudo codes focus on two issues:
+//   * whether data is written as clear text or binary
+//   * when and how many chunks are appended to the encoded list
+//   * All encode functions must return a chunkList, which is an array of byte arrays
+//   * Each chunk must not exceed 1200 bytes in size
+//   * Each chunk must have payload_chunk_header at the beginning
+
 export function encode_label(label) {
-	const b = utf8Encode(label);
-	if (b.byteLength > 255) throw new Error('label too long');
-	const out = new Uint8Array(1 + b.byteLength);
-	out[0] = b.byteLength & 0xff;
-	out.set(b, 1);
-	return out;
+	throw new Error('Deprecated legacy helper encode_label: use encodeChunks_label');
 }
 export function can_decode_label(bytes, offset = 0) {
-	if (bytes.byteLength < offset + 1) return false;
-	const len = bytes[offset];
-	return bytes.byteLength >= offset + 1 + len;
+	throw new Error('Deprecated legacy helper can_decode_label: use canDecodeChunks_label');
 }
 export function decode_label(bytes, offset = 0) {
-	if (!can_decode_label(bytes, offset)) throw new Error('insufficient bytes for label');
-	const len = bytes[offset];
-	const value = utf8Decode(bytes.slice(offset + 1, offset + 1 + len));
-	return { value, read: 1 + len };
+	throw new Error('Deprecated legacy helper decode_label: use decodeChunks_label');
 }
 
 // long_string: uint32 le length + bytes
 export function encode_long_string(str) {
-	const b = utf8Encode(str);
-	const out = new Uint8Array(4 + b.byteLength);
-	const dv = new DataView(out.buffer);
-	dv.setUint32(0, b.byteLength >>> 0, true);
-	out.set(b, 4);
-	return out;
+	throw new Error('Deprecated legacy helper encode_long_string: use encodeChunks_long_string');
 }
 export function can_decode_long_string(bytes, offset = 0) {
-	if (bytes.byteLength < offset + 4) return false;
-	const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-	const len = dv.getUint32(offset, true);
-	return bytes.byteLength >= offset + 4 + len;
+	throw new Error('Deprecated legacy helper can_decode_long_string: use canDecodeChunks_long_string');
 }
 export function decode_long_string(bytes, offset = 0) {
-	if (!can_decode_long_string(bytes, offset)) throw new Error('insufficient bytes for long_string');
-	const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-	const len = dv.getUint32(offset, true);
-	const value = utf8Decode(bytes.slice(offset + 4, offset + 4 + len));
-	return { value, read: 4 + len };
+	throw new Error('Deprecated legacy helper decode_long_string: use decodeChunks_long_string');
 }
 
 // ---- C++-parity encoders/decoders (chunk-based) ----
@@ -269,6 +254,11 @@ function le64Decode(u8, offset = 0) {
 }
 
 // Encode a label as a single payload chunk (C++ encode_label)
+// Pseudo code for encodeChunks_label
+// 1. chunkList encoded starts empty
+// 2. Create a chunk with clear text version of string with length
+// 3. Append chunk to encoded
+// label: uint8 length + bytes
 export function encodeChunks_label(requestId, signal, str) {
 	const b = utf8Encode(str);
 	if (b.byteLength > (DEFAULT_CHUNK_SIZE - 6)) throw new Error('label too long for single chunk');
@@ -289,6 +279,11 @@ export function decodeChunks_label(startChunk, chunks) {
 }
 
 // Encode a long_string across multiple chunks: 8-byte length + UTF-8, flattened
+// Pseudo code for encodeChunks_long_string
+// 1. chunkList encoded starts empty
+// 2. Create a chunk with binary size_t string length at beginning, filled with string data
+// 3. Append chunk to encoded
+// 4. Continue adding chunks for the remainder of the long string (chunks must not exceed 1200 in size)
 export function encodeChunks_long_string(requestId, signal, str) {
 	const b = utf8Encode(str);
 	const bytes = u8Concat(le64Encode(b.byteLength), b);
@@ -387,11 +382,13 @@ function formatTreeNodeText(node) {
 	out += '], ';
 	// query_how_to
 	const qh = tn.getQueryHowTo();
-	const qhs = (Maybe.isMaybe(qh) && qh.isJust()) ? String(qh.value) : '';
+	const qhIsJust = Maybe.isMaybe(qh) && qh.isJust();
+	const qhs = qhIsJust ? String(qh.value) : '';
 	out += `query_how_to ${qhs.length} :\n${qhs}\n`;
 	// qa_sequence
 	const qa = tn.getQaSequence();
-	const qas = (Maybe.isMaybe(qa) && qa.isJust()) ? String(qa.value) : '';
+	const qaIsJust = Maybe.isMaybe(qa) && qa.isJust();
+	const qas = qaIsJust ? String(qa.value) : '';
 	out += `qa_sequence ${qas.length} :\n${qas}\n`;
 	// empty shared_span
 	out += 'shared_span( ';
@@ -440,17 +437,31 @@ function parseTreeNodeText(text) {
 		return afterPrefix ? s.slice(afterPrefix.length) : s;
 	}
 	expect('TreeNode(\n');
-	const label_rule = readUntilNewline('label_rule: ');
+	// Read label_rule line, allow empty or any string
+	let label_rule = '';
+	if (text.slice(i, i + 'label_rule: '.length) === 'label_rule: ') {
+		i += 'label_rule: '.length;
+		const nl = text.indexOf('\n', i);
+		if (nl >= 0) {
+			label_rule = text.slice(i, nl);
+			i = nl + 1;
+		} else {
+			// No newline found, treat as empty
+			i += 0;
+		}
+	} else {
+		throw new Error('expected label_rule');
+	}
 	const d = parseLengthString(text, i, 'description'); i = d.next; const description = d.value;
 	// property_infos
 	expect('property_infos: [ ');
 	const propLine = text.slice(i, text.indexOf('], ', i));
 	const infos = [];
 	if (propLine && propLine.length > 0) {
-		const items = propLine.split(',').map(s => s.trim()).filter(Boolean);
+			const items = propLine.split(',').map(s => s.trim()).filter(Boolean);
 		for (const it of items) {
-			// format: TYPE (NAME)
-			const m = it.match(/^(\S+) \(([^)]+)\)$/);
+				// format: TYPE (NAME) — NAME may be empty in some cases
+				const m = it.match(/^(\S+) \(([^)]*)\)$/);
 			if (m) infos.push({ type: m[1], name: m[2] });
 		}
 	}
@@ -484,6 +495,18 @@ function parseTreeNodeText(text) {
 	// query_how_to and qa_sequence
 	const qh = parseLengthString(text, i, 'query_how_to'); i = qh.next;
 	const qa = parseLengthString(text, i, 'qa_sequence'); i = qa.next;
+	// optional maybe_flags line
+	let qhFlag = null, qaFlag = null;
+	if (text.slice(i, i + 'maybe_flags: '.length) === 'maybe_flags: ') {
+		i += 'maybe_flags: '.length;
+		// expect format qh=X qa=Y\n
+		const nl = text.indexOf('\n', i);
+		if (nl < 0) throw new Error('no newline after maybe_flags');
+		const line = text.slice(i, nl);
+		i = nl + 1;
+		const m = line.match(/^qh=(J|N) qa=(J|N)$/);
+		if (m) { qhFlag = m[1]; qaFlag = m[2]; }
+	}
 	// skip empty shared_span text
 	const sharedSpanPrefix = 'shared_span( signal_type: 0 signal_size: 0 data_size: 0 chunk_data: [\n])\n';
 	if (text.slice(i, i + sharedSpanPrefix.length) !== sharedSpanPrefix) throw new Error('expected empty shared_span');
@@ -497,11 +520,17 @@ function parseTreeNodeText(text) {
 		version,
 		childNames,
 		propertyData: new Uint8Array(0),
-		queryHowTo: qh.value ? Just(qh.value) : Nothing,
-		qaSequence: qa.value ? Just(qa.value) : Nothing,
+		queryHowTo: qhFlag ? (qhFlag === 'J' ? Just(qh.value) : Nothing) : (qh.value ? Just(qh.value) : Nothing),
+		qaSequence: qaFlag ? (qaFlag === 'J' ? Just(qa.value) : Nothing) : (qa.value ? Just(qa.value) : Nothing),
 	});
 }
 
+// Pseudo code for encodeChunks_MaybeTreeNode
+// 1. If mnode is nothing, encodeChunks_long_string("Nothing") and return
+// 2. If mnode is just, text = a string "Just " followed by the TreeNode (via ostream operator, not including the property data)
+// 3. Append 8 * 2 hex bytes to text for the number of property data chunks.
+// 4. Start with encoded ChunkList = encodeChunks_long_string(text);
+// 5. Append property data chunks to encoded
 export function encodeChunks_MaybeTreeNode(requestId, signal, maybeNode) {
 	if (!Maybe.isMaybe(maybeNode)) {
 		// treat falsy as Nothing
@@ -572,6 +601,10 @@ export function decodeChunks_MaybeTreeNode(startChunk, chunks) {
 // ---- Chunk-based SequentialNotification (C++ parity) ----
 // Encode a SequentialNotification as:
 //   long_string("<signalCount> <label>") followed by Maybe<TreeNode> chunks
+// Pseudo code for encodeChunks_SequentialNotification
+// 1. Create a string text = notification sequence number + " " + node label notification is for;
+// 2. ChunkList encoded = encodeChunks_long_string(text);
+// 3. Append encodeChunks_MaybeTreeNode(the node as modified when originating the notification)
 export function encodeChunks_SequentialNotification(requestId, signal, sn) {
 	const seq = (sn?.signalCount >>> 0) || 0;
 	const label = String(sn?.notification?.labelRule || '');
@@ -600,6 +633,9 @@ export function decodeChunks_SequentialNotification(startChunk, chunks) {
 
 // Vector<SequentialNotification> using chunk-based encoding (C++ parity)
 // Count is encoded as a label (stringified number) in a single chunk
+// Pseudo code for encodeChunks_VectorSequentialNotification
+// 1. chunkList encoded = encodeChunks_label(notifications.size())
+// 2. for each notification in notifications, append encodeChunks_SequentialNotification(notification) to encoded
 export function encodeChunks_VectorSequentialNotification(requestId, signal, vec) {
 	const countStr = String((vec?.length ?? 0) >>> 0);
 	const out = encodeChunks_label(requestId, signal, countStr);
@@ -640,6 +676,174 @@ export function decodeChunks_VectorSequentialNotification(startChunk, chunks) {
 	return { nextChunk: idx, value: out };
 }
 
+
+// Implementation of encodeChunks_NewNodeVersion
+// newNodeVersion: [maybeVersion, [labelRule, maybeTreeNode]]
+export function encodeChunks_NewNodeVersion(requestId, signal, newNodeVersion) {
+	// newNodeVersion: [maybeVersion, [labelRule, maybeTreeNode]]
+	const [maybeVersion, [labelRule, maybeTreeNode]] = newNodeVersion;
+	let text;
+	if (!maybeVersion || (typeof maybeVersion === 'object' && !('value' in maybeVersion) && !maybeVersion.isJust?.())) {
+		// treat as Nothing
+		text = 'Nothing';
+	} else {
+		// Just <version>
+		let versionValue = (typeof maybeVersion === 'object' && 'value' in maybeVersion) ? maybeVersion.value : maybeVersion;
+		text = `Just ${versionValue}`;
+	}
+	text += ` ${labelRule}`;
+	// 1. encode long string
+	let encoded = encodeChunks_long_string(requestId, signal, text);
+	// 2. append encodeChunks_MaybeTreeNode
+	let maybeTreeChunks = encodeChunks_MaybeTreeNode(requestId, signal, maybeTreeNode);
+	encoded.push(...maybeTreeChunks);
+	return encoded;
+}
+
+// Pseudo code for decodeChunks_NewNodeVersion
+// 1. decode long_string for version and label
+// 2. parse version and label from string
+// 3. decode MaybeTreeNode from following chunks
+export function decodeChunks_NewNodeVersion(startChunk, chunks) {
+	const { nextChunk: afterStr, value: text } = decodeChunks_long_string(startChunk, chunks);
+	// text is "Nothing <label>" or "Just <version> <label>"
+	let version, label;
+	if (text.startsWith('Nothing')) {
+		version = Nothing;
+		label = text.slice(8); // skip 'Nothing '
+	} else if (text.startsWith('Just ')) {
+		const sp = text.indexOf(' ', 5);
+		version = sp > 0 ? Just(parseInt(text.slice(5, sp), 10)) : Nothing;
+		label = sp > 0 ? text.slice(sp + 1) : '';
+	} else {
+		throw new Error('bad NewNodeVersion text');
+	}
+	const { nextChunk, value: maybeNode } = decodeChunks_MaybeTreeNode(afterStr, chunks);
+	return { nextChunk, value: [version, [label, maybeNode]] };
+}
+
+// Pseudo code for canDecodeChunks_NewNodeVersion
+// 1. can decode long_string?
+// 2. can decode MaybeTreeNode after?
+export function canDecodeChunks_NewNodeVersion(startChunk, chunks) {
+	const afterStr = canDecodeChunks_long_string(startChunk, chunks);
+	if (!afterStr) return null;
+	const maybeEnd = canDecodeChunks_MaybeTreeNode(afterStr, chunks);
+	return maybeEnd || null;
+}
+
+// Implementation of encodeChunks_SubTransaction
+// subTransaction: [mainNewNodeVersion, descendantNewNodeVersions[]]
+export function encodeChunks_SubTransaction(requestId, signal, subTransaction) {
+	const [mainNewNodeVersion, descendantNewNodeVersions] = subTransaction;
+	// 1. encode label for count of descendants
+	let encoded = encodeChunks_label(requestId, signal, String(descendantNewNodeVersions.length));
+	// 2. append main new node version
+	let mainChunks = encodeChunks_NewNodeVersion(requestId, signal, mainNewNodeVersion);
+	encoded.push(...mainChunks);
+	// 3. append each descendant new node version
+	for (const nnv of descendantNewNodeVersions) {
+		let descChunks = encodeChunks_NewNodeVersion(requestId, signal, nnv);
+		encoded.push(...descChunks);
+	}
+	return encoded;
+}
+
+// Pseudo code for decodeChunks_SubTransaction
+// 1. decode label for descendant count
+// 2. decode main NewNodeVersion
+// 3. decode each descendant NewNodeVersion
+export function decodeChunks_SubTransaction(startChunk, chunks) {
+	const afterCount = canDecodeChunks_label(startChunk, chunks);
+	if (!afterCount) throw new Error('cannot decode subtransaction count');
+	const { value: countStr } = decodeChunks_label(startChunk, chunks);
+	const n = parseInt(countStr, 10) >>> 0;
+	let idx = afterCount;
+	const { nextChunk: afterMain, value: main } = decodeChunks_NewNodeVersion(idx, chunks);
+	idx = afterMain;
+	const descendants = [];
+	for (let i = 0; i < n; i++) {
+		const { nextChunk, value } = decodeChunks_NewNodeVersion(idx, chunks);
+		descendants.push(value);
+		idx = nextChunk;
+	}
+	return { nextChunk: idx, value: [main, descendants] };
+}
+
+// Pseudo code for canDecodeChunks_SubTransaction
+// 1. can decode label?
+// 2. can decode main NewNodeVersion?
+// 3. can decode each descendant NewNodeVersion?
+export function canDecodeChunks_SubTransaction(startChunk, chunks) {
+	const afterCount = canDecodeChunks_label(startChunk, chunks);
+	if (!afterCount) return null;
+	const { value: countStr } = decodeChunks_label(startChunk, chunks);
+	if (!/^[0-9]+$/.test(countStr)) return null;
+	const n = parseInt(countStr, 10) >>> 0;
+	let idx = afterCount;
+	const mainEnd = canDecodeChunks_NewNodeVersion(idx, chunks);
+	if (!mainEnd) return null;
+	idx = mainEnd;
+	for (let i = 0; i < n; i++) {
+		const nxt = canDecodeChunks_NewNodeVersion(idx, chunks);
+		if (!nxt) return null;
+		idx = nxt;
+	}
+	return idx;
+}
+
+// Implementation of encodeChunks_Transaction
+// transaction: array of subTransactions
+export function encodeChunks_Transaction(requestId, signal, transaction) {
+	// 1. encode label for transaction size
+	let encoded = encodeChunks_label(requestId, signal, String(transaction.length));
+	// 2. append each subTransaction
+	for (const subTx of transaction) {
+		let subChunks = encodeChunks_SubTransaction(requestId, signal, subTx);
+		encoded.push(...subChunks);
+	}
+	return encoded;
+}
+
+// Pseudo code for decodeChunks_Transaction
+// 1. decode label for transaction size
+// 2. decode each subTransaction
+export function decodeChunks_Transaction(startChunk, chunks) {
+	const afterCount = canDecodeChunks_label(startChunk, chunks);
+	if (!afterCount) throw new Error('cannot decode transaction count');
+	const { value: countStr } = decodeChunks_label(startChunk, chunks);
+	const n = parseInt(countStr, 10) >>> 0;
+	let idx = afterCount;
+	const out = [];
+	for (let i = 0; i < n; i++) {
+		const { nextChunk, value } = decodeChunks_SubTransaction(idx, chunks);
+		out.push(value);
+		idx = nextChunk;
+	}
+	return { nextChunk: idx, value: out };
+}
+
+// Pseudo code for canDecodeChunks_Transaction
+// 1. can decode label?
+// 2. can decode each subTransaction?
+export function canDecodeChunks_Transaction(startChunk, chunks) {
+	const afterCount = canDecodeChunks_label(startChunk, chunks);
+	if (!afterCount) return null;
+	const { value: countStr } = decodeChunks_label(startChunk, chunks);
+	if (!/^[0-9]+$/.test(countStr)) return null;
+	const n = parseInt(countStr, 10) >>> 0;
+	let idx = afterCount;
+	for (let i = 0; i < n; i++) {
+		const nxt = canDecodeChunks_SubTransaction(idx, chunks);
+		if (!nxt) return null;
+		idx = nxt;
+	}
+	return idx;
+}
+
+// Pseudo code for encodeChunks_VectorTreeNode
+// 1. ChunkList encoded = encodeChunks_label(vector_size)
+// 2. for each node in the vector, append encodeChunks_MaybeTreeNode(node) to encoded
 export function encodeChunks_VectorTreeNode(requestId, signal, nodes) {
 	const countStr = String(nodes.length >>> 0);
 	const out = encodeChunks_label(requestId, signal, countStr);
@@ -709,184 +913,92 @@ function plainToTreeNode(obj) {
 }
 
 export function encode_tree_node(node) {
-	const json = JSON.stringify(treeNodeToPlain(node));
-	return encode_long_string(json);
+	throw new Error('Deprecated legacy helper encode_tree_node: use encodeChunks_MaybeTreeNode/Vector variants');
 }
 export function can_decode_tree_node(bytes, offset = 0) {
-	return can_decode_long_string(bytes, offset);
+	throw new Error('Deprecated legacy helper can_decode_tree_node: use chunk-based decoders');
 }
 export function decode_tree_node(bytes, offset = 0) {
-	const { value, read } = decode_long_string(bytes, offset);
-	const obj = JSON.parse(value);
-	return { value: plainToTreeNode(obj), read };
+	throw new Error('Deprecated legacy helper decode_tree_node: use chunk-based decoders');
 }
 
 // Maybe<TreeNode> : uint8 flag(0/1) + [TreeNode]
 export function encode_maybe_tree_node(maybeNode) {
-	const isJust = Maybe.isMaybe(maybeNode) ? maybeNode.isJust() : !!maybeNode;
-	if (!isJust) return new Uint8Array([0]);
-	const node = Maybe.isMaybe(maybeNode) ? maybeNode.value : maybeNode;
-	const enc = encode_tree_node(node);
-	const out = new Uint8Array(1 + enc.byteLength);
-	out[0] = 1;
-	out.set(enc, 1);
-	return out;
+	throw new Error('Deprecated legacy helper encode_maybe_tree_node: use encodeChunks_MaybeTreeNode');
 }
 export function can_decode_maybe_tree_node(bytes, offset = 0) {
-	if (bytes.byteLength < offset + 1) return false;
-	if (bytes[offset] === 0) return true; // only flag present
-	return can_decode_tree_node(bytes, offset + 1);
+	throw new Error('Deprecated legacy helper can_decode_maybe_tree_node: use canDecodeChunks_MaybeTreeNode');
 }
 export function decode_maybe_tree_node(bytes, offset = 0) {
-	if (bytes.byteLength < offset + 1) throw new Error('insufficient bytes for maybe');
-	const flag = bytes[offset];
-	if (flag === 0) return { value: Nothing, read: 1 };
-	const { value, read } = decode_tree_node(bytes, offset + 1);
-	return { value: Just(value), read: 1 + read };
+	throw new Error('Deprecated legacy helper decode_maybe_tree_node: use decodeChunks_MaybeTreeNode');
 }
 
 // SequentialNotification: { signalCount:u32, notification: { labelRule, maybeNode } }
 export function encode_sequential_notification(sn) {
-	const labelBytes = encode_label(sn.notification.labelRule);
-	const maybeBytes = encode_maybe_tree_node(sn.notification.maybeNode ?? sn.notification.maybe_node ?? Nothing);
-	const out = new Uint8Array(4 + labelBytes.byteLength + maybeBytes.byteLength);
-	const dv = new DataView(out.buffer);
-	dv.setUint32(0, (sn.signalCount >>> 0) || 0, true);
-	out.set(labelBytes, 4);
-	out.set(maybeBytes, 4 + labelBytes.byteLength);
-	return out;
+	throw new Error('Deprecated legacy helper encode_sequential_notification: use encodeChunks_SequentialNotification');
 }
 export function can_decode_sequential_notification(bytes, offset = 0) {
-	if (bytes.byteLength < offset + 4) return false;
-	// we need label, but label is u8 len + bytes, followed by maybe
-	if (!can_decode_label(bytes, offset + 4)) return false;
-	const { read } = decode_label(bytes, offset + 4);
-	return can_decode_maybe_tree_node(bytes, offset + 4 + read);
+	throw new Error('Deprecated legacy helper can_decode_sequential_notification: use canDecodeChunks_SequentialNotification');
 }
 export function decode_sequential_notification(bytes, offset = 0) {
-	if (bytes.byteLength < offset + 4) throw new Error('insufficient bytes for seq notif');
-	const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-	const signalCount = dv.getUint32(offset, true);
-	const lab = decode_label(bytes, offset + 4);
-	const mn = decode_maybe_tree_node(bytes, offset + 4 + lab.read);
-	return {
-		value: { signalCount, notification: { labelRule: lab.value, maybeNode: mn.value } },
-		read: 4 + lab.read + mn.read,
-	};
+	throw new Error('Deprecated legacy helper decode_sequential_notification: use decodeChunks_SequentialNotification');
 }
 
 // Vector<SequentialNotification>
 export function encode_vec_sequential_notification(vec) {
-	return encode_vec(vec, encode_sequential_notification);
+	throw new Error('Deprecated legacy helper encode_vec_sequential_notification: use encodeChunks_VectorSequentialNotification');
 }
 export function can_decode_vec_sequential_notification(bytes, offset = 0) {
-	return can_decode_vec(bytes, offset, can_decode_sequential_notification, decode_sequential_notification);
+	throw new Error('Deprecated legacy helper can_decode_vec_sequential_notification: use canDecodeChunks_VectorSequentialNotification');
 }
 export function decode_vec_sequential_notification(bytes, offset = 0) {
-	return decode_vec(bytes, offset, decode_sequential_notification);
+	throw new Error('Deprecated legacy helper decode_vec_sequential_notification: use decodeChunks_VectorSequentialNotification');
 }
 
 // Vector<T> helpers
 export function encode_vec(items, encItemFn) {
-	if (!Array.isArray(items)) throw new TypeError('encode_vec expects array');
-	const encoded = items.map((it) => encItemFn(it));
-	const total = encoded.reduce((s, e) => s + e.byteLength, 0);
-	const out = new Uint8Array(2 + total);
-	const dv = new DataView(out.buffer);
-	dv.setUint16(0, items.length & 0xffff, true);
-	let o = 2;
-	for (const e of encoded) { out.set(e, o); o += e.byteLength; }
-	return out;
+	throw new Error('Deprecated legacy helper encode_vec: use chunk-based vector encoders');
 }
 export function can_decode_vec(bytes, offset, canDecItemFn, peekSizeFn) {
-	if (bytes.byteLength < offset + 2) return false;
-	const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-	const n = dv.getUint16(offset, true);
-	let o = offset + 2;
-	for (let i = 0; i < n; i++) {
-		if (!canDecItemFn(bytes, o)) return false;
-		// To advance, we need to know the size to skip; use peekSizeFn by decoding minimally
-		const { read } = peekSizeFn(bytes, o);
-		o += read;
-	}
-	return true;
+	throw new Error('Deprecated legacy helper can_decode_vec: use chunk-based vector decoders');
 }
 export function decode_vec(bytes, offset, decItemFn) {
-	if (bytes.byteLength < offset + 2) throw new Error('insufficient bytes for vec');
-	const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-	const n = dv.getUint16(offset, true);
-	const out = [];
-	let o = offset + 2;
-	for (let i = 0; i < n; i++) {
-		const { value, read } = decItemFn(bytes, o);
-		out.push(value);
-		o += read;
-	}
-	return { value: out, read: o - offset };
+	throw new Error('Deprecated legacy helper decode_vec: use chunk-based vector decoders');
 }
 
 // NewNodeVersion = [Maybe<uint16>, [labelRule, Maybe<TreeNode>]]
 export function encode_new_node_version(nnv) {
-	const [maybeVer, pair] = nnv;
-	const [label, maybeNode] = pair;
-	const verFlag = Maybe.isMaybe(maybeVer) ? (maybeVer.isJust() ? 1 : 0) : (maybeVer != null ? 1 : 0);
-	const verVal = Maybe.isMaybe(maybeVer) ? (maybeVer.isJust() ? maybeVer.value : 0) : (maybeVer || 0);
-	const labelBytes = encode_label(label);
-	const nodeBytes = encode_maybe_tree_node(maybeNode);
-	const out = new Uint8Array(1 + (verFlag ? 2 : 0) + labelBytes.byteLength + nodeBytes.byteLength);
-	let o = 0;
-	out[o++] = verFlag;
-	if (verFlag) { const dv = new DataView(out.buffer); dv.setUint16(o, verVal & 0xffff, true); o += 2; }
-	out.set(labelBytes, o); o += labelBytes.byteLength;
-	out.set(nodeBytes, o);
-	return out;
+	throw new Error('Deprecated legacy helper encode_new_node_version: use encodeChunks_NewNodeVersion');
 }
 export function can_decode_new_node_version(bytes, offset = 0) {
-	if (bytes.byteLength < offset + 1) return false;
-	let o = offset + 1;
-	if (bytes[offset] !== 0) o += 2;
-	if (!can_decode_label(bytes, o)) return false;
-	const { read } = decode_label(bytes, o);
-	return can_decode_maybe_tree_node(bytes, o + read);
+	throw new Error('Deprecated legacy helper can_decode_new_node_version: use canDecodeChunks_NewNodeVersion');
 }
 export function decode_new_node_version(bytes, offset = 0) {
-	if (bytes.byteLength < offset + 1) throw new Error('insufficient bytes for nnv');
-	let o = offset;
-	const flag = bytes[o++];
-	let maybeVer = Nothing;
-	if (flag) { const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); maybeVer = Just(dv.getUint16(o, true)); o += 2; }
-	const lab = decode_label(bytes, o); o += lab.read;
-	const mn = decode_maybe_tree_node(bytes, o); o += mn.read;
-	return { value: [maybeVer, [lab.value, mn.value]], read: o - offset };
+	throw new Error('Deprecated legacy helper decode_new_node_version: use decodeChunks_NewNodeVersion');
 }
 
 // SubTransaction = [NewNodeVersion, NewNodeVersion[]]
 export function encode_sub_transaction(st) {
-	const [parent, children] = st;
-	const parentBytes = encode_new_node_version(parent);
-	const childrenBytes = encode_vec(children, encode_new_node_version);
-	return u8Concat(parentBytes, childrenBytes);
+	throw new Error('Deprecated legacy helper encode_sub_transaction: use encodeChunks_SubTransaction');
 }
 export function can_decode_sub_transaction(bytes, offset = 0) {
-	if (!can_decode_new_node_version(bytes, offset)) return false;
-	const tmp = decode_new_node_version(bytes, offset);
-	return can_decode_vec(bytes, offset + tmp.read, can_decode_new_node_version, decode_new_node_version);
+	throw new Error('Deprecated legacy helper can_decode_sub_transaction: use canDecodeChunks_SubTransaction');
 }
 export function decode_sub_transaction(bytes, offset = 0) {
-	const p = decode_new_node_version(bytes, offset);
-	const v = decode_vec(bytes, offset + p.read, decode_new_node_version);
-	return { value: [p.value, v.value], read: p.read + v.read };
+	throw new Error('Deprecated legacy helper decode_sub_transaction: use decodeChunks_SubTransaction');
 }
 
 // Transaction = SubTransaction[]
-export function encode_transaction(tx) { return encode_vec(tx, encode_sub_transaction); }
-export function can_decode_transaction(bytes, offset = 0) { return can_decode_vec(bytes, offset, can_decode_sub_transaction, decode_sub_transaction); }
-export function decode_transaction(bytes, offset = 0) { return decode_vec(bytes, offset, decode_sub_transaction); }
+// Replace legacy Transaction helpers with throwing stubs
+export function encode_transaction(tx) { throw new Error('Deprecated legacy helper encode_transaction: use encodeChunks_Transaction'); }
+export function can_decode_transaction(bytes, offset = 0) { throw new Error('Deprecated legacy helper can_decode_transaction: use canDecodeChunks_Transaction'); }
+export function decode_transaction(bytes, offset = 0) { throw new Error('Deprecated legacy helper decode_transaction: use decodeChunks_Transaction'); }
 
 // Vector<TreeNode>
-export function encode_vec_tree_node(nodes) { return encode_vec(nodes, encode_tree_node); }
-export function can_decode_vec_tree_node(bytes, offset = 0) { return can_decode_vec(bytes, offset, can_decode_tree_node, decode_tree_node); }
-export function decode_vec_tree_node(bytes, offset = 0) { return decode_vec(bytes, offset, decode_tree_node); }
+// Replace legacy Vector<TreeNode> helpers with throwing stubs
+export function encode_vec_tree_node(nodes) { throw new Error('Deprecated legacy helper encode_vec_tree_node: use encodeChunks_VectorTreeNode'); }
+export function can_decode_vec_tree_node(bytes, offset = 0) { throw new Error('Deprecated legacy helper can_decode_vec_tree_node: use canDecodeChunks_VectorTreeNode'); }
+export function decode_vec_tree_node(bytes, offset = 0) { throw new Error('Deprecated legacy helper decode_vec_tree_node: use decodeChunks_VectorTreeNode'); }
 
 // Helper to build request/response chunks from encoded payload bytes
 export function encodeToChunks(payloadBytes, { signal, requestId, maxChunkSize } = {}) {

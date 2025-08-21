@@ -45,7 +45,8 @@ export default class NodeWebTransportEmulator {
   this._pumpId = null; // background pump interval id
   // Numeric client connection id if available from native addon (best-effort)
   this._clientCid = undefined;
-  // Readiness is determined per-stream via native addon; no local flags.
+  // Simple readiness hints for readable sides; keyed by native stream handle (object identity not exposed)
+  this._readReadyFlag = false;
 
     this.closed = new Promise((res, rej) => { this._closedResolve = res; this._closedReject = rej; });
     this.draining = new Promise((res) => { this._drainingResolve = res; });
@@ -114,7 +115,11 @@ export default class NodeWebTransportEmulator {
       this._pumpId = setInterval(() => {
         try {
           const rc = this._nq.processRequestStream(this._session);
-          if (rc > 0) { this._trace.inc('proc.progress', rc); }
+          if (rc > 0) {
+            this._trace.inc('proc.progress', rc);
+            // Mark that at least one stream likely has data available
+            this._readReadyFlag = true;
+          }
         } catch {}
       }, period);
     }
@@ -219,28 +224,56 @@ export default class NodeWebTransportEmulator {
 
     // Readable
     let done = false;
+    let reading = false; // guard against overlapping read invocations
     const reader = {
       async read() {
         if (done) return { value: undefined, done: true };
-        // Try a short blocking read from native; if no data, yield control but keep stream open.
-        const out = self._nq.read(st, 65536, 100);
-        if (out instanceof Uint8Array) {
-          if (out.byteLength > 0) {
-            self._bytesReceived += out.byteLength;
-            self._trace.inc('bytes.recv', out.byteLength);
-            return { value: out, done: false };
-          }
-          // Treat zero-length as "no data yet" (do NOT assume FIN) — keep waiting.
-          await new Promise((r) => setTimeout(r, 20));
+        if (reading) { await new Promise((r) => setTimeout(r, 5)); return { value: undefined, done: false }; }
+        reading = true;
+        // Drain all currently-ready chunks from native into a single buffer
+        const bufs = [];
+        let total = 0;
+        const tryConcat = () => {
+          if (bufs.length === 1) return bufs[0];
+          const out = new Uint8Array(total);
+          let offset = 0;
+          for (const b of bufs) { out.set(b, offset); offset += b.byteLength; }
+          return out;
+        };
+        // First attempt: short blocking read to kick things
+        let out = self._nq.read(st, 65536, 50);
+        if (out instanceof Uint8Array && out.byteLength > 0) {
+          bufs.push(out);
+          total += out.byteLength;
+          // Keep draining as long as native signals readiness
+          try {
+            while (self._nq && typeof self._nq.readReady === 'function' && self._session && self._nq.readReady(self._session, Number(self._lastOpened ?  self._lastOpened.logicalId || 0 : 0))) {
+              const more = self._nq.read(st, 65536, 0);
+              if (!(more instanceof Uint8Array) || more.byteLength === 0) break;
+              bufs.push(more);
+              total += more.byteLength;
+            }
+          } catch {}
+          const merged = tryConcat();
+          self._bytesReceived += merged.byteLength;
+          self._trace.inc('bytes.recv', merged.byteLength);
+          self._readReadyFlag = false;
+          reading = false;
+          return { value: merged, done: false };
+        }
+        if (out instanceof Uint8Array && out.byteLength === 0) {
+          // No data yet; yield and try again soon
+          await new Promise((r) => setTimeout(r, 10));
+          reading = false;
           return { value: undefined, done: false };
         }
-        // If addon indicates FIN with a special token, respect it (optional API contract)
         if (out && typeof out === 'object' && out.fin === true) {
           done = true;
+          reading = false;
           return { value: undefined, done: true };
         }
-        // No data available within timeout; yield cooperatively and let caller decide.
-        await new Promise((r) => setTimeout(r, 20));
+        await new Promise((r) => setTimeout(r, 10));
+        reading = false;
         return { value: undefined, done: false };
       },
       async cancel(_reason) {
@@ -274,6 +307,7 @@ export default class NodeWebTransportEmulator {
     if (!this._nq || !this._session || typeof this._nq.processRequestStream !== 'function') return false;
     try {
       const rc = this._nq.processRequestStream(this._session);
+      if (rc > 0) this._readReadyFlag = true;
       return rc > 0;
     } catch {
       return false;
@@ -282,18 +316,14 @@ export default class NodeWebTransportEmulator {
 
   // Readiness hint for readable data for a specific logical stream id (sid).
   // Prefer the native addon's per-stream readReady(session,sid) when available;
-  // return false if the addon doesn't provide it.
+  // fall back to a coarse sticky flag if the addon doesn't provide it.
   readReady(sid) {
     try {
       if (this._nq && typeof this._nq.readReady === 'function' && this._session) {
-        const lid = (sid && typeof sid === 'object' && typeof sid.logicalId === 'number')
-          ? sid.logicalId
-          : Number(sid);
-        if (!Number.isFinite(lid)) return false;
-        return !!this._nq.readReady(this._session, lid);
+        return !!this._nq.readReady(this._session, Number(sid));
       }
     } catch {}
-    return false;
+    return this._readReadyFlag === true;
   }
 
   async createUnidirectionalStream() {

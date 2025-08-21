@@ -9,14 +9,15 @@ import {
   encodeToChunks,
   canDecodeChunks_SequentialNotification,
   decodeChunks_SequentialNotification,
+  canDecodeChunks_MaybeTreeNode,
+  decodeChunks_MaybeTreeNode,
+  canDecodeChunks_VectorTreeNode,
+  decodeChunks_VectorTreeNode,
+  encodeChunks_label,
+  encodeChunks_MaybeTreeNode,
+  encodeChunks_VectorTreeNode,
+  encodeChunks_VectorSequentialNotification,
   WWATP_SIGNAL,
-  decode_label,
-  encode_maybe_tree_node,
-  decode_maybe_tree_node,
-  encode_vec_tree_node,
-  decode_vec_tree_node,
-  decode_sequential_notification,
-  encode_vec_sequential_notification,
 } from '../../interface/http3_tree_message_helpers.js';
 import { Just, Nothing } from '../../interface/maybe.js';
 
@@ -94,13 +95,24 @@ export function createWWATPHandler(serverBackend) {
 
     switch (signal) {
       case WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_REQUEST: {
-        const { value: label } = decode_label(payload, 0);
+        // Request encodes label as a single label chunk; read from chunks directly
+        const label = (() => {
+          try {
+            // First payload chunk after header carries the label
+            const c = chunks.find((c) => c.header && typeof c.header.data_length === 'number');
+            return new TextDecoder('utf-8').decode(c?.payload || new Uint8Array());
+          } catch { return ''; }
+        })();
         const maybe = serverBackend.getNode(label);
-        const enc = encode_maybe_tree_node(maybe);
-        return respond(enc, WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_RESPONSE);
+        const encChunks = encodeChunks_MaybeTreeNode(requestId, WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_RESPONSE, maybe);
+        // Return chunked directly
+        const parts = encChunks.map((c) => chunkToWire(c));
+        let total = 0; for (const p of parts) total += p.byteLength;
+        const out = new Uint8Array(total); let o = 0; for (const p of parts) { out.set(p, o); o += p.byteLength; }
+        return out;
       }
       case WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_REQUEST: {
-        const { value: nodes } = decode_vec_tree_node(payload, 0);
+        const { value: nodes } = decodeChunks_VectorTreeNode(0, chunks);
         const ok = serverBackend.upsertNode(nodes);
         // record notifications per top-level node label
         for (const n of nodes) store.record(n.getLabelRule(), Just(n));
@@ -108,23 +120,35 @@ export function createWWATPHandler(serverBackend) {
         return respond(enc, WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_RESPONSE);
       }
       case WWATP_SIGNAL.SIGNAL_WWATP_DELETE_NODE_REQUEST: {
-        const { value: label } = decode_label(payload, 0);
+        const label = (() => {
+          try { const c = chunks.find((c) => c.header && typeof c.header.data_length === 'number'); return new TextDecoder('utf-8').decode(c?.payload || new Uint8Array()); } catch { return ''; }
+        })();
         const ok = serverBackend.deleteNode(label);
         store.record(label, Nothing);
         const enc = new Uint8Array([ok ? 1 : 0]);
         return respond(enc, WWATP_SIGNAL.SIGNAL_WWATP_DELETE_NODE_RESPONSE);
       }
       case WWATP_SIGNAL.SIGNAL_WWATP_GET_PAGE_TREE_REQUEST: {
-        const { value: label } = decode_label(payload, 0);
+        const label = (() => {
+          try { const c = chunks.find((c) => c.header && typeof c.header.data_length === 'number'); return new TextDecoder('utf-8').decode(c?.payload || new Uint8Array()); } catch { return ''; }
+        })();
         const vec = serverBackend.getPageTree(label) || [];
-        const enc = encode_vec_tree_node(vec);
-        return respond(enc, WWATP_SIGNAL.SIGNAL_WWATP_GET_PAGE_TREE_RESPONSE);
+        const encChunks = encodeChunks_VectorTreeNode(requestId, WWATP_SIGNAL.SIGNAL_WWATP_GET_PAGE_TREE_RESPONSE, vec);
+        const parts = encChunks.map((c) => chunkToWire(c));
+        let total = 0; for (const p of parts) total += p.byteLength;
+        const out = new Uint8Array(total); let o = 0; for (const p of parts) { out.set(p, o); o += p.byteLength; }
+        return out;
       }
       case WWATP_SIGNAL.SIGNAL_WWATP_QUERY_NODES_REQUEST: {
-        const { value: label } = decode_label(payload, 0);
+        const label = (() => {
+          try { const c = chunks.find((c) => c.header && typeof c.header.data_length === 'number'); return new TextDecoder('utf-8').decode(c?.payload || new Uint8Array()); } catch { return ''; }
+        })();
         const vec = serverBackend.queryNodes(label) || [];
-        const enc = encode_vec_tree_node(vec);
-        return respond(enc, WWATP_SIGNAL.SIGNAL_WWATP_QUERY_NODES_RESPONSE);
+        const encChunks = encodeChunks_VectorTreeNode(requestId, WWATP_SIGNAL.SIGNAL_WWATP_QUERY_NODES_RESPONSE, vec);
+        const parts = encChunks.map((c) => chunkToWire(c));
+        let total = 0; for (const p of parts) total += p.byteLength;
+        const out = new Uint8Array(total); let o = 0; for (const p of parts) { out.set(p, o); o += p.byteLength; }
+        return out;
       }
       case WWATP_SIGNAL.SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_REQUEST: {
         const enc = new Uint8Array([0]);
@@ -140,8 +164,11 @@ export function createWWATPHandler(serverBackend) {
       }
       case WWATP_SIGNAL.SIGNAL_WWATP_GET_FULL_TREE_REQUEST: {
         const vec = serverBackend.getFullTree() || [];
-        const enc = encode_vec_tree_node(vec);
-        return respond(enc, WWATP_SIGNAL.SIGNAL_WWATP_GET_FULL_TREE_RESPONSE);
+  const encChunks = encodeChunks_VectorTreeNode(requestId, WWATP_SIGNAL.SIGNAL_WWATP_GET_FULL_TREE_RESPONSE, vec);
+  const parts = encChunks.map((c) => chunkToWire(c));
+  let total = 0; for (const p of parts) total += p.byteLength;
+  const out = new Uint8Array(total); let o = 0; for (const p of parts) { out.set(p, o); o += p.byteLength; }
+  return out;
       }
       case WWATP_SIGNAL.SIGNAL_WWATP_REGISTER_LISTENER_REQUEST: {
         const enc = new Uint8Array([1]);
@@ -154,9 +181,11 @@ export function createWWATPHandler(serverBackend) {
       case WWATP_SIGNAL.SIGNAL_WWATP_NOTIFY_LISTENERS_REQUEST: {
         // Accept notification and record
         // payload = label + maybeNode
-        const lab = decode_label(payload, 0);
-        const mn = decode_maybe_tree_node(payload, lab.read);
-        store.record(lab.value, mn.value);
+        const label = (() => {
+          try { const c = chunks[0]; return new TextDecoder('utf-8').decode(c?.payload || new Uint8Array()); } catch { return ''; }
+        })();
+        const { value: maybeNode } = decodeChunks_MaybeTreeNode(1, chunks);
+        store.record(label, maybeNode);
         const enc = new Uint8Array([1]);
         return respond(enc, WWATP_SIGNAL.SIGNAL_WWATP_NOTIFY_LISTENERS_RESPONSE);
       }
@@ -174,18 +203,19 @@ export function createWWATPHandler(serverBackend) {
             const { value: sn } = decodeChunks_SequentialNotification(0, chunks);
             since = sn.signalCount >>> 0;
           } else {
-            const { value: seq } = decode_sequential_notification(payload, 0);
-            since = seq.signalCount >>> 0;
+            since = 0;
           }
         } catch (_) {
-          const { value: seq } = decode_sequential_notification(payload, 0);
-          since = seq.signalCount >>> 0;
+          since = 0;
         }
   // Before answering, sync with the authoritative backend so direct changes are observed
   store.syncFromBackend(serverBackend);
   const vec = store.getSince(since);
-        const enc = encode_vec_sequential_notification(vec);
-        return respond(enc, WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE);
+        const encChunks = encodeChunks_VectorSequentialNotification(requestId, WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE, vec);
+        const parts = encChunks.map((c) => chunkToWire(c));
+        let total = 0; for (const p of parts) total += p.byteLength;
+        const out = new Uint8Array(total); let o = 0; for (const p of parts) { out.set(p, o); o += p.byteLength; }
+        return out;
       }
       default: {
         // Unknown: echo empty OK

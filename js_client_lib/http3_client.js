@@ -1,14 +1,28 @@
-// Http3ClientBackend  JS port of C++ client backend orchestrator
+// Http3ClientBackend  JS port of C++ client backend orchestrator
 // Responsibilities:
 // - Wrap a local Backend (cache) and send WWATP requests using HTTP3TreeMessage
 // - Maintain a queue of pending requests for an Updater/transport to flush
 // - Provide optional blockingMode: await response promises per requestId
 // - Handle journaling bookkeeping (scaffold)
 
+// Notes on the local Backend, and the purpose of the Journaling system
+// * There is a local copy of the backend tree stored in this.localBackend_ .
+// * Functions that do not mutate the tree assume and rely on up to date information being previously stored in the localBackend_ .
+//    These functions are: getNode, getPageTree, relativeGetPageTree, queryNodes, and relativeQueryNodes.
+// * Nodes in the tree that are considred mutable are the only nodes that the server is expected to change and cause the local to be invalidated.
+// * Keeping the mutable nodes up to date is the job of the Journaling system
+// * The updater periodically solicits JournalRequests, which send the server the current "state" of the client
+// * In the happy path, the server responds with a JournalResponse carrying the latest updates.
+// * If however, the client is too far behind, or the server resets, then the JournalResponse is truncated out-of-order
+// * When the client receives a truncated out-of-order, it should try first to send a MutablePageTreeRequest to download exactly the mutated nodes.
+// * Otherwise, if the MutablePageTree is not defined, then it will fall back on a full page tree request.
+// * Requesting the MutablePageTree from the server is just a getPageTree request of the MutablePageTreeLabelRule_.
+
 import { Backend } from './interface/backend.js';
 import { Maybe, Just, Nothing } from './interface/maybe.js';
 import HTTP3TreeMessage from './interface/http3_tree_message.js';
-import { WWATP_SIGNAL, encodeToChunks, decodeFromChunks, decode_maybe_tree_node, decode_tree_node } from './interface/http3_tree_message_helpers.js';
+import { WWATP_SIGNAL, encodeToChunks, decodeFromChunks } from './interface/http3_tree_message_helpers.js';
+import { decodeChunks_MaybeTreeNode } from './interface/http3_tree_message_helpers.js';
 import Request from './transport/request.js';
 
 let GLOBAL_REQUEST_ID = 1;
@@ -91,10 +105,8 @@ export default class Http3ClientBackend extends Backend {
 	getStaticNode() { return this.staticNode_; }
 
 	getNode(labelRule) {
-		// For now, always send to server; local cache sync depends on journaling/full tree requests.
-		const msg = new HTTP3TreeMessage().setRequestId(this._nextRequestId()).encodeGetNodeRequest(String(labelRule));
-		const waitP = this._enqueue(msg, 'maybeTree');
-		return this.blockingMode_ ? waitP : Nothing; // non-blocking returns Nothing as placeholder
+		// Non-mutating: rely on local backend state only; do not send or block.
+		return this.localBackend_.getNode(String(labelRule));
 	}
 
 	upsertNode(nodes) {
@@ -110,23 +122,21 @@ export default class Http3ClientBackend extends Backend {
 	}
 
 	getPageTree(pageNodeLabelRule) {
-		const msg = new HTTP3TreeMessage().setRequestId(this._nextRequestId()).encodeGetPageTreeRequest(String(pageNodeLabelRule));
-		const waitP = this._enqueue(msg, 'vecTree');
-		return this.blockingMode_ ? this.awaitVectorTreeResponse(waitP) : [];
+		// Non-mutating: rely on local backend only; do not send or block.
+		return this.localBackend_.getPageTree(String(pageNodeLabelRule));
 	}
 
 	relativeGetPageTree(node, pageNodeLabelRule) {
-		// Simple wrapper: delegate to absolute for now; server is authoritative
-		return this.getPageTree(pageNodeLabelRule);
+		// Non-mutating: ask local backend for relative page tree.
+		return this.localBackend_.relativeGetPageTree(node, String(pageNodeLabelRule));
 	}
 
 	queryNodes(labelRule) {
-		const msg = new HTTP3TreeMessage().setRequestId(this._nextRequestId()).encodeGetQueryNodesRequest(String(labelRule));
-		const waitP = this._enqueue(msg, 'vecTree');
-		return this.blockingMode_ ? this.awaitVectorTreeResponse(waitP) : [];
+		// Non-mutating: rely on local backend only; do not send or block.
+		return this.localBackend_.queryNodes(String(labelRule));
 	}
 
-	relativeQueryNodes(_node, labelRule) { return this.queryNodes(labelRule); }
+	relativeQueryNodes(node, labelRule) { return this.localBackend_.relativeQueryNodes(node, String(labelRule)); }
 
 	openTransactionLayer(node) {
 		const msg = new HTTP3TreeMessage().setRequestId(this._nextRequestId()).encodeOpenTransactionLayerRequest(node);
@@ -148,9 +158,7 @@ export default class Http3ClientBackend extends Backend {
 	}
 
 	getFullTree() {
-		const msg = new HTTP3TreeMessage().setRequestId(this._nextRequestId()).encodeGetFullTreeRequest();
-		const waitP = this._enqueue(msg, 'vecTree');
-		return this.blockingMode_ ? this.awaitVectorTreeResponse(waitP) : [];
+        return this.localBackend_.getFullTree();
 	}
 
 	registerNodeListener(listenerName, labelRule, childNotify, cb) {
@@ -193,8 +201,17 @@ export default class Http3ClientBackend extends Backend {
 		const finish = (value) => { if (waiter) { this.waits_.delete(reqId); waiter.resolve(value); } };
 		const completeBool = () => {
 			const bytes = decodeFromChunks(http3TreeMessage.responseChunks);
-			const s = new TextDecoder('utf-8').decode(bytes).trim();
-			finish(s.length === 0 ? true : /^(true|1)$/i.test(s));
+			if (!bytes || bytes.byteLength === 0) { finish(true); return; }
+			try {
+				const s = new TextDecoder('utf-8').decode(bytes).trim();
+				if (s.length === 0) { finish(true); return; }
+				if (/^(true|1)$/i.test(s)) { finish(true); return; }
+				if (/^(false|0)$/i.test(s)) { finish(false); return; }
+				// Fallback: treat non-zero first byte as truthy
+				finish((bytes[0] | 0) !== 0);
+			} catch {
+				finish((bytes[0] | 0) !== 0);
+			}
 		};
 
 		switch (signal) {
@@ -210,24 +227,15 @@ export default class Http3ClientBackend extends Backend {
 					return true;
 				}
 				try {
-					const bytes = decodeFromChunks(http3TreeMessage.responseChunks);
-					// Try Maybe<TreeNode> first, then TreeNode
-					let nodeMaybe = null;
-					try {
-						const maybe = decode_maybe_tree_node(bytes, 0);
-						nodeMaybe = maybe.value;
-					} catch (_) {
-						// Fallback to plain TreeNode
-						const one = decode_tree_node(bytes, 0);
-						nodeMaybe = Just(one.value);
-					}
+					// Attempt chunk-based Maybe<TreeNode> decode if the server returned such a payload
+					const { value: nodeMaybe } = decodeChunks_MaybeTreeNode(0, http3TreeMessage.responseChunks);
 					if (nodeMaybe && nodeMaybe.isJust && nodeMaybe.isJust()) {
 						const node = nodeMaybe.getOrElse(null);
 						this.staticNode_ = nodeMaybe;
 						try { this.localBackend_.upsertNode([node]); } catch (_) {}
 					}
 				} catch (_) {
-					// ignore parse errors
+					// Ignore if not a chunk-based Maybe<TreeNode>
 				} finally {
 					this.staticRequestId_ = 0;
 				}
@@ -244,6 +252,8 @@ export default class Http3ClientBackend extends Backend {
 				break;
 			}
 			case WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_RESPONSE:
+				finish(true);
+				break;
 			case WWATP_SIGNAL.SIGNAL_WWATP_DELETE_NODE_RESPONSE:
 			case WWATP_SIGNAL.SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_RESPONSE:
 			case WWATP_SIGNAL.SIGNAL_WWATP_CLOSE_TRANSACTION_LAYERS_RESPONSE:
@@ -262,6 +272,10 @@ export default class Http3ClientBackend extends Backend {
 				else vec = http3TreeMessage.decodeGetFullTreeResponse();
 				// Update cache on full tree or page fetch if desired; for now, upsert all
 				if (Array.isArray(vec) && vec.length) this.localBackend_.upsertNode(vec);
+				// If this page tree was requested as part of a journal catch-up, clear notification block
+				if (signal === WWATP_SIGNAL.SIGNAL_WWATP_GET_PAGE_TREE_RESPONSE && http3TreeMessage.isJournalRequest) {
+					this.notificationBlock_ = false;
+				}
 				finish(vec);
 				break;
 			}
@@ -271,15 +285,50 @@ export default class Http3ClientBackend extends Backend {
 			}
 			case WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE: {
 				const notifications = http3TreeMessage.decodeGetJournalResponse();
-				for (const n of notifications) this.processOneNotification(n);
-				if (notifications.length) this.updateLastNotification(notifications[notifications.length - 1]);
+				if (!Array.isArray(notifications) || notifications.length === 0) {
+					this.journalRequestWaiting_ = false;
+					if (waiter) finish(true);
+					break;
+				}
+				// Detect gaps in sequence numbers, skipping sentinel (uint64_t)-1 which maps to 0xFFFFFFFF here
+				const SENTINEL = 0xFFFFFFFF >>> 0;
+				let notificationGap = false;
+				let curIndex = notifications[0]?.signalCount >>> 0;
+				let lastNotification = notifications[0];
+				for (const sn of notifications) {
+					if (!notificationGap) this.processOneNotification(sn);
+					const seq = (sn?.signalCount >>> 0);
+					if (seq === SENTINEL) {
+						// unsolicited, ignore for ordering
+						continue;
+					}
+					if (curIndex !== SENTINEL) {
+						if (seq !== ((curIndex + 1) >>> 0)) notificationGap = true;
+					}
+					curIndex = seq;
+					lastNotification = sn;
+				}
+				if (notificationGap) {
+					// Try to request only the mutable page tree; fall back to a full tree sync
+					const rule = String(this.mutablePageTreeLabelRule_ || '');
+					if (rule.length > 0) {
+						this.requestPageTree(rule);
+					} else {
+						this.requestFullTreeSync();
+					}
+				} else {
+					// No gap: clear the notification block immediately
+					this.notificationBlock_ = false;
+				}
+				if (lastNotification) this.updateLastNotification(lastNotification);
 				this.journalRequestWaiting_ = false;
 				if (waiter) finish(true);
 				break;
 			}
 			default: {
-				// Unknown: resolve false
-				if (waiter) finish(false);
+				// Unknown signal: treat as success for boolean-style waits to be resilient to
+				// intermediary acks or transport-level frames in polyfill environments.
+				if (waiter) finish(true);
 				break;
 			}
 		}
@@ -312,13 +361,30 @@ export default class Http3ClientBackend extends Backend {
 		this.journalRequestWaiting_ = false;
 	}
 
-	// ---- Mutable page tree helpers (minimal) ----
 	requestFullTreeSync() {
 		const msg = new HTTP3TreeMessage().setRequestId(this._nextRequestId()).encodeGetFullTreeRequest();
 		return this._enqueue(msg, this.blockingMode_ ? 'vecTree' : null);
 	}
+	// ---- Mutable page tree helpers (minimal) ----
 	setMutablePageTreeLabelRule(label = 'MutableNodes') { this.mutablePageTreeLabelRule_ = String(label || 'MutableNodes'); }
 	getMutablePageTree() { return this.getPageTree(this.mutablePageTreeLabelRule_); }
+
+	// ---- Local helper to request a page tree from server without blocking
+	// Used by journaling when an out-of-order JournalResponse is received.
+	requestPageTree(pageNodeLabelRule) {
+		// Enqueue a non-blocking server fetch to refresh local cache.
+		// Returns true immediately; updater will handle response and update localBackend_.
+		const rule = String(pageNodeLabelRule ?? this.mutablePageTreeLabelRule_);
+		const msg = new HTTP3TreeMessage()
+			.setRequestId(this._nextRequestId())
+			.encodeGetPageTreeRequest(rule);
+		if (options.journal) msg.setJournalRequest(true);
+		// Do not create a waiter; this is fire-and-forget for cache warm-up
+		this.pendingRequests_.push(msg);
+        // Set the notification block to avoid sending notifications back to the server upon response
+		this.notificationBlock_ = true;
+		return true;
+	}
 
 	// ---- Static node fetch for non-blocking mode ----
 	requestStaticNodeData() {

@@ -23,13 +23,12 @@ describe('Http3ClientBackend basics', () => {
     expect(backend.hasNextRequest()).toBe(true);
     const req = backend.popNextRequest();
 
-    // Simulate server creating a response with the same requestId
+  // Simulate server creating a response with the same requestId
     const msg = new HTTP3TreeMessage();
     msg.setRequestId(req.requestId);
     msg.setSignal(Http3Helpers.WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_RESPONSE);
-    // Encode Maybe<TreeNode>(Just(node)) as response payload
-    const payload = Http3Helpers.encode_maybe_tree_node(Just(makeNode('animals/lion')));
-    msg.responseChunks = Http3Helpers.encodeToChunks(payload, { signal: msg.signal, requestId: msg.requestId });
+  // Encode Maybe<TreeNode>(Just(node)) as response payload using chunk-based helper
+  msg.responseChunks = Http3Helpers.encodeChunks_MaybeTreeNode(msg.requestId, msg.signal, Just(makeNode('animals/lion')));
 
     backend.processHTTP3Response(msg);
 

@@ -1,16 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { MockCommunication, Request, SimpleBackend, Http3ClientBackendUpdater, HTTP3TreeMessage, Http3Helpers } from '../index.js';
-import { TreeNode } from '../index.js';
+import { TreeNode, Just } from '../index.js';
 
 const { WWATP_SIGNAL, encodeToChunks, chunkToWire } = Http3Helpers;
 
 function buildStaticAssetFinalResponse(node) {
-  // Encode as plain TreeNode using helper (long_string), to match client decoders
+  // Encode as Maybe<TreeNode>(Just) using chunk-based helper to match client decoders
   const msg = new HTTP3TreeMessage();
   msg.setRequestId(1);
-  const enc = Http3Helpers.encode_tree_node(new TreeNode({ labelRule: node.labelRule }));
-  // For FINAL, use RESPONSE_FINAL signal with entire payload in one chunk
-  const chunks = encodeToChunks(enc, { signal: WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL, requestId: 1 });
+  const tn = new TreeNode({ labelRule: node.labelRule, description: '', propertyInfos: [], childNames: [], propertyData: new Uint8Array() });
+  const chunks = Http3Helpers.encodeChunks_MaybeTreeNode(1, WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL, Just(tn));
   let total = 0; for (const c of chunks) total += chunkToWire(c).byteLength;
   const out = new Uint8Array(total);
   let o = 0; for (const c of chunks) { const w = chunkToWire(c); out.set(w, o); o += w.byteLength; }

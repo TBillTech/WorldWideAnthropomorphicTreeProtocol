@@ -106,10 +106,17 @@ Napi::Value StreamRead(const Napi::CallbackInfo& info) {
   uint32_t timeoutMs = info.Length() > 2 && info[2].IsNumber() ? info[2].As<Number>().Uint32Value() : 0;
   std::string buf;
   buf.resize(maxLen);
-  int64_t rc = wwatp_quic_stream_read(st, reinterpret_cast<uint8_t*>(&buf[0]), maxLen, timeoutMs);
-  if (rc <= 0) return Napi::Uint8Array::New(env, 0);
-  auto out = Napi::Uint8Array::New(env, static_cast<size_t>(rc));
-  memcpy(out.Data(), buf.data(), static_cast<size_t>(rc));
+  static bool v = [](){ const char* p = ::getenv("WWATP_QUIC_FFI_VERBOSE"); return p && *p && !(p[0]=='0' && p[1]=='\0'); }();
+  if (v) {
+    fprintf(stderr, "addon.read.call: st=%p max=%zu timeout=%u\n", (void*)st, maxLen, timeoutMs);
+  }
+  int64_t bytesIn = wwatp_quic_stream_read(st, reinterpret_cast<uint8_t*>(&buf[0]), maxLen, timeoutMs);
+  if (v) {
+    fprintf(stderr, "addon.read.done: bytesIn=%lld\n", (long long)bytesIn);
+  }
+  if (bytesIn <= 0) return Napi::Uint8Array::New(env, 0);
+  auto out = Napi::Uint8Array::New(env, static_cast<size_t>(bytesIn));
+  memcpy(out.Data(), buf.data(), static_cast<size_t>(bytesIn));
   return out;
 }
 

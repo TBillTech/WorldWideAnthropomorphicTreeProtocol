@@ -185,8 +185,9 @@ realServerDescribe('System (real server) – integration readiness', () => {
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-  } catch (_) {
+      } catch (_) {
         // Skip this WWATP flow if node-libcurl isn't installed or fails to init
+        console.warn('[libcurl] Skipping testBackendLogically: libcurl not available');
         return;
       }
 
@@ -257,7 +258,8 @@ realServerDescribe('System (real server) – integration readiness', () => {
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-  } catch (_) {
+      } catch (_) {
+        console.warn('[libcurl] Skipping testBackendLogically: libcurl not available');
         return; // Skip if libcurl not present
       }
 
@@ -327,7 +329,8 @@ realServerDescribe('System (real server) – integration readiness', () => {
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-  } catch (_) {
+      } catch (_) {
+        console.warn('[libcurl] Skipping testDeleteElephant: libcurl not available');
         return; // Skip if libcurl not present
       }
 
@@ -409,7 +412,8 @@ realServerDescribe('System (real server) – integration readiness', () => {
         const { LibcurlTransport } = await import('../../index.js');
         transport = new LibcurlTransport();
         await transport.connect({ scheme: 'https', authority: '127.0.0.1:12345' });
-  } catch (_) {
+      } catch (_) {
+        console.warn('[libcurl] Skipping testBackendLogically: libcurl not available');
         return; // skip if libcurl not present
       }
 

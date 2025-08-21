@@ -5,12 +5,15 @@ import {
   chunkFromWire,
   chunkToWire,
   collectPayloadBytes,
-  encode_maybe_tree_node,
-  encode_vec_tree_node,
   encodeToChunks,
-  decode_label,
-  decode_vec_tree_node,
+  encodeChunks_MaybeTreeNode,
+  encodeChunks_VectorTreeNode,
+  decodeChunks_MaybeTreeNode,
+  decodeChunks_VectorTreeNode,
 } from '../../interface/http3_tree_message_helpers.js';
+
+// For readable logs: map numeric signal -> name
+const SIGNAL_NAMES = Object.fromEntries(Object.entries(WWATP_SIGNAL).map(([k, v]) => [v, k]));
 
 // A WebTransport polyfill that invokes a provided handler with the request bytes
 // and streams back the handler's response bytes when writer.close() is called.
@@ -71,7 +74,9 @@ describe('System (WebTransport mock) – updater E2E', () => {
     }
 
     // Server-side request handler
-    MockServerWebTransport.setHandler((reqBytes) => {
+  MockServerWebTransport.setHandler((reqBytes) => {
+      // Instrumentation: log inbound bytes summary
+      console.error('[WT-MOCK] inbound bytes:', reqBytes?.byteLength ?? 0);
       // Parse first chunk to get request id and signal
       let chunks = [];
       let i = 0;
@@ -79,32 +84,52 @@ describe('System (WebTransport mock) – updater E2E', () => {
         const { chunk, read } = chunkFromWire(reqBytes.slice(i));
         chunks.push(chunk); i += read;
       }
+      // Instrumentation: log parsed chunk headers
+      try {
+        const hdrs = chunks.map((c, idx) => ({
+          idx,
+          signal: c?.header?.signal,
+          signalName: SIGNAL_NAMES[c?.header?.signal] || 'UNKNOWN',
+          request_id: c?.header?.request_id,
+          data_length: c?.header?.data_length,
+          hasPayload: !!(c?.payload && c.payload.byteLength),
+          payloadLen: c?.payload?.byteLength || 0,
+        }));
+        console.error('[WT-MOCK] parsed chunks:', hdrs);
+      } catch {}
       if (chunks.length === 0) return new Uint8Array(0);
       // Find first non-heartbeat payload
       const first = chunks.find((c) => c.header?.signal !== WWATP_SIGNAL.SIGNAL_HEARTBEAT) || chunks[0];
       const rid = first.header?.request_id || 1;
       const sig = first.header?.signal || 0;
       const payload = collectPayloadBytes(chunks);
-    switch (sig) {
+      console.error('[WT-MOCK] first non-HB signal:', sig, SIGNAL_NAMES[sig] || 'UNKNOWN', 'rid:', rid, 'payloadLen:', payload.byteLength);
+      switch (sig) {
         case WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_REQUEST: {
-          const { value: nodes } = decode_vec_tree_node(payload, 0);
+          const { value: nodes } = decodeChunks_VectorTreeNode(0, chunks);
+          console.error('[WT-MOCK] UPSERT request nodes:', nodes?.length || 0, nodes?.map?.(n => n.getLabelRule?.()) || []);
           for (const n of nodes) store.set(n.getLabelRule(), n);
-      const ok = new TextEncoder().encode('1');
+          console.error('[WT-MOCK] store size after upsert:', store.size);
+          const ok = new TextEncoder().encode('1');
           const parts = encodeToChunks(ok, { signal: WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_RESPONSE, requestId: rid });
-          return buildResponseBytes(parts.map(chunkToWire));
+          const wires = parts.map(chunkToWire);
+          console.error('[WT-MOCK] replying UPSERT_NODE_RESPONSE chunks:', parts.map(p => ({ signal: p.header?.signal, name: SIGNAL_NAMES[p.header?.signal] || 'UNKNOWN', rid: p.header?.request_id, len: p.header?.data_length })));
+          return buildResponseBytes(wires);
         }
         case WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_REQUEST: {
-          const { value: label } = decode_label(payload, 0);
+          const label = (() => { try { const c = chunks.find((c) => c.header && typeof c.header.data_length === 'number'); return new TextDecoder().decode(c?.payload || new Uint8Array()); } catch { return ''; } })();
           const node = store.get(label) || null;
+          console.error('[WT-MOCK] GET_NODE request label:', label, 'found:', !!node);
           const maybe = node ? Just(node) : Nothing;
-          const bytes = encode_maybe_tree_node(maybe);
-          const parts = encodeToChunks(bytes, { signal: WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_RESPONSE, requestId: rid });
-          return buildResponseBytes(parts.map(chunkToWire));
+          const parts = encodeChunks_MaybeTreeNode(rid, WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_RESPONSE, maybe).map(chunkToWire);
+          console.error('[WT-MOCK] replying GET_NODE_RESPONSE with maybeJust:', !!node, 'chunks:', parts.length);
+          return buildResponseBytes(parts);
         }
         default: {
           // Default: echo back non-empty ack
           const ok = new TextEncoder().encode('1');
           const parts = encodeToChunks(ok, { signal: WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL, requestId: rid });
+          console.error('[WT-MOCK] default path, sending RESPONSE_FINAL, chunks:', parts.length);
           return buildResponseBytes(parts.map(chunkToWire));
         }
       }

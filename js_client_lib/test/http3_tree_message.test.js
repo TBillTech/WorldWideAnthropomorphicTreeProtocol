@@ -2,14 +2,14 @@ import { describe, it, expect } from 'vitest';
 import HTTP3TreeMessage from '../interface/http3_tree_message.js';
 import {
   WWATP_SIGNAL,
-  decode_label,
-  encode_vec_tree_node,
-  decode_vec_tree_node,
-  encode_maybe_tree_node,
-  decode_maybe_tree_node,
-  decode_transaction,
-  decode_sequential_notification,
-  encode_vec_sequential_notification,
+  decodeChunks_label,
+  encodeChunks_VectorTreeNode,
+  decodeChunks_VectorTreeNode,
+  encodeChunks_MaybeTreeNode,
+  decodeChunks_MaybeTreeNode,
+  decodeChunks_Transaction,
+  decodeChunks_SequentialNotification,
+  encodeChunks_VectorSequentialNotification,
   decodeFromChunks,
   encodeToChunks,
 } from '../interface/http3_tree_message_helpers.js';
@@ -67,8 +67,7 @@ function messageCycleTest({
   expect(firstWire[0]).toBe(2); // payload header on wire
 
   // Server decodes request
-  const reqBytes = decodeFromChunks(clientMsg.requestChunks);
-  const decodedRequestObj = decode_request_func(reqBytes);
+  const decodedRequestObj = decode_request_func(clientMsg.requestChunks);
   // Basic equality checks (deep for arrays and TreeNodes)
   if (Array.isArray(request_obj) && request_obj.length && request_obj[0] instanceof TreeNode) {
     expect(decodedRequestObj.length).toBe(request_obj.length);
@@ -80,8 +79,7 @@ function messageCycleTest({
   }
 
   // Server encodes response
-  const respPayload = encode_response_func(response_obj);
-  const respChunks = encodeToChunks(respPayload, { signal: response_signal, requestId: request_id });
+  const respChunks = encode_response_func(response_obj);
 
   // Client receives and decodes response
   clientMsg.responseChunks = respChunks;
@@ -101,12 +99,14 @@ function messageCycleTest({
 describe('HTTP3TreeMessage encode/decode getNodeRequest', () => {
   function nodeRequestTest(request_id, request_label, response_maybe_node) {
     const encode_request_func = (clientMsg, reqLabel) => clientMsg.encodeGetNodeRequest(reqLabel);
-    const decode_request_func = (bytes) => {
-      const { value } = decode_label(bytes, 0);
+    const decode_request_func = (chunks) => {
+      const { value } = decodeChunks_label(0, chunks);
       return value;
     };
-    const encode_response_func = (maybeNode) => encode_maybe_tree_node(maybeNode);
-    const decode_response_func = (clientMsg) => clientMsg.decodeGetNodeResponse();
+    const encode_response_func = (maybeNode) => encodeChunks_MaybeTreeNode(request_id, WWATP_SIGNAL.SIGNAL_WWATP_GET_NODE_RESPONSE, maybeNode);
+    const decode_response_func = (clientMsg) => {
+      return clientMsg.decodeGetNodeResponse();
+    };
 
     messageCycleTest({
       request_id,
@@ -144,11 +144,11 @@ describe('HTTP3TreeMessage encode/decode getNodeRequest', () => {
 describe('HTTP3TreeMessage encode/decode upsertNodeRequest', () => {
   function nodeUpsertTest(request_id, nodes, response_bool) {
     const encode_request_func = (clientMsg, ns) => clientMsg.encodeUpsertNodeRequest(ns);
-    const decode_request_func = (bytes) => {
-      const { value } = decode_vec_tree_node(bytes, 0);
+    const decode_request_func = (chunks) => {
+      const { value } = decodeChunks_VectorTreeNode(0, chunks);
       return value;
     };
-    const encode_response_func = (b) => toBoolBytes(b);
+    const encode_response_func = (b) => encodeToChunks(toBoolBytes(b), { signal: WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_RESPONSE, requestId: request_id });
     const decode_response_func = (clientMsg) => clientMsg.decodeUpsertNodeResponse();
 
     messageCycleTest({
@@ -203,8 +203,7 @@ describe('HTTP3TreeMessage parity scaffolds (TODO)', () => {
     function nodeDeleteTest(request_id, req_label, resp_bool) {
       const msg = new HTTP3TreeMessage().setRequestId(request_id);
       msg.encodeDeleteNodeRequest(req_label);
-      const reqBytes = decodeFromChunks(msg.requestChunks);
-      const { value: decodedLabel } = decode_label(reqBytes, 0);
+  const { value: decodedLabel } = decodeChunks_label(0, msg.requestChunks);
       expect(decodedLabel).toEqual(req_label);
       const respChunks = encodeToChunks(new Uint8Array([resp_bool ? 1 : 0]), { signal: WWATP_SIGNAL.SIGNAL_WWATP_DELETE_NODE_RESPONSE, requestId: request_id });
       msg.responseChunks = respChunks;
@@ -222,11 +221,9 @@ describe('HTTP3TreeMessage parity scaffolds (TODO)', () => {
     function pageTreeRequestTest(request_id, req_label, resp_nodes) {
       const msg = new HTTP3TreeMessage().setRequestId(request_id);
       msg.encodeGetPageTreeRequest(req_label);
-      const reqBytes = decodeFromChunks(msg.requestChunks);
-      const { value: decodedLabel } = decode_label(reqBytes, 0);
+  const { value: decodedLabel } = decodeChunks_label(0, msg.requestChunks);
       expect(decodedLabel).toEqual(req_label);
-      const respPayload = encode_vec_tree_node(resp_nodes);
-      msg.responseChunks = encodeToChunks(respPayload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_GET_PAGE_TREE_RESPONSE, requestId: request_id });
+  msg.responseChunks = encodeChunks_VectorTreeNode(request_id, WWATP_SIGNAL.SIGNAL_WWATP_GET_PAGE_TREE_RESPONSE, resp_nodes);
       const out = msg.decodeGetPageTreeResponse();
       expect(out.length).toBe(resp_nodes.length);
       out.forEach((n, i) => expect(n.equals(resp_nodes[i])).toBe(true));
@@ -269,11 +266,9 @@ describe('HTTP3TreeMessage parity scaffolds (TODO)', () => {
     function queryNodesRequestTest(request_id, req_label, resp_nodes) {
       const msg = new HTTP3TreeMessage().setRequestId(request_id);
       msg.encodeGetQueryNodesRequest(req_label);
-      const reqBytes = decodeFromChunks(msg.requestChunks);
-      const { value: decodedLabel } = decode_label(reqBytes, 0);
+  const { value: decodedLabel } = decodeChunks_label(0, msg.requestChunks);
       expect(decodedLabel).toEqual(req_label);
-      const respPayload = encode_vec_tree_node(resp_nodes);
-      msg.responseChunks = encodeToChunks(respPayload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_QUERY_NODES_RESPONSE, requestId: request_id });
+  msg.responseChunks = encodeChunks_VectorTreeNode(request_id, WWATP_SIGNAL.SIGNAL_WWATP_QUERY_NODES_RESPONSE, resp_nodes);
       const out = msg.decodeGetQueryNodesResponse();
       expect(out.length).toBe(resp_nodes.length);
       out.forEach((n, i) => expect(n.equals(resp_nodes[i])).toBe(true));
@@ -314,8 +309,7 @@ describe('HTTP3TreeMessage parity scaffolds (TODO)', () => {
     function openTransactionLayerTest(request_id, req_node, resp_bool) {
       const msg = new HTTP3TreeMessage().setRequestId(request_id);
       msg.encodeOpenTransactionLayerRequest(req_node);
-      const reqBytes = decodeFromChunks(msg.requestChunks);
-      const { value: maybeNode } = decode_maybe_tree_node(reqBytes, 0);
+  const { value: maybeNode } = decodeChunks_MaybeTreeNode(0, msg.requestChunks);
       expect(maybeNode.isJust()).toBe(true);
       expect(maybeNode.value.equals(req_node)).toBe(true);
       msg.responseChunks = encodeToChunks(new Uint8Array([resp_bool ? 1 : 0]), { signal: WWATP_SIGNAL.SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_RESPONSE, requestId: request_id });
@@ -369,8 +363,7 @@ describe('HTTP3TreeMessage parity scaffolds (TODO)', () => {
     function applyTransactionTest(request_id, req_tx, resp_bool) {
       const msg = new HTTP3TreeMessage().setRequestId(request_id);
       msg.encodeApplyTransactionRequest(req_tx);
-      const reqBytes = decodeFromChunks(msg.requestChunks);
-      const { value: decodedTx } = decode_transaction(reqBytes, 0);
+  const { value: decodedTx } = decodeChunks_Transaction(0, msg.requestChunks);
       // compare lengths only for sanity
       expect(decodedTx.length).toBe(req_tx.length);
       msg.responseChunks = encodeToChunks(new Uint8Array([resp_bool ? 1 : 0]), { signal: WWATP_SIGNAL.SIGNAL_WWATP_APPLY_TRANSACTION_RESPONSE, requestId: request_id });
@@ -420,8 +413,8 @@ describe('HTTP3TreeMessage parity scaffolds (TODO)', () => {
       const msg = new HTTP3TreeMessage().setRequestId(request_id);
       msg.encodeGetFullTreeRequest();
       const reqBytes = decodeFromChunks(msg.requestChunks);
-      expect(reqBytes.byteLength).toBe(0);
-      msg.responseChunks = encodeToChunks(encode_vec_tree_node(resp_nodes), { signal: WWATP_SIGNAL.SIGNAL_WWATP_GET_FULL_TREE_RESPONSE, requestId: request_id });
+  expect(reqBytes.byteLength).toBe(0);
+  msg.responseChunks = encodeChunks_VectorTreeNode(request_id, WWATP_SIGNAL.SIGNAL_WWATP_GET_FULL_TREE_RESPONSE, resp_nodes);
       const out = msg.decodeGetFullTreeResponse();
       expect(out.length).toBe(resp_nodes.length);
       out.forEach((n, i) => expect(n.equals(resp_nodes[i])).toBe(true));
@@ -460,12 +453,8 @@ describe('HTTP3TreeMessage parity scaffolds (TODO)', () => {
       const [listener, label, childNotify] = tuple;
       const msg = new HTTP3TreeMessage().setRequestId(request_id);
       msg.encodeRegisterNodeListenerRequest(listener, label, childNotify);
-      const reqBytes = decodeFromChunks(msg.requestChunks);
-      let o = 0; const a = decode_label(reqBytes, o); o += a.read; const b = decode_label(reqBytes, o); o += b.read;
-      const c = reqBytes[o] !== 0;
-      expect(a.value).toEqual(listener);
-      expect(b.value).toEqual(label);
-      expect(c).toBe(childNotify);
+  const { value: combined } = decodeChunks_label(0, msg.requestChunks);
+  expect(combined).toEqual(`${listener} ${label} ${childNotify ? 1 : 0}`);
       msg.responseChunks = encodeToChunks(new Uint8Array([resp_bool ? 1 : 0]), { signal: WWATP_SIGNAL.SIGNAL_WWATP_REGISTER_LISTENER_RESPONSE, requestId: request_id });
       expect(msg.decodeRegisterNodeListenerResponse()).toBe(resp_bool);
     }
@@ -482,10 +471,8 @@ describe('HTTP3TreeMessage parity scaffolds (TODO)', () => {
       const [listener, label] = pair;
       const msg = new HTTP3TreeMessage().setRequestId(request_id);
       msg.encodeDeregisterNodeListenerRequest(listener, label);
-      const reqBytes = decodeFromChunks(msg.requestChunks);
-      let o = 0; const a = decode_label(reqBytes, o); o += a.read; const b = decode_label(reqBytes, o); o += b.read;
-      expect(a.value).toEqual(listener);
-      expect(b.value).toEqual(label);
+  const { value: combined } = decodeChunks_label(0, msg.requestChunks);
+  expect(combined).toEqual(`${listener} ${label}`);
       msg.responseChunks = encodeToChunks(new Uint8Array([resp_bool ? 1 : 0]), { signal: WWATP_SIGNAL.SIGNAL_WWATP_DEREGISTER_LISTENER_RESPONSE, requestId: request_id });
       expect(msg.decodeDeregisterNodeListenerResponse()).toBe(resp_bool);
     }
@@ -502,14 +489,14 @@ describe('HTTP3TreeMessage parity scaffolds (TODO)', () => {
       const [label, maybeNode] = pair; // in C++ this is listenerName? Here adapt to label for encode
       const msg = new HTTP3TreeMessage().setRequestId(request_id);
       msg.encodeNotifyListenersRequest(label, maybeNode);
-      const reqBytes = decodeFromChunks(msg.requestChunks);
-      let o = 0; const a = decode_label(reqBytes, o); o += a.read; const b = decode_maybe_tree_node(reqBytes, o);
-      expect(a.value).toEqual(label);
+      const { value: lbl } = decodeChunks_label(0, msg.requestChunks);
+      const { value: b } = decodeChunks_MaybeTreeNode(1, msg.requestChunks);
+      expect(lbl).toEqual(label);
       if (maybeNode.isJust()) {
-        expect(b.value.isJust()).toBe(true);
-        expect(b.value.value.equals(maybeNode.value)).toBe(true);
+        expect(b.isJust()).toBe(true);
+        expect(b.value.equals(maybeNode.value)).toBe(true);
       } else {
-        expect(b.value.isNothing()).toBe(true);
+        expect(b.isNothing()).toBe(true);
       }
       msg.responseChunks = encodeToChunks(new Uint8Array([resp_bool ? 1 : 0]), { signal: WWATP_SIGNAL.SIGNAL_WWATP_NOTIFY_LISTENERS_RESPONSE, requestId: request_id });
       expect(msg.decodeNotifyListenersResponse()).toBe(resp_bool);
@@ -562,13 +549,11 @@ describe('HTTP3TreeMessage parity scaffolds (TODO)', () => {
     function getJournalRequestTest(request_id, lastNotif, respNotifs) {
       const msg = new HTTP3TreeMessage().setRequestId(request_id);
       msg.encodeGetJournalRequest(lastNotif);
-      const reqBytes = decodeFromChunks(msg.requestChunks);
-      // request payload should have empty label and Nothing per spec
-      const { value: decodedSN } = decode_sequential_notification(reqBytes, 0);
+  // request payload should have empty label and Nothing per spec
+  const { value: decodedSN } = decodeChunks_SequentialNotification(0, msg.requestChunks);
       expect(decodedSN.notification.labelRule).toEqual('');
       expect(decodedSN.notification.maybeNode.isNothing()).toBe(true);
-      const respPayload = encode_vec_sequential_notification(respNotifs);
-      msg.responseChunks = encodeToChunks(respPayload, { signal: WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE, requestId: request_id });
+  msg.responseChunks = encodeChunks_VectorSequentialNotification(request_id, WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE, respNotifs);
       const out = msg.decodeGetJournalResponse();
       expect(out.length).toBe(respNotifs.length);
       // spot check equality (signalCount and label)
