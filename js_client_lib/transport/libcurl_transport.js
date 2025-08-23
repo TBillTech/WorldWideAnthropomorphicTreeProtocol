@@ -6,13 +6,23 @@
 
 import Communication from './communication.js';
 
+// Lazily load node-libcurl only when this transport is actually used.
+// This prevents import-time failures for consumers that don’t need it.
 let Curl, CurlHttpVersion;
-try {
-  const lib = await import('node-libcurl');
-  Curl = lib.Curl; // high-level handle with events, setOpt, perform
-  CurlHttpVersion = lib.CurlHttpVersion || lib.CurlHttpVersion; // alias safety
-} catch {
-  throw new Error('node-libcurl is not installed. Install it in this workspace to use libcurl_transport.');
+let _libcurlTried = false;
+async function ensureLibcurlLoaded() {
+  if (Curl) return true;
+  if (_libcurlTried) return false;
+  _libcurlTried = true;
+  try {
+    const lib = await import('node-libcurl');
+    Curl = lib.Curl;
+    CurlHttpVersion = lib.CurlHttpVersion || lib.CurlHttpVersion; // alias safety
+    return true;
+  } catch (err) {
+    // Defer throwing until runtime use (connect), so mere import doesn’t explode.
+    return false;
+  }
 }
 
 function envFlag(name) {
@@ -28,7 +38,7 @@ function buildUrl(req) {
 
 function getCurlVersionInfo() {
   try {
-    if (Curl && typeof Curl.getVersionInfoString === 'function') {
+  if (Curl && typeof Curl.getVersionInfoString === 'function') {
       return Curl.getVersionInfoString();
     }
   } catch {}
@@ -74,8 +84,10 @@ export default class LibcurlTransport extends Communication {
     if (this._connected) return true;
     this._authority = req.authority;
 
-    if (!Curl) {
-      throw new Error('node-libcurl is present but Curl API is unavailable.');
+    // Load node-libcurl on first use
+    const ok = await ensureLibcurlLoaded();
+    if (!ok || !Curl) {
+      throw new Error('node-libcurl is not installed. Install it to use LibcurlTransport.');
     }
 
   // Verify libcurl has HTTP/3 to provide a clear, early diagnostic

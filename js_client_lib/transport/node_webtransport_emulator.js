@@ -40,6 +40,8 @@ export default class NodeWebTransportEmulator {
     this._reliability = 'reliable-only';
     this._congestionControl = options?.congestionControl || 'default';
   this._openStreams = new Set();
+  this._sidToStream = new Map(); // map of String(sid) -> native stream handle
+  this._streamToSid = new Map(); // reverse map for cleanup
   this._lastOpened = null;
   this._trace = tracer('NodeWebTransportEmulator');
   this._pumpId = null; // background pump interval id
@@ -182,6 +184,15 @@ export default class NodeWebTransportEmulator {
     if (!st) throw new Error('Failed to open bidirectional stream');
   this._openStreams.add(st);
   this._lastOpened = st;
+  // Optional: bind this native stream to a caller-provided sid for later targeted close
+  try {
+    const sidOpt = _options && _options.sid !== undefined ? _options.sid : null;
+    if (sidOpt !== null) {
+      const key = String(sidOpt);
+      this._sidToStream.set(key, st);
+      this._streamToSid.set(st, key);
+    }
+  } catch {}
   this._trace.inc('streams.open');
   // Avoid coercing native handle to primitive; just tag type safely
   const safeTag = (x) => { try { return Object.prototype.toString.call(x); } catch { return undefined; } };
@@ -213,6 +224,10 @@ export default class NodeWebTransportEmulator {
           streamClosed = true;
           try { self._nq.closeStream(st); } catch {}
           self._openStreams.delete(st);
+          try {
+            const key = self._streamToSid.get(st);
+            if (key) { self._sidToStream.delete(key); self._streamToSid.delete(st); }
+          } catch {}
           self._trace.inc('streams.closed');
           self._trace.info('stream.abort', { idTag: safeTag(st), count: self._openStreams.size });
         }
@@ -282,6 +297,10 @@ export default class NodeWebTransportEmulator {
           streamClosed = true;
           try { self._nq.closeStream(st); } catch {}
           self._openStreams.delete(st);
+          try {
+            const key = self._streamToSid.get(st);
+            if (key) { self._sidToStream.delete(key); self._streamToSid.delete(st); }
+          } catch {}
           self._trace.inc('streams.closed');
           self._trace.info('stream.cancel', { idTag: safeTag(st), count: self._openStreams.size });
         }
@@ -338,11 +357,13 @@ export default class NodeWebTransportEmulator {
   // Allow explicit close of the most recent stream for a given sid in our simple model.
   // In this emulator, we don't track sid->native stream mapping, so close the last opened.
   async closeStream(_sid) {
-    if (!this._lastOpened) return;
-    try { this._nq?.closeStream(this._lastOpened); } catch {}
-    this._openStreams.delete(this._lastOpened);
+    const key = String(_sid);
+    const st = this._sidToStream.get(key) || null;
+    if (!st) return;
+    try { this._nq?.closeStream(st); } catch {}
+    this._openStreams.delete(st);
+    try { this._sidToStream.delete(key); this._streamToSid.delete(st); } catch {}
     this._trace.inc('streams.closed');
-    this._trace.info('stream.closed', { idTag: Object.prototype.toString.call(this._lastOpened), count: this._openStreams.size });
-    this._lastOpened = null;
+    this._trace.info('stream.closed', { idTag: Object.prototype.toString.call(st), count: this._openStreams.size });
   }
 }

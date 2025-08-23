@@ -247,6 +247,12 @@ export default class WebTransportCommunication extends Communication {
             try {
                 // Attempt a single read. Native read() has a short timeout, so this won't spin.
                 const { value, done } = await ent.reader.read();
+                if (done) {
+                    try { ent._remoteDone = true; } catch {}
+                    try { this._emitResponseEvent(sid, { type: 'end', ok: true, status: 200, data: new Uint8Array(0) }); } catch {}
+                    this._trace.info('stream.remoteDone', { sid });
+                    return;
+                }
                 if (!done && value instanceof Uint8Array && value.byteLength > 0) {
                     this._emitResponseEvent(sid, { type: 'response', ok: true, status: 200, data: value });
                     this._trace.info('stream.response', { sid, bytes: value.byteLength });
@@ -267,6 +273,7 @@ export default class WebTransportCommunication extends Communication {
             typeof this.transport.setRequestSignalForCurrentStream === 'function' ||
             (this.transport && typeof this.transport.getClientConnectionId === 'function')
         ));
+    // Heartbeats reuse the persistent per-sid stream on Node emulator. No ephemeral mode.
 
         // Stream acquisition strategy:
         // - Node emulator: keep a persistent bidi stream per sid and reuse it for heartbeats and reads
@@ -274,11 +281,11 @@ export default class WebTransportCommunication extends Communication {
         const sidKey = String(sid);
         let entry;
         let created = false;
-        if (isNodeEmulator) {
+    if (isNodeEmulator) {
             entry = this._streams.get(sidKey);
             // For heartbeats, reuse the persistent stream so native/server can correlate progress.
             if (!entry) {
-                const bidi = await this.transport.createBidirectionalStream();
+                const bidi = await this.transport.createBidirectionalStream({ sid });
                 const writer = bidi.writable.getWriter();
                 const reader = bidi.readable.getReader();
                 entry = { bidi, writer, reader, sid };
@@ -296,7 +303,7 @@ export default class WebTransportCommunication extends Communication {
             // Heartbeats share the same persistent stream so the native layer keeps the same logical id.
         } else {
             // Ephemeral stream for polyfill/browser environments
-            const bidi = await this.transport.createBidirectionalStream();
+            const bidi = await this.transport.createBidirectionalStream({ sid });
             const writer = bidi.writable.getWriter();
             const reader = bidi.readable.getReader();
             entry = { bidi, writer, reader, sid };
@@ -307,7 +314,7 @@ export default class WebTransportCommunication extends Communication {
         const { writer, reader } = entry;
 
         // Start a lightweight background reader pump for persistent Node emulator streams
-        if (isNodeEmulator && !isHeartbeat && created) {
+    if (isNodeEmulator && !isHeartbeat && created) {
             const ent = this._streams.get(sidKey);
             ent._reading = false;
             ent._pumpId = setInterval(async () => {
@@ -319,7 +326,12 @@ export default class WebTransportCommunication extends Communication {
                 try {
                     const { value, done } = await ent.reader.read();
                     if (done) {
-                        // keep interval; reader may signal done transiently
+                        // Mark remote FIN/close; stop pumping further and avoid future heartbeat writes
+                        try { ent._remoteDone = true; } catch {}
+                        try { this._emitResponseEvent(sid, { type: 'end', ok: true, status: 200, data: new Uint8Array(0) }); } catch {}
+                        try { clearInterval(ent._pumpId); } catch {}
+                        ent._pumpId = null;
+                        this._trace.info('stream.remoteDone', { sid });
                     } else if (value instanceof Uint8Array && value.byteLength > 0) {
                         try {
                             this._emitResponseEvent(sid, { type: 'response', ok: true, status: 200, data: value });
@@ -358,9 +370,23 @@ export default class WebTransportCommunication extends Communication {
             // Write request body as-is. On Node emulator persistent streams we intentionally keep the
             // writer open (no FIN) so that heartbeats can be written on the same logical stream id.
             if (data) {
-                for await (const chunk of toAsyncChunks(data, { skipDump: !!isHeartbeat })) {
-                    if (aborted) throw new DOMException('Aborted', 'AbortError');
-                    await writer.write(chunk);
+                // If the remote side has already FIN'd this stream, skip heartbeat writes to avoid errors
+                if (isNodeEmulator && isHeartbeat && entry && entry._remoteDone) {
+                    this._trace.info('stream.hb.skip.remoteDone', { sid });
+                } else {
+            for await (const chunk of toAsyncChunks(data, { skipDump: !!isHeartbeat })) {
+                        if (aborted) throw new DOMException('Aborted', 'AbortError');
+                        try {
+                            await writer.write(chunk);
+                        } catch (e) {
+                            // If write fails due to stream already closed, mark remote done to avoid subsequent writes
+                try { entry._remoteDone = true; } catch {}
+                // Surface a terminal 'end' to allow request completion logic upstream
+                try { this._emitResponseEvent(sid, { type: 'end', ok: false, status: 0, error: e }); } catch {}
+                            this._trace.warn('stream.write.error', { sid, error: String(e && e.message || e) });
+                            throw e;
+                        }
+                    }
                 }
             }
             // For non-emulator environments, FIN after write.

@@ -137,6 +137,30 @@ export default class Http3ClientBackendUpdater {
 			const handleEvent = (evt) => {
 			let shouldCleanup = false;
 			try {
+				if (evt?.type === 'end') {
+					// Transport signaled remote FIN with no further data.
+					// For journals, this corresponds to an empty FINAL-only response; mark complete.
+					// For boolish WWATP requests, also treat as complete.
+					const reqSig = (msg.requestChunks && msg.requestChunks[0] && msg.requestChunks[0].header && msg.requestChunks[0].header.signal) | 0;
+					const boolish = (
+						reqSig === WWATP_SIGNAL.SIGNAL_WWATP_UPSERT_NODE_REQUEST ||
+						reqSig === WWATP_SIGNAL.SIGNAL_WWATP_DELETE_NODE_REQUEST ||
+						reqSig === WWATP_SIGNAL.SIGNAL_WWATP_OPEN_TRANSACTION_LAYER_REQUEST ||
+						reqSig === WWATP_SIGNAL.SIGNAL_WWATP_CLOSE_TRANSACTION_LAYERS_REQUEST ||
+						reqSig === WWATP_SIGNAL.SIGNAL_WWATP_NOTIFY_LISTENERS_REQUEST ||
+						reqSig === WWATP_SIGNAL.SIGNAL_WWATP_PROCESS_NOTIFICATION_REQUEST ||
+						reqSig === WWATP_SIGNAL.SIGNAL_WWATP_APPLY_TRANSACTION_REQUEST ||
+						reqSig === WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST
+					);
+					if (boolish || isJournal) {
+						msg.signal = (reqSig === WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST)
+							? WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE
+							: WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL;
+						backend.processHTTP3Response(msg);
+						shouldCleanup = true;
+					}
+					return;
+				}
 				if (evt?.data instanceof Uint8Array) {
 					// Parse wire bytes into chunks
 					const bytes = evt.data;
@@ -219,6 +243,10 @@ export default class Http3ClientBackendUpdater {
 						case WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_REQUEST: {
 							if (canDecodeChunks_VectorSequentialNotification(0, msg.responseChunks)) {
 								readySignal = WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE;
+							} else if (sawFinal) {
+								// Some servers may reply with FINAL-only when the journal is empty.
+								// Treat this as a valid (empty) journal response to avoid stalling.
+								readySignal = WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE;
 							}
 							break;
 						}
@@ -269,7 +297,7 @@ export default class Http3ClientBackendUpdater {
 			} finally {
 				// Cleanup only when response completed
 				try {
-					if (typeof shouldCleanup !== 'undefined' && shouldCleanup) {
+						if (typeof shouldCleanup !== 'undefined' && shouldCleanup) {
 						finished = true;
 						connector.deregisterResponseHandler(sid);
 						this.ongoingRequests_.delete(sidKey);
@@ -282,7 +310,7 @@ export default class Http3ClientBackendUpdater {
 								(async () => { try { await connector.closeStream(sid); } catch {} })();
 							}
 						} catch (_) {}
-						try { if (doneResolve) doneResolve(true); } catch (_) {}
+							try { if (doneResolve) doneResolve(true); } catch (_) {}
 					}
 				} catch (_) {}
 			}
@@ -329,16 +357,21 @@ export default class Http3ClientBackendUpdater {
 			// results upon receiving a HEARTBEAT on a subsequent stream with the same logical request id.
 			const hbDisabled = (() => { try { const v = globalThis?.process?.env?.WWATP_DISABLE_HB; if (!v) return false; const s = String(v).toLowerCase(); return s === '1' || s === 'true' || s === 'yes' || s === 'on'; } catch { return false; } })();
 			if (!hbDisabled && connector.hasResponseHandler?.(sid) && (typeof request.isWWATP === 'function' ? request.isWWATP() : String(request.path || '').includes('wwatp/'))) {
+				let hbBusy = false;
 				const loop = async () => {
+					if (hbBusy) return; // avoid overlapping heartbeats on slow/native layers
+					hbBusy = true;
 					if (finished) {
 						const t = this._hbTimers.get(sidKey); if (t) clearInterval(t); this._hbTimers.delete(sidKey);
 						this._trace.info('hb.stop', { sid, rid: msg.requestId });
+						hbBusy = false;
 						return;
 					}
 					// If original handler no longer present, stop
 					if (!connector.hasResponseHandler?.(sid)) {
 						const t = this._hbTimers.get(sidKey); if (t) clearInterval(t); this._hbTimers.delete(sidKey);
 						this._trace.info('hb.stop.missingHandler', { sid, rid: msg.requestId });
+						hbBusy = false;
 						return;
 					}
 					try {
@@ -352,7 +385,13 @@ export default class Http3ClientBackendUpdater {
 						// Suppress verbose heartbeat tick logs to reduce noise
 						// this._trace.info('hb.tick', { sid, rid: msg.requestId, bytes: r?.data?.byteLength || 0 });
 						// Response bytes (if any) will be delivered to the original handler via _emitResponseEvent(sid,...)
-					} catch (e) { this._trace.warn('hb.error', { error: String(e && e.message || e) }); }
+					} catch (e) {
+						// On write/transport error, stop heartbeats to avoid hammering a closed stream
+						this._trace.warn('hb.error', { error: String(e && e.message || e) });
+						try { const t = this._hbTimers.get(sidKey); if (t) clearInterval(t); this._hbTimers.delete(sidKey); } catch {}
+						finished = true;
+					}
+					finally { hbBusy = false; }
 				};
 				const id = setInterval(loop, 100);
 				this._hbTimers.set(sidKey, id);
@@ -366,6 +405,7 @@ export default class Http3ClientBackendUpdater {
 			this._trace.warn('send.error', { sid, rid: msg.requestId, error: String(e && e.message || e) });
 			// Attempt to resolve a waiting promise with failure via processHTTP3Response default path
 			try { backend.processHTTP3Response(msg); } catch (_) {}
+			try { if (doneResolve) doneResolve(false); } catch (_) {}
 		}
 
 		// Ensure caller can await completion even if no response arrives (timeouts not modeled here)
