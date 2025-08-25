@@ -99,13 +99,16 @@ async function spawnServer(serverBinPath = null) {
   ensureSandboxAndDataDirs();
   const proc = child_process.spawn(bin, [CONFIG], { cwd: rootDir });
   proc.on('error', () => {});
-  // Pipe server output for diagnostics during the test
-  try {
-    proc.stdout?.setEncoding?.('utf-8');
-    proc.stderr?.setEncoding?.('utf-8');
-    proc.stdout?.on?.('data', (d) => { try { process.stdout.write(`[server stdout] ${d}`); } catch {} });
-    proc.stderr?.on?.('data', (d) => { try { process.stderr.write(`[server stderr] ${d}`); } catch {} });
-  } catch {}
+    // Optionally pipe server output for diagnostics if explicitly enabled
+    try {
+      const showLogs = String(process.env.WWATP_SHOW_SERVER_LOGS || '').toLowerCase();
+      if (showLogs === '1' || showLogs === 'true' || showLogs === 'yes' || showLogs === 'on' || showLogs === 'debug') {
+        proc.stdout?.setEncoding?.('utf-8');
+        proc.stderr?.setEncoding?.('utf-8');
+        proc.stdout?.on?.('data', (d) => { try { process.stdout.write(`[server stdout] ${d}`); } catch {} });
+        proc.stderr?.on?.('data', (d) => { try { process.stderr.write(`[server stderr] ${d}`); } catch {} });
+      }
+    } catch {}
   await waitForServerReady(proc, 12347, '127.0.0.1', 15000);
   // Small settle delay to allow the server to finish initializing listeners before client connect
   await new Promise((r) => setTimeout(r, 500));
@@ -173,11 +176,12 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
       return; // skip if no certs and cannot generate
     }
 
-  // Provide mTLS env for emulator
+    // Provide mTLS env for emulator
     process.env.WWATP_CERT = CERT_FILE;
     process.env.WWATP_KEY = KEY_FILE;
     process.env.WWATP_INSECURE = '1'; // allow self-signed
-    process.env.WWATP_TRACE = process.env.WWATP_TRACE || '1'; // enable tracing
+    // Default to no tracing unless explicitly enabled by environment
+    if (!('WWATP_TRACE' in process.env)) process.env.WWATP_TRACE = '0';
 
   // Polyfill WebTransport global with Node emulator class
     const { default: NodeWebTransportEmulator } = await import('../../transport/node_webtransport_emulator.js');
@@ -272,7 +276,7 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
     process.env.WWATP_CERT = CERT_FILE;
     process.env.WWATP_KEY = KEY_FILE;
     process.env.WWATP_INSECURE = '1';
-    process.env.WWATP_TRACE = process.env.WWATP_TRACE || '1';
+    if (!('WWATP_TRACE' in process.env)) process.env.WWATP_TRACE = '0';
 
     // Polyfill WebTransport with Node emulator
     const { default: NodeWebTransportEmulator } = await import('../../transport/node_webtransport_emulator.js');
@@ -351,7 +355,7 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
     process.env.WWATP_CERT = CERT_FILE;
     process.env.WWATP_KEY = KEY_FILE;
     process.env.WWATP_INSECURE = '1';
-    process.env.WWATP_TRACE = process.env.WWATP_TRACE || '1';
+    if (!('WWATP_TRACE' in process.env)) process.env.WWATP_TRACE = '0';
 
     // Polyfill WebTransport with Node emulator
     const { default: NodeWebTransportEmulator } = await import('../../transport/node_webtransport_emulator.js');
@@ -402,7 +406,6 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
         updater,
         comm,
         (async () => {
-          // TODO: uncomment this code, and debug journaling issues
           //await tbLocalB.testPeerNotification(be_A, 50 /* notificationDelay ms */, '');
           return true;
         })(),

@@ -8,6 +8,12 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     reporters: [["default", { summary: false }]],
+    // Silence noisy debug logging during tests
+    onConsoleLog(log, type) {
+      // Filter frequent debug streams from system tests and harness
+      const noisy = /^(\[server (stdout|stderr)\])|\[(WebTransportCommunication|NodeWebTransportEmulator|Updater|HTTP3TreeMessage|Journal)\]/;
+      if (noisy.test(log)) return false;
+    },
     // Run E2E in a single thread to avoid cross-file parallelism when requested
     poolOptions: {
       threads: {
