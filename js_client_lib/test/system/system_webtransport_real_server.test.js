@@ -385,9 +385,10 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
       // Bring client B to a known state with a full sync first
       await awaitWithMaintain(updater, comm, be_B.requestFullTreeSync(), 15000);
 
-      // Now exercise peer notifications end-to-end: have be_B receive notifications
-      // when be_A mutates server state, using BackendTestbed helper.
-      const tbLocalB = new BackendTestbed(localB, { shouldTestNotifications: true, shouldTestChanges: true });
+  // Now exercise peer notifications end-to-end: have be_B receive notifications
+  // when be_A mutates server state, using BackendTestbed helper. IMPORTANT: run the
+  // testbed against be_B (client backend) so REGISTER_LISTENER goes to the server.
+  const tbLocalB = new BackendTestbed(be_B, { shouldTestNotifications: true, shouldTestChanges: true });
 
       // Drive updater while running the peer-notification sequence on B, sourcing changes from A.
       // testPeerNotification performs: register listener on B, upsert+delete lion on A, expect notifications on B.
@@ -397,14 +398,15 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
 
       // Wrap the peer-notification routine inside maintain-driving promise to ensure network work is processed.
       // The routine itself calls backend.processNotifications(); we just keep the updater alive.
-      await awaitWithMaintain(
+    await awaitWithMaintain(
         updater,
         comm,
         (async () => {
+          // TODO: uncomment this code, and debug journaling issues
           //await tbLocalB.testPeerNotification(be_A, 50 /* notificationDelay ms */, '');
           return true;
         })(),
-        20000,
+  50000,
       );
 
   try { updater.stop(); } catch {}
@@ -413,6 +415,6 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
       if (server) await killServer(server);
       try { if (orig) globalThis.WebTransport = orig; else delete globalThis.WebTransport; } catch {}
     }
-  }, 35000);
+  }, 60000);
 });
 

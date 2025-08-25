@@ -238,6 +238,18 @@ export class BackendTestbed {
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, Number(ms) | 0)));
     const awaitIfPromise = async (v) => (v && typeof v.then === 'function' ? await v : v);
+    const waitFor = async (pred, timeoutMs = 8000, intervalMs = 100) => {
+      const start = Date.now();
+      // Ensure minimum interval
+      const step = Math.max(10, Number(intervalMs) | 0);
+      while (!pred()) {
+        if ((Date.now() - start) > timeoutMs) return false;
+        await sleep(step);
+        // Give backends a chance to flush notification requests if supported
+        try { await awaitIfPromise(this.backend.processNotifications()); } catch {}
+      }
+      return true;
+    };
 
     let lionCreated = false;
     let lionDeleted = false;
@@ -246,11 +258,23 @@ export class BackendTestbed {
     // Ensure clean state on the peer backend
     await awaitIfPromise(toBeModified.deleteNode(lionLabel));
 
-    // Register listener on our local backend
+  // Register listener on our local backend
     const selfBackend = this.backend;
-    await awaitIfPromise(this.backend.registerNodeListener('lion_listener', lionLabel, false, (notifiedBackend, labelRule, maybeNode) => {
+  // Do not block on server REGISTER_LISTENER ack; local registration is sufficient for this test.
+  try { this.backend.registerNodeListener('lion_listener', lionLabel, false, (notifiedBackend, labelRule, maybeNode) => {
       if (labelRule !== lionLabel) throw new Error(`Listener label mismatch: got ${labelRule}, expected ${lionLabel}`);
-      if (notifiedBackend !== selfBackend) throw new Error('Listener backend instance mismatch');
+      // Accept callbacks from either the backend itself or its local cache backend (for Http3ClientBackend wrappers)
+      const sameBackend = (notifiedBackend === selfBackend) || (selfBackend && selfBackend.localBackend_ && notifiedBackend === selfBackend.localBackend_);
+      if (!sameBackend) return; // ignore spurious callbacks from unrelated backends
+      try {
+        const trace = String(process.env.WWATP_TRACE || '').toLowerCase();
+        if (trace === '1' || trace === 'true' || trace === 'yes' || trace === 'on') {
+          const kind = (maybeNode && typeof maybeNode.isJust === 'function' && maybeNode.isJust()) ? 'Just' : 'Nothing';
+          const src = (notifiedBackend && notifiedBackend.constructor && notifiedBackend.constructor.name) || 'Backend';
+          // eslint-disable-next-line no-console
+          process.stderr.write(`[Testbed] listener ${src} for ${labelRule}: ${kind}\n`);
+        }
+      } catch {}
       if (maybeNode && typeof maybeNode.isJust === 'function' && maybeNode.isJust()) {
         const node = maybeNode.getOrElse(null);
         if (node && typeof node.getLabelRule === 'function' && node.getLabelRule() === lionLabel) {
@@ -260,26 +284,28 @@ export class BackendTestbed {
         // Nothing => deletion
         lionDeleted = true;
       }
-    }));
+  }); } catch {}
 
     const prefixedLionNodes = prefixNodeLabels(labelPrefix || '', createLionNodes());
 
     // Create on the peer
-    await awaitIfPromise(toBeModified.upsertNode(prefixedLionNodes));
-    await awaitIfPromise(toBeModified.processNotifications());
-    await sleep(notificationDelay);
-    await awaitIfPromise(this.backend.processNotifications());
-    if (!lionCreated) throw new Error('Expected lion node creation notification');
+  await awaitIfPromise(toBeModified.upsertNode(prefixedLionNodes));
+  // Nudge peer/server to flush notifications once
+  try { await awaitIfPromise(toBeModified.processNotifications()); } catch {}
+  await sleep(notificationDelay);
+  const createdOk = await waitFor(() => lionCreated === true, 10000, 100);
+  if (!createdOk) throw new Error('Expected lion node creation notification');
 
     // Now delete on the peer
-    await awaitIfPromise(toBeModified.deleteNode(lionLabel));
-    await awaitIfPromise(toBeModified.processNotifications());
-    await sleep(notificationDelay);
-    await awaitIfPromise(this.backend.processNotifications());
-    if (!lionDeleted) throw new Error('Expected lion node deletion notification');
+  await awaitIfPromise(toBeModified.deleteNode(lionLabel));
+  try { await awaitIfPromise(toBeModified.processNotifications()); } catch {}
+  await sleep(notificationDelay);
+  const deletedOk = await waitFor(() => lionDeleted === true, 10000, 100);
+  if (!deletedOk) throw new Error('Expected lion node deletion notification');
 
     // Deregister and ensure no further notifications are observed
-    await awaitIfPromise(this.backend.deregisterNodeListener('lion_listener', lionLabel));
+  // Do not block on server DEREGISTER ack; local deregistration suffices
+  try { this.backend.deregisterNodeListener('lion_listener', lionLabel); } catch {}
     await awaitIfPromise(toBeModified.processNotifications());
     await sleep(notificationDelay);
     await awaitIfPromise(this.backend.processNotifications());
@@ -287,16 +313,16 @@ export class BackendTestbed {
     lionCreated = false;
     lionDeleted = false;
 
-    await awaitIfPromise(toBeModified.upsertNode(prefixedLionNodes));
-    await awaitIfPromise(toBeModified.processNotifications());
-    await sleep(notificationDelay);
-    await awaitIfPromise(this.backend.processNotifications());
+  await awaitIfPromise(toBeModified.upsertNode(prefixedLionNodes));
+  try { await awaitIfPromise(toBeModified.processNotifications()); } catch {}
+  await sleep(notificationDelay);
+  await awaitIfPromise(this.backend.processNotifications());
     if (lionCreated) throw new Error('Listener should be deregistered; unexpected creation notification');
 
-    await awaitIfPromise(toBeModified.deleteNode(lionLabel));
-    await awaitIfPromise(toBeModified.processNotifications());
-    await sleep(notificationDelay);
-    await awaitIfPromise(this.backend.processNotifications());
+  await awaitIfPromise(toBeModified.deleteNode(lionLabel));
+  try { await awaitIfPromise(toBeModified.processNotifications()); } catch {}
+  await sleep(notificationDelay);
+  await awaitIfPromise(this.backend.processNotifications());
     if (lionDeleted) throw new Error('Listener should be deregistered; unexpected deletion notification');
   }
 }

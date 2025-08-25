@@ -335,6 +335,13 @@ export default class Http3ClientBackend extends Backend {
 	// ---- Journal + notifications ----
 	processOneNotification(notification) {
 		const { labelRule, maybeNode } = notification.notification;
+		try {
+			const trace = String(process.env.WWATP_TRACE || '').toLowerCase();
+			if (trace === '1' || trace === 'true' || trace === 'yes' || trace === 'on') {
+				const kind = (maybeNode && maybeNode.isJust && maybeNode.isJust()) ? 'Just' : 'Nothing';
+				try { process.stderr.write(`[Journal] notify ${labelRule} ${kind}\n`); } catch {}
+			}
+		} catch (_) {}
 		if (Maybe.isMaybe(maybeNode) && maybeNode.isNothing()) {
 			this.localBackend_.deleteNode(labelRule);
 		} else if (Maybe.isMaybe(maybeNode) && maybeNode.isJust()) {
