@@ -8,8 +8,12 @@ Follow instructions
 
 ## Next steps
 
-Focus: Next, write and run the WebTransportCommunication peer notification test to exercise journaling end-to-end using two clients. Add this test in system_webtransport_real_server.test.js after the others (in sequence).  Use BackendTestbed.testPeerNotification now available in js.  Model the test on the prior tests, but instead of running testBackendLogically,
-run testPeerNotification on be_B.
+Focus: Add a minimal CI preflight and docs polish now that WebTransport peer notifications are stable.
+
+Do this next:
+1) Create a small script or task to run server `--check-only` and a smoke start/stop; wire it into tests or a Make/CMake target.
+2) Document in `js_client_lib/README.md` the maintain loop timing requirement (elapsed seconds) and typical timeouts for real-server tests (already partially added).
+3) Keep `TODO.md` updated; add any remaining transport adapter gaps as concrete tasks.
 
 Relevant `TODO.md` is under path: js_client_lib
 Relevant `README.md` is under path: js_client_lib

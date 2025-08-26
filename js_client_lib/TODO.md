@@ -180,7 +180,7 @@ Browser runtime constraints
   - [X] WebTransportCommunication testBackendLogically
   - [X] WebTransportCommunication test roundtrip
   - [X] Implementation of testPeerNotification test in js_client_lib/test/backend_testbed/backend_testbed.js (use test_instances/catch2_unit_tests/backend_testbed.cpp for reference)
-  - [ ] WebTransportCommunication testPeerNotification (which will verify that notifications are working via WebTransportCommunication)
+  - [X] WebTransportCommunication testPeerNotification (which will verify that notifications are working via WebTransportCommunication)
 
 ## E. Serialization and binary safety
 
@@ -260,18 +260,24 @@ Browser testing
 ---
 
 ## Conversation summary (latest)
-Date: 2025-08-18
+Date: 2025-08-25
 
 Overview
-- Instrumented Node WebTransport emulator, WebTransportCommunication, and Updater with a lightweight tracer gated by `WWATP_TRACE=1`.
-- Added `WWATP_DISABLE_HB` and `WWATP_E2E_SIMPLE` to aid bisection; gated the real-server WebTransport test behind `WWATP_E2E_FULL=1` (skipped by default).
-- Implemented a new system test using a WebTransport polyfill to run `BackendTestbed` logically over `WebTransportCommunication` + Updater, keeping coverage without native QUIC.
+- Completed end-to-end WebTransport peer notification debugging and parity with C++.
+- Implemented NONSEQUENTIAL gap detection and updated journal handling to deliver notifications while requesting catch-up only on gaps.
+- Stabilized real-server WebTransport system test by passing elapsed seconds to `maintainRequestHandlers()` and extending the peer test timeout.
 
 Key steps
-- Added `test/system/system_webtransport_polyfill.test.js` which wires the in-memory WWATP server mock to a polyfilled WebTransport and drives updater flows.
-- Verified tests: suite passes with the real-server WebTransport test skipped by default.
+- Added tracer logs in emulator/communication/updater and `[Journal] notify` lines in JS backend.
+- Wrote a unit test for delete notification decode (Maybe<TreeNode> = Nothing).
+- Refactored C++ `BackendTestbed::testPeerNotification` to accept a background service lambda; enforced asserts in Release.
+- Adjusted `system_webtransport_real_server.test.js` to pass elapsed time and raised timeout to 70s for the peer case.
+
+Status
+- JS tests: green; real-server WebTransport peer notifications passing.
+- C++ tests: previously green after refactors (no new changes needed).
 
 Next
-- Implemented the remaining items under section 3 via polyfill path: roundtrip and peer notifications over WebTransportCommunication. Next, revisit enabling the native emulator test once stable and ungate with WWATP_E2E_FULL.
+- Add a CI preflight that validates server `--check-only` and smoke start/stop; document timing requirements for journal cadence.
 
 

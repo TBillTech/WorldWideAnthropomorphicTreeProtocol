@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include <functional>
 
 using namespace std;
 using namespace fplus;
@@ -41,7 +42,7 @@ public:
     void stressTestConstructions(size_t count);
     void testAnimalNodesNoElephant(string label_prefix = "");
     void testBackendLogically(string label_prefix = "");
-    void testPeerNotification(Backend &to_be_modified, uint32_t notification_delay, string label_prefix = "");
+    void testPeerNotification(Backend &to_be_modified, function<void(void)> background_service, string label_prefix = "");
 
 private:
     bool should_test_notifications_;

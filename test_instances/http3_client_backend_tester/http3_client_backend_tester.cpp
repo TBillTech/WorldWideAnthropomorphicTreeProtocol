@@ -126,6 +126,7 @@ string yaml_config = R"(config:
         log_path: ../test_instances/sandbox/
         backend: reader_of_writer_simple
         path: /uninit/wwatp/
+        journal_requests_per_minute: 60
     blocking_client:
       config.yaml:
         type: http3_client
@@ -138,7 +139,6 @@ string yaml_config = R"(config:
         backend: local_blocking_threadsafe
         blocking_mode: true
         path: /blocking/wwatp/
-        journal_requests_per_minute: 60
   frontends:
     child_names: [http3_server, http3_client_updater]
     http3_server:
@@ -376,6 +376,12 @@ int main() {
     {
         BackendTestbed reader_tester(*reader_of_writer_client, false, false);
         reader_tester.testAnimalNodesNoElephant();
+    }
+    {
+        BackendTestbed reader_tester(*reader_of_writer_client, true, true);
+        reader_tester.testPeerNotification(*writer_client, [response_cycle]() {
+            response_cycle("background_service for testPeerNotification");
+        });
     }
 
     wwatp_service.run();

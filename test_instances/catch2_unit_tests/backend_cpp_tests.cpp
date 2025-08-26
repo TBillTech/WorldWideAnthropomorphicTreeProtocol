@@ -217,13 +217,19 @@ TEST_CASE("FileBackend test", "[FileBackend]") {
         FileBackend to_be_notified_backend(base_path);
         BackendTestbed tester(to_be_notified_backend);
         FileBackend to_be_modified_backend(base_path);
-        tester.testPeerNotification(to_be_modified_backend, 40);
+        uint32_t notification_delay = 40;
+        tester.testPeerNotification(to_be_modified_backend, [notification_delay]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(notification_delay));
+        });
     }
     {
         FileBackend to_be_notified_backend(base_path);
         BackendTestbed tester(to_be_notified_backend);
         FileBackend to_be_modified_backend(base_path);
-        tester.testPeerNotification(to_be_modified_backend, 40, "zoo/Seattle/");
+        uint32_t notification_delay = 40;
+        tester.testPeerNotification(to_be_modified_backend, [notification_delay]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(notification_delay));
+        }, "zoo/Seattle/");
     }
     {
         uint64_t notification_delay = 40; // milliseconds

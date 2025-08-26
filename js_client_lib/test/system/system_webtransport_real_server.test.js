@@ -138,7 +138,9 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
     const start = Date.now();
     let i = 0;
     while (!done && (Date.now() - start) < timeoutMs) {
-      await updater.maintainRequestHandlers(comm, 0);
+  // Pass a monotonically increasing time (in seconds) so journal polling uses the intended cadence
+  const tSec = (Date.now() - start) / 1000.0;
+  await updater.maintainRequestHandlers(comm, tSec);
       // stderr instrumentation after each maintain tick
       try {
         const backs = typeof updater.getBackends === 'function' ? updater.getBackends() : [];
@@ -406,10 +408,10 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
         updater,
         comm,
         (async () => {
-          //await tbLocalB.testPeerNotification(be_A, 50 /* notificationDelay ms */, '');
+          await tbLocalB.testPeerNotification(be_A, 50 /* notificationDelay ms */, '');
           return true;
         })(),
-  50000,
+        70000,
       );
 
   try { updater.stop(); } catch {}

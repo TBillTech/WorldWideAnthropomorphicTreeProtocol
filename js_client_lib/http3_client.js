@@ -294,30 +294,40 @@ export default class Http3ClientBackend extends Backend {
 						if (waiter) finish(true);
 						break;
 					}
-					// Detect gaps relative to our last seen sequence, but always apply notifications.
-					const SENTINEL = 0xFFFFFFFF >>> 0;
-					let expected = (this.lastNotification_?.signalCount >>> 0) || 0;
-					let notificationGap = false;
-					let lastNonSentinel = null;
-					for (const sn of notifications) {
-						// Apply to local cache regardless of gap status
-						this.processOneNotification(sn);
-						const seq = (sn?.signalCount >>> 0);
-						if (seq !== SENTINEL) {
-							if (seq !== ((expected + 1) >>> 0)) notificationGap = true;
-							expected = seq;
-							lastNonSentinel = sn;
+					// Revised gap detection semantics: use NONSEQUENTIAL sentinel, detect gaps by
+					// (1) lastNotification_.signalCount < first.signalCount, OR
+					// (2) any adjacent seq where current + 1 < next (skipping NONSEQUENTIAL entries)
+					const NONSEQUENTIAL = 0xFFFFFFFF >>> 0;
+					let notificationGap = (this.lastNotification_?.signalCount >>> 0) < (notifications[0]?.signalCount >>> 0);
+					let curIndex = (notifications[0]?.signalCount >>> 0);
+					if (!notificationGap) {
+						for (const sn of notifications) {
+							const seq = (sn?.signalCount >>> 0);
+							if (seq === NONSEQUENTIAL) continue;
+							if (seq > ((curIndex + 1) >>> 0)) { notificationGap = true; break; }
+							curIndex = seq;
 						}
 					}
+					// Apply notifications only when there is no gap, mirroring C++ client behavior
+					let lastValid = null;
+					for (const sn of notifications) {
+						const seq = (sn?.signalCount >>> 0);
+						if (seq > (this.lastNotification_?.signalCount >>> 0)) {
+							this.processOneNotification(sn);
+						}
+						if (seq === NONSEQUENTIAL) continue;
+						lastValid = sn;
+					}
 					if (notificationGap) {
-						// Prefer a targeted mutable page tree sync when defined; otherwise full tree.
+						// Prefer a targeted mutable page tree sync; mark as journal-triggered
 						const rule = String(this.mutablePageTreeLabelRule_ || '');
-						if (rule.length > 0) this.requestPageTree(rule); else this.requestFullTreeSync();
+						if (rule.length > 0) this.requestPageTree(rule, { journal: true });
+						else this.requestFullTreeSync();
 					} else {
 						// No gap -> lift any notification block immediately
 						this.notificationBlock_ = false;
 					}
-					if (lastNonSentinel) this.updateLastNotification(lastNonSentinel);
+					if (lastValid) this.updateLastNotification(lastValid);
 					this.journalRequestWaiting_ = false;
 					if (waiter) finish(true);
 					break;
@@ -339,7 +349,14 @@ export default class Http3ClientBackend extends Backend {
 			const trace = String(process.env.WWATP_TRACE || '').toLowerCase();
 			if (trace === '1' || trace === 'true' || trace === 'yes' || trace === 'on') {
 				const kind = (maybeNode && maybeNode.isJust && maybeNode.isJust()) ? 'Just' : 'Nothing';
-				try { process.stderr.write(`[Journal] notify ${labelRule} ${kind}\n`); } catch {}
+				let preview = '';
+				try {
+					if (kind === 'Just') {
+						const n = maybeNode.getOrElse(null);
+						if (n && typeof n.getDescription === 'function') preview = ` desc="${String(n.getDescription()).slice(0, 40)}"`;
+					}
+				} catch {}
+				try { process.stderr.write(`[Journal] notify ${labelRule} ${kind}${preview}\n`); } catch {}
 			}
 		} catch (_) {}
 		if (Maybe.isMaybe(maybeNode) && maybeNode.isNothing()) {

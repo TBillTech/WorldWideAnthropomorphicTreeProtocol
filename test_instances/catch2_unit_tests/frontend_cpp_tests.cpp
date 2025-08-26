@@ -212,7 +212,10 @@ TEST_CASE("YAMLMediator notification test", "[YAMLMediator][notification]") {
         YAMLMediator nodeful_mediator("nodeful_mediator", nodeful_backend, yaml_backend, specifier, false);
         BackendTestbed tester(nodeful_backend);
         YAMLMediator other_mediator("other_mediator", other_backend, yaml_backend, specifier, true);
-        tester.testPeerNotification(other_backend, 100);
+        uint32_t notification_delay = 100;
+        tester.testPeerNotification(other_backend, [notification_delay]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(notification_delay));
+        });
     }
 }
 

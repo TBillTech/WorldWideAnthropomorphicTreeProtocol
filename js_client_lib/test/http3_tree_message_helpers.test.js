@@ -267,6 +267,18 @@ describe('SequentialNotification encoders (chunk-based)', () => {
     expect(value.notification.maybeNode.isJust()).toBe(true);
     expect(value.notification.maybeNode.getOrElse(null).labelRule).toBe(node.labelRule);
   });
+
+  it('decodes delete notification (Nothing)', () => {
+    // Deletion: valid signalCount and labelRule, maybeNode = Nothing
+    const sn = { signalCount: 99, notification: { labelRule: 'lion', maybeNode: Nothing } };
+    const chunks = encodeChunks_SequentialNotification(7, WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE, sn);
+    expect(canDecodeChunks_SequentialNotification(0, chunks)).toBeTruthy();
+    expectCanDecodeChunksRequiresAllChunks(canDecodeChunks_SequentialNotification, chunks);
+    const { value } = decodeChunks_SequentialNotification(0, chunks);
+    expect(value.signalCount).toBe(99);
+    expect(value.notification.labelRule).toBe('lion');
+    expect(value.notification.maybeNode.isNothing()).toBe(true);
+  });
 });
 
 describe('VectorSequentialNotification encoders (chunk-based)', () => {

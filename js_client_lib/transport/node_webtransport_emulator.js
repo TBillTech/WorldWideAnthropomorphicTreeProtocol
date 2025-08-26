@@ -272,6 +272,18 @@ export default class NodeWebTransportEmulator {
           const merged = tryConcat();
           self._bytesReceived += merged.byteLength;
           self._trace.inc('bytes.recv', merged.byteLength);
+          // Emit an info-level trace to make QUIC boundary reception visible under WWATP_TRACE
+          try {
+            const preview = (() => {
+              try {
+                const n = Math.min(16, merged.byteLength);
+                let s = '';
+                for (let i = 0; i < n; i++) { const b = merged[i] & 0xff; s += (b < 16 ? '0' : '') + b.toString(16); }
+                return s;
+              } catch { return ''; }
+            })();
+            self._trace.info('read.bytes', { len: merged.byteLength, preview });
+          } catch {}
           self._readReadyFlag = false;
           reading = false;
           return { value: merged, done: false };
@@ -284,6 +296,7 @@ export default class NodeWebTransportEmulator {
         }
         if (out && typeof out === 'object' && out.fin === true) {
           done = true;
+          try { self._trace.info('read.fin'); } catch {}
           reading = false;
           return { value: undefined, done: true };
         }

@@ -179,14 +179,14 @@ void Http3ServerRoute::buildResponseChunks(HTTP3TreeMessage& requested) {
                 auto last_notification = requested.decode_getJournalRequest();
                 auto last_notification_index = last_notification.first;
                 bool wrong_journal_sequence = false;
-                auto it = std::upper_bound(journal_.begin(), journal_.end(), last_notification_index,
-                    [](uint64_t index, const SequentialNotification& notification) {
-                        return index < notification.first;
+                auto it = std::lower_bound(journal_.begin(), journal_.end(), last_notification_index,
+                    [](const SequentialNotification& notification, uint64_t index) {
+                        return notification.first < index;
                     });
                 if (it == journal_.end() && last_notification_index != journal_.rbegin()->first) {
                     wrong_journal_sequence = true;
                 }
-                if (last_notification_index < journal_.begin()->first - 1) {
+                if (last_notification_index < journal_.begin()->first) {
                     wrong_journal_sequence = true;
                 }
                 if (wrong_journal_sequence) {
@@ -199,6 +199,16 @@ void Http3ServerRoute::buildResponseChunks(HTTP3TreeMessage& requested) {
                 } else {
                     std::vector<SequentialNotification> notifications(it, journal_.end());
                     requested.encode_getJournalResponse(notifications);
+                    for (const auto& notification : notifications) {
+                        // TODO: Remove these logs later
+                        if (notification.first == 0)
+                            continue;
+                        cerr << "Notification: " << notification.first;
+                        cerr << ", label = " << notification.second.first;
+                        if (notification.second.second.is_just())
+                            cerr << ", payload found";
+                        cerr << endl << flush;
+                    }
                 }
             }
             break;

@@ -516,23 +516,29 @@ void Http3ClientBackend::processHTTP3Response(HTTP3TreeMessage& response) {
                 std::vector<SequentialNotification> notifications = response.decode_getJournalResponse();
                 // loop backwards through the notifications for the last solicited notification
                 // (unsolicited notifications are (uint64_t)-1, indicating usually reverted/rejected changes)
-                auto lastNotification = notifications.begin();
-                bool notificationGap = false;
+                bool notificationGap = lastNotification_.first < notifications.front().first;
                 uint64_t curNotificationIndex = notifications.front().first;
+                if(!notificationGap) {
+                    for (auto it = notifications.begin(); it != notifications.end(); ++it) {
+                        if (it->first == (uint64_t)-1) {
+                            continue;
+                        }
+                        if (it->first > curNotificationIndex + 1) {
+                            notificationGap = true;
+                            break;
+                        }
+                        curNotificationIndex = it->first;
+                    }
+                }
+                SequentialNotification lastValidNotification = notifications.front();
                 for (auto it = notifications.begin(); it != notifications.end(); ++it) {
-                    if (!notificationGap) {
+                    if (!notificationGap && it->first > lastNotification_.first) {
                         processOneNotification(*it);
                     }
                     if (it->first == (uint64_t)-1) {
                         continue;
                     }
-                    if (curNotificationIndex != (uint64_t)-1) {
-                        if (it->first != curNotificationIndex + 1) {
-                            notificationGap = true;
-                        }
-                    }
-                    curNotificationIndex = it->first;
-                    lastNotification = it;
+                    lastValidNotification = *it;
                 }
                 if (notificationGap) {
                     getMutablePageTreeInMode(false, true);
@@ -541,7 +547,7 @@ void Http3ClientBackend::processHTTP3Response(HTTP3TreeMessage& response) {
                     // If there is no gap, then immediately clear any notification block
                     notificationBlock_.store(false);
                 }
-                updateLastNotification(*lastNotification);
+                updateLastNotification(lastValidNotification);
             }
             break;
         default:
@@ -678,6 +684,9 @@ void Http3ClientBackend::processOneNotification(SequentialNotification const& no
 }
 
 void Http3ClientBackend::updateLastNotification(SequentialNotification const& notification) {
+    if (notification.first == (uint64_t)-1) {
+        return; // Unsolicited notifications cannot be used for tracking purposes.
+    }
     notificationBlock_.store(false);
     std::lock_guard<std::mutex> lock(backendMutex_);
     lastNotification_ = notification;
@@ -772,6 +781,12 @@ void Http3ClientBackendUpdater::maintainRequestHandlers(Communication& connector
                 }
                 for (auto& chunk : response) {
                     theMessage.pushResponseChunk(chunk);
+                }
+                if (response.empty() && request.empty() && !theMessage.isResponseComplete() && backend.getRequestUrlInfo().isWWATP()) {
+                    chunks response_chunks;
+                    auto tag = payload_chunk_header(stream_identifier.logical_id, payload_chunk_header::SIGNAL_HEARTBEAT, 0);
+                    response_chunks.emplace_back(tag, span<const char>("", 0));
+                    return response_chunks;
                 }
                 if (theMessage.isResponseComplete()) {
                     backend.processHTTP3Response(theMessage);

@@ -106,6 +106,11 @@ Quick start
 	- Provide certs or set `WWATP_GEN_CERTS=1`.
 	- Run: `WWATP_E2E=1 npm test -- test/system/system_webtransport_real_server.test.js`
 
+Timing and debugging tips
+- When driving `Http3ClientBackendUpdater` in a loop, pass a monotonically increasing elapsed time (in seconds) into `maintainRequestHandlers(connector, timeSec)` so journal polling respects its cadence. In our system test helper this comes from `(Date.now() - start) / 1000`.
+- For the peer notifications test against the real server, allow a longer timeout (e.g., 60–70s) to accommodate QUIC setup and journal catch-up.
+- Set `WWATP_TRACE=1` to enable concise traces across the emulator, WebTransportCommunication, and updater, and `[Journal] notify …` lines from the backend.
+
 Instrumentation and debug flags
 
 - Set `WWATP_TRACE=1` to enable concise tracing for:

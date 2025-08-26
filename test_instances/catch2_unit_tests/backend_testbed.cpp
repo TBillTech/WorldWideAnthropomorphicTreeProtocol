@@ -1,5 +1,13 @@
 #include "backend_testbed.h"
 #include <catch2/catch_test_macros.hpp>
+#include <cassert>
+
+// Ensure assert checks are honored even when built with NDEBUG (e.g., Release builds).
+// In that case, map assert to throwing a runtime_error so http3_client_backend_tester still enforces conditions.
+#ifdef NDEBUG
+#undef assert
+#define assert(expr) do { if(!(expr)) throw std::runtime_error("Assertion failed: " #expr); } while(0)
+#endif
 
 // Global flag useCatch2 switches Catch2 on or off.
 bool useCatch2 = true;
@@ -389,15 +397,23 @@ void BackendTestbed::testBackendLogically(string label_prefix) {
     }
 }
 
-void BackendTestbed::testPeerNotification(Backend &to_be_modified, uint32_t notification_delay, string label_prefix)
+void BackendTestbed::testPeerNotification(Backend &to_be_modified, function<void(void)> background_service, string label_prefix)
 {
     if(!should_test_notifications_ || !should_test_changes_) {
+        if (useCatch2) {
+            WARN("Skipping testPeerNotification because notifications or changes are disabled.");
+        }
+        else {
+            std::cerr << "Skipping testPeerNotification because notifications or changes are disabled." << std::endl;
+        }
+        assert(false); // Running in this mode would be completely senseless
         return;
     }
     bool lion_node_created = false;
     bool lion_node_deleted = false;
     string lion_label = label_prefix + "lion";
     to_be_modified.deleteNode(lion_label);
+    background_service();
     auto backend_address = &backend_;
     backend_.registerNodeListener("lion_listener", lion_label, false, 
         [lion_label, &lion_node_created, &lion_node_deleted, backend_address](Backend& notified_backend, const string label_rule, const fplus::maybe<TreeNode> node) {
@@ -418,11 +434,13 @@ void BackendTestbed::testPeerNotification(Backend &to_be_modified, uint32_t noti
             lion_node_deleted = true;
         }
     });
+    background_service();
     auto prefixed_lion_nodes = prefixNodeLabels(label_prefix, createLionNodes());
     to_be_modified.upsertNode(prefixed_lion_nodes);
     to_be_modified.processNotifications();
-    this_thread::sleep_for(chrono::milliseconds(notification_delay));
+    background_service();
     backend_.processNotifications();
+    background_service();
     if (useCatch2) {
         REQUIRE(lion_node_created);
     }
@@ -431,8 +449,9 @@ void BackendTestbed::testPeerNotification(Backend &to_be_modified, uint32_t noti
     }
     to_be_modified.deleteNode(lion_label);
     to_be_modified.processNotifications();
-    this_thread::sleep_for(chrono::milliseconds(notification_delay));
+    background_service();
     backend_.processNotifications();
+    background_service();
     if (useCatch2) {
         REQUIRE(lion_node_deleted);
     }
@@ -441,14 +460,15 @@ void BackendTestbed::testPeerNotification(Backend &to_be_modified, uint32_t noti
     }
     backend_.deregisterNodeListener("lion_listener", lion_label);
     to_be_modified.processNotifications();
-    this_thread::sleep_for(chrono::milliseconds(notification_delay));
+    background_service();
     backend_.processNotifications();
     lion_node_created = false;
     lion_node_deleted = false;
     to_be_modified.upsertNode(prefixed_lion_nodes);
     to_be_modified.processNotifications();
-    this_thread::sleep_for(chrono::milliseconds(notification_delay));
+    background_service();
     backend_.processNotifications();
+    background_service();
     if (useCatch2) {
         REQUIRE(!lion_node_created);
     }
@@ -457,8 +477,9 @@ void BackendTestbed::testPeerNotification(Backend &to_be_modified, uint32_t noti
     }
     to_be_modified.deleteNode(lion_label);
     to_be_modified.processNotifications();
-    this_thread::sleep_for(chrono::milliseconds(notification_delay));
+    background_service();
     backend_.processNotifications();
+    background_service();
     if (useCatch2) {
         REQUIRE(!lion_node_deleted);
     }
