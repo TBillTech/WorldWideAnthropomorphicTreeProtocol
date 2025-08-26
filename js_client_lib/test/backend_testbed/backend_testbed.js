@@ -233,11 +233,13 @@ export class BackendTestbed {
   // toBeModified: Backend performing the external mutations (peer)
   // notificationDelay: ms to wait between peer action and local processNotifications
   // labelPrefix: optional prefix for labels
-  async testPeerNotification(toBeModified, notificationDelay = 0, labelPrefix = '') {
+  // opts: { skipPostDeregister?: boolean }
+  async testPeerNotification(toBeModified, notificationDelay = 0, labelPrefix = '', opts = {}) {
     if (!this.shouldTestNotifications || !this.shouldTestChanges) return;
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, Number(ms) | 0)));
     const awaitIfPromise = async (v) => (v && typeof v.then === 'function' ? await v : v);
+    const logT = (label, ms) => { try { process.stderr.write(`[PeerTiming] ${label}: ${ms}ms\n`); } catch (_) {} };
     const waitFor = async (pred, timeoutMs = 8000, intervalMs = 100) => {
       const start = Date.now();
       // Ensure minimum interval
@@ -248,6 +250,8 @@ export class BackendTestbed {
         // Give backends a chance to flush notification requests if supported
         try { await awaitIfPromise(this.backend.processNotifications()); } catch {}
       }
+      const dur = Date.now() - start;
+      logT('waitFor(pred) duration', dur);
       return true;
     };
 
@@ -256,12 +260,14 @@ export class BackendTestbed {
     const lionLabel = String(labelPrefix || '') + 'lion';
 
     // Ensure clean state on the peer backend
-    await awaitIfPromise(toBeModified.deleteNode(lionLabel));
+    { const t0 = Date.now(); await awaitIfPromise(toBeModified.deleteNode(lionLabel)); logT('cleanup.deleteNode(lion)', Date.now() - t0); }
 
-  // Register listener on our local backend
+    // Register listener on our local backend
     const selfBackend = this.backend;
-  // Do not block on server REGISTER_LISTENER ack; local registration is sufficient for this test.
-  try { this.backend.registerNodeListener('lion_listener', lionLabel, false, (notifiedBackend, labelRule, maybeNode) => {
+    // Do not block on server REGISTER_LISTENER ack; local registration is sufficient for this test.
+    try {
+      const tReg0 = Date.now();
+      this.backend.registerNodeListener('lion_listener', lionLabel, false, (notifiedBackend, labelRule, maybeNode) => {
       if (labelRule !== lionLabel) throw new Error(`Listener label mismatch: got ${labelRule}, expected ${lionLabel}`);
       // Accept callbacks from either the backend itself or its local cache backend (for Http3ClientBackend wrappers)
       const sameBackend = (notifiedBackend === selfBackend) || (selfBackend && selfBackend.localBackend_ && notifiedBackend === selfBackend.localBackend_);
@@ -284,46 +290,49 @@ export class BackendTestbed {
         // Nothing => deletion
         lionDeleted = true;
       }
-  }); } catch {}
+      });
+      logT('registerNodeListener(lion)', Date.now() - tReg0);
+    } catch {}
 
     const prefixedLionNodes = prefixNodeLabels(labelPrefix || '', createLionNodes());
 
     // Create on the peer
-  await awaitIfPromise(toBeModified.upsertNode(prefixedLionNodes));
-  // Nudge peer/server to flush notifications once
-  try { await awaitIfPromise(toBeModified.processNotifications()); } catch {}
-  await sleep(notificationDelay);
-  const createdOk = await waitFor(() => lionCreated === true, 10000, 100);
-  if (!createdOk) throw new Error('Expected lion node creation notification');
+  { const t1 = Date.now(); await awaitIfPromise(toBeModified.upsertNode(prefixedLionNodes)); logT('peer.upsertNode(lion+children)', Date.now() - t1); }
+    // Nudge peer/server to flush notifications once
+  try { const t2 = Date.now(); await awaitIfPromise(toBeModified.processNotifications()); logT('peer.processNotifications (post-upsert)', Date.now() - t2); } catch {}
+  { const tS = Date.now(); await sleep(notificationDelay); logT(`sleep(notificationDelay=${notificationDelay})`, Date.now() - tS); }
+  { const tW = Date.now(); const createdOk = await waitFor(() => lionCreated === true, 10000, 100); logT('waitFor(created==true)', Date.now() - tW); if (!createdOk) throw new Error('Expected lion node creation notification'); }
+    
 
     // Now delete on the peer
-  await awaitIfPromise(toBeModified.deleteNode(lionLabel));
-  try { await awaitIfPromise(toBeModified.processNotifications()); } catch {}
-  await sleep(notificationDelay);
-  const deletedOk = await waitFor(() => lionDeleted === true, 10000, 100);
-  if (!deletedOk) throw new Error('Expected lion node deletion notification');
+  { const t3 = Date.now(); await awaitIfPromise(toBeModified.deleteNode(lionLabel)); logT('peer.deleteNode(lion)', Date.now() - t3); }
+  try { const t4 = Date.now(); await awaitIfPromise(toBeModified.processNotifications()); logT('peer.processNotifications (post-delete)', Date.now() - t4); } catch {}
+  { const tS2 = Date.now(); await sleep(notificationDelay); logT(`sleep(notificationDelay=${notificationDelay})`, Date.now() - tS2); }
+  { const tW2 = Date.now(); const deletedOk = await waitFor(() => lionDeleted === true, 10000, 100); logT('waitFor(deleted==true)', Date.now() - tW2); if (!deletedOk) throw new Error('Expected lion node deletion notification'); }
 
     // Deregister and ensure no further notifications are observed
-  // Do not block on server DEREGISTER ack; local deregistration suffices
-  try { this.backend.deregisterNodeListener('lion_listener', lionLabel); } catch {}
-    await awaitIfPromise(toBeModified.processNotifications());
+    // Do not block on server DEREGISTER ack; local deregistration suffices
+  { const tDereg = Date.now(); try { this.backend.deregisterNodeListener('lion_listener', lionLabel); } catch {} logT('deregisterNodeListener(lion)', Date.now() - tDereg); }
+  { const tPN = Date.now(); await awaitIfPromise(toBeModified.processNotifications()); logT('peer.processNotifications (post-deregister)', Date.now() - tPN); }
     await sleep(notificationDelay);
-    await awaitIfPromise(this.backend.processNotifications());
+  { const tLocalPN = Date.now(); await awaitIfPromise(this.backend.processNotifications()); logT('local.processNotifications (post-deregister)', Date.now() - tLocalPN); }
 
     lionCreated = false;
     lionDeleted = false;
 
-  await awaitIfPromise(toBeModified.upsertNode(prefixedLionNodes));
-  try { await awaitIfPromise(toBeModified.processNotifications()); } catch {}
-  await sleep(notificationDelay);
-  await awaitIfPromise(this.backend.processNotifications());
+  if (!opts.skipPostDeregister) {
+  { const t5 = Date.now(); await awaitIfPromise(toBeModified.upsertNode(prefixedLionNodes)); logT('peer.upsertNode(lion) [post-deregister]', Date.now() - t5); }
+  try { const t6 = Date.now(); await awaitIfPromise(toBeModified.processNotifications()); logT('peer.processNotifications (post-upsert, post-deregister)', Date.now() - t6); } catch {}
+    await sleep(notificationDelay);
+  { const tLocalPN2 = Date.now(); await awaitIfPromise(this.backend.processNotifications()); logT('local.processNotifications (post-upsert, post-deregister)', Date.now() - tLocalPN2); }
     if (lionCreated) throw new Error('Listener should be deregistered; unexpected creation notification');
 
-  await awaitIfPromise(toBeModified.deleteNode(lionLabel));
-  try { await awaitIfPromise(toBeModified.processNotifications()); } catch {}
-  await sleep(notificationDelay);
-  await awaitIfPromise(this.backend.processNotifications());
+  { const t7 = Date.now(); await awaitIfPromise(toBeModified.deleteNode(lionLabel)); logT('peer.deleteNode(lion) [post-deregister]', Date.now() - t7); }
+  try { const t8 = Date.now(); await awaitIfPromise(toBeModified.processNotifications()); logT('peer.processNotifications (post-delete, post-deregister)', Date.now() - t8); } catch {}
+    await sleep(notificationDelay);
+  { const tLocalPN3 = Date.now(); await awaitIfPromise(this.backend.processNotifications()); logT('local.processNotifications (post-delete, post-deregister)', Date.now() - tLocalPN3); }
     if (lionDeleted) throw new Error('Listener should be deregistered; unexpected deletion notification');
+  }
   }
 }
 

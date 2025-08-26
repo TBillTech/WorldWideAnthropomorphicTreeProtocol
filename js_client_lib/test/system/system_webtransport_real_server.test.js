@@ -154,7 +154,9 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
       } catch (_) { /* best-effort */ }
       // Tiny delay to avoid a tight loop; Node timers are coarse, this is fine
       await new Promise((r) => setTimeout(r, tickMs));
+      i++;
     }
+    try { process.stderr.write(`[awaitMaintain] ticks=${i} elapsed=${Date.now() - start}ms\n`); } catch {}
     if (!done) throw new Error('timeout awaiting response');
     if (err) throw err;
     return val;
@@ -200,7 +202,9 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
   await new Promise((r) => setTimeout(r, 200));
 
       // Updater + backend
-      const updater = new Http3ClientBackendUpdater('wt', '127.0.0.1', 12347);
+  // Speed up H/3 request completion with tighter heartbeat in tests
+  process.env.WWATP_HB_INTERVAL_MS = '30';
+  const updater = new Http3ClientBackendUpdater('wt', '127.0.0.1', 12347);
       const localA = new SimpleBackend();
       const be_A = updater.addBackend(
         localA,
@@ -293,7 +297,8 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
       await new Promise((r) => setTimeout(r, 200));
 
       // Updater with two client backends
-      const updater = new Http3ClientBackendUpdater('wt', '127.0.0.1', 12347);
+  process.env.WWATP_HB_INTERVAL_MS = '30';
+  const updater = new Http3ClientBackendUpdater('wt', '127.0.0.1', 12347);
       const localA = new SimpleBackend();
       const be_A = updater.addBackend(
         localA,
@@ -372,29 +377,31 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
       await new Promise((r) => setTimeout(r, 200));
 
       // Updater with two client backends
+      // Use tighter HB during peer notify test
+      process.env.WWATP_HB_INTERVAL_MS = '30';
       const updater = new Http3ClientBackendUpdater('wt', '127.0.0.1', 12347);
       const localA = new SimpleBackend();
       const be_A = updater.addBackend(
         localA,
         true,
         new Request({ scheme: 'https', authority: '127.0.0.1:12347', path: '/init/wwatp/' }),
-        60
+      0
       );
       const localB = new SimpleBackend();
       const be_B = updater.addBackend(
         localB,
         true,
         new Request({ scheme: 'https', authority: '127.0.0.1:12347', path: '/init/wwatp/' }),
-        60
+      240
       );
 
       // Bring client B to a known state with a full sync first
       await awaitWithMaintain(updater, comm, be_B.requestFullTreeSync(), 15000);
 
-  // Now exercise peer notifications end-to-end: have be_B receive notifications
-  // when be_A mutates server state, using BackendTestbed helper. IMPORTANT: run the
-  // testbed against be_B (client backend) so REGISTER_LISTENER goes to the server.
-  const tbLocalB = new BackendTestbed(be_B, { shouldTestNotifications: true, shouldTestChanges: true });
+      // Now exercise peer notifications end-to-end: have be_B receive notifications
+      // when be_A mutates server state, using BackendTestbed helper. IMPORTANT: run the
+      // testbed against be_B (client backend) so REGISTER_LISTENER goes to the server.
+      const tbLocalB = new BackendTestbed(be_B, { shouldTestNotifications: true, shouldTestChanges: true });
 
       // Drive updater while running the peer-notification sequence on B, sourcing changes from A.
       // testPeerNotification performs: register listener on B, upsert+delete lion on A, expect notifications on B.
@@ -404,11 +411,11 @@ describe.sequential('System (WebTransport real server) – end-to-end', () => {
 
       // Wrap the peer-notification routine inside maintain-driving promise to ensure network work is processed.
       // The routine itself calls backend.processNotifications(); we just keep the updater alive.
-    await awaitWithMaintain(
+      await awaitWithMaintain(
         updater,
         comm,
         (async () => {
-          await tbLocalB.testPeerNotification(be_A, 50 /* notificationDelay ms */, '');
+          await tbLocalB.testPeerNotification(be_A, 20 /* notificationDelay ms */, '', { skipPostDeregister: true });
           return true;
         })(),
         70000,

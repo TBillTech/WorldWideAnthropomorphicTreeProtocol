@@ -288,9 +288,11 @@ export default class Http3ClientBackend extends Backend {
 				break;
 			}
 			case WWATP_SIGNAL.SIGNAL_WWATP_GET_JOURNAL_RESPONSE: {
+				const t0 = Date.now();
 					const notifications = http3TreeMessage.decodeGetJournalResponse();
 					if (!Array.isArray(notifications) || notifications.length === 0) {
 						this.journalRequestWaiting_ = false;
+						try { process.stderr.write(`[JournalTiming] empty journal total=${Date.now() - t0}ms\n`); } catch {}
 						if (waiter) finish(true);
 						break;
 					}
@@ -329,6 +331,12 @@ export default class Http3ClientBackend extends Backend {
 					}
 					if (lastValid) this.updateLastNotification(lastValid);
 					this.journalRequestWaiting_ = false;
+					try {
+						const first = notifications[0]?.signalCount >>> 0;
+						let last = first;
+						for (const sn of notifications) { const seq = sn?.signalCount >>> 0; if (seq !== (0xFFFFFFFF >>> 0)) last = seq; }
+						process.stderr.write(`[JournalTiming] count=${notifications.length} gap=${notificationGap} window=[${first}..${last}] total=${Date.now() - t0}ms\n`);
+					} catch {}
 					if (waiter) finish(true);
 					break;
 			}

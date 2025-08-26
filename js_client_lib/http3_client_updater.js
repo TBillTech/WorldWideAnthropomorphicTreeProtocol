@@ -124,6 +124,9 @@ export default class Http3ClientBackendUpdater {
 
 	// Internal: send a single HTTP3TreeMessage over the connector
 	async #dispatchOne(connector, backend, msg, isJournal) {
+		const tStart = Date.now();
+		let tFirstByte = 0;
+		let tReady = 0;
 		const request = backend.getRequestUrlInfo();
 		const sid = connector.getNewRequestStreamIdentifier(request);
 		const logicalReqId = (sid && sid.logicalId) ? (sid.logicalId & 0xffff) : (msg.requestId & 0xffff);
@@ -162,6 +165,7 @@ export default class Http3ClientBackendUpdater {
 					return;
 				}
 				if (evt?.data instanceof Uint8Array) {
+					if (!tFirstByte) tFirstByte = Date.now();
 					// Parse wire bytes into chunks
 					const bytes = evt.data;
 					let o = 0;
@@ -255,6 +259,7 @@ export default class Http3ClientBackendUpdater {
 					}
 
 					if (readySignal !== null) {
+						tReady = tReady || Date.now();
 						msg.signal = readySignal;
 						backend.processHTTP3Response(msg);
 						shouldCleanup = true;
@@ -275,6 +280,7 @@ export default class Http3ClientBackendUpdater {
 									reqSig === WWATP_SIGNAL.SIGNAL_WWATP_APPLY_TRANSACTION_REQUEST
 								);
 								if (boolish) {
+									tReady = tReady || Date.now();
 									msg.signal = WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL;
 									backend.processHTTP3Response(msg);
 									shouldCleanup = true;
@@ -285,6 +291,7 @@ export default class Http3ClientBackendUpdater {
 						}
 						// Non-WWATP flows: prefer a typed response signal if present; otherwise mark FINAL.
 						if (lastTyped !== null) msg.signal = lastTyped; else if (sawFinal) msg.signal = WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL;
+						tReady = tReady || Date.now();
 						if (msg.signal === WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_FINAL || (lastTyped !== null && lastTyped !== WWATP_SIGNAL.SIGNAL_WWATP_RESPONSE_CONTINUE)) {
 							backend.processHTTP3Response(msg);
 							shouldCleanup = true;
@@ -295,9 +302,8 @@ export default class Http3ClientBackendUpdater {
 				}
 				// No-op here; handled above conditionally
 			} finally {
-				// Cleanup only when response completed
 				try {
-						if (typeof shouldCleanup !== 'undefined' && shouldCleanup) {
+					if (typeof shouldCleanup !== 'undefined' && shouldCleanup) {
 						finished = true;
 						connector.deregisterResponseHandler(sid);
 						this.ongoingRequests_.delete(sidKey);
@@ -310,6 +316,14 @@ export default class Http3ClientBackendUpdater {
 								(async () => { try { await connector.closeStream(sid); } catch {} })();
 							}
 						} catch (_) {}
+						// Timing summary
+						try {
+							const reqSig = (msg.requestChunks && msg.requestChunks[0] && msg.requestChunks[0].header && msg.requestChunks[0].header.signal) | 0;
+							const total = Date.now() - tStart;
+							const firstB = tFirstByte ? (tFirstByte - tStart) : -1;
+							const ready = tReady ? (tReady - tStart) : -1;
+							process.stderr.write(`[UpdaterTiming] rid=${msg.requestId} sig=${reqSig} journal=${!!isJournal} firstByte=${firstB}ms ready=${ready}ms total=${total}ms\n`);
+						} catch {}
 							try { if (doneResolve) doneResolve(true); } catch (_) {}
 					}
 				} catch (_) {}
@@ -393,7 +407,10 @@ export default class Http3ClientBackendUpdater {
 					}
 					finally { hbBusy = false; }
 				};
-				const id = setInterval(loop, 100);
+				// Allow tests to override heartbeat cadence via env
+				let hbMs = 100;
+				try { const envv = globalThis?.process?.env?.WWATP_HB_INTERVAL_MS; if (envv !== undefined) { const n = Number(envv); if (Number.isFinite(n) && n >= 10) hbMs = n; } } catch {}
+				const id = setInterval(loop, hbMs);
 				this._hbTimers.set(sidKey, id);
 			} else if (hbDisabled) {
 				this._trace.info('hb.disabled', { sid, rid: msg.requestId });
