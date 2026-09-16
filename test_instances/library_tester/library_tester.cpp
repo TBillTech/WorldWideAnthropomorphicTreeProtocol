@@ -7,8 +7,10 @@
 #include "util.h"
 #include "config_base.h"
 #include "tcp_communication.h"
+#if WWATP_USE_QUIC_TRANSPORT
 #include "quic_connector.h"
 #include "quic_listener.h"
+#endif
 #include "shared_chunk.h"
 
 using namespace std;
@@ -17,6 +19,7 @@ bool send_trailers = false;
 
 unique_ptr<Communication> createServerCommunication(const string& protocol, boost::asio::io_context& io_context) {
     if (protocol == "QUIC") {
+#if WWATP_USE_QUIC_TRANSPORT
         auto private_key_file = "../test_instances/data/private_key.pem";
         auto cert_file = "../test_instances/data/cert.pem";
         YAML::Node config;
@@ -28,6 +31,9 @@ unique_ptr<Communication> createServerCommunication(const string& protocol, boos
         config["quic_dump"] = true;
         config["http_dump"] = true;
         return make_unique<QuicListener>(io_context, config);
+    #else
+        return make_unique<TcpCommunication>(io_context);
+    #endif
     } else if (protocol == "TCP") {
         return make_unique<TcpCommunication>(io_context);
     } else {
@@ -37,6 +43,7 @@ unique_ptr<Communication> createServerCommunication(const string& protocol, boos
 
 unique_ptr<Communication> createClientCommunication(const string& protocol, boost::asio::io_context& io_context) {
     if (protocol == "QUIC") {
+#if WWATP_USE_QUIC_TRANSPORT
         auto private_key_file = "../test_instances/data/private_key.pem";
         auto cert_file = "../test_instances/data/cert.pem";
         YAML::Node config;
@@ -48,6 +55,9 @@ unique_ptr<Communication> createClientCommunication(const string& protocol, boos
         config["quic_dump"] = true;
         config["http_dump"] = true;
         return make_unique<QuicConnector>(io_context, config);
+    #else
+        return make_unique<TcpCommunication>(io_context);
+    #endif
     } else if (protocol == "TCP") {
         return make_unique<TcpCommunication>(io_context);
     } else {
@@ -55,12 +65,10 @@ unique_ptr<Communication> createClientCommunication(const string& protocol, boos
     }
 }
 
-int main() {
+int runLibraryTest(const string& protocol) {
     // set to pool size for the type UDPChunk to 4 GB
     memory_pool.setPoolSize<UDPChunk>(static_cast<uint64_t>(4) * 1024 * 1024 * 1024 / UDPChunk::chunk_size);
 
-    string protocol = "QUIC";
-    //string protocol = "TCP";
     bool zeroRTT_test = true;
     if(protocol == "QUIC")
     {
@@ -301,4 +309,12 @@ int main() {
     cout << "In Main: Client and server should be closed" << endl;
 
     return 0;
+}
+
+int main() {
+    int result = runLibraryTest("TCP");
+#if WWATP_USE_QUIC_TRANSPORT
+    result |= runLibraryTest("QUIC");
+#endif
+    return result;
 }

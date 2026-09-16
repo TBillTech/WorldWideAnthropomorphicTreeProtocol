@@ -3,6 +3,8 @@ libraries/
 
 # Ignore build directory
 build/
+build-contract-default/
+build-quic-off/
 
 # Ignore Visual Studio Code settings
 .vscode/

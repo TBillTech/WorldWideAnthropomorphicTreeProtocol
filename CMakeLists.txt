@@ -122,6 +122,7 @@ add_executable(wwatp_server ${COMMON_SOURCES} server/main.cpp)
 
 # Add test executables
 add_executable(library_tester ${COMMON_SOURCES} test_instances/library_tester/library_tester.cpp)
+add_executable(communicate_tester ${COMMON_SOURCES} test_instances/communicate_tester/communicate_tester.cpp)
 add_executable(memory_pool_tester ${COMMON_SOURCES} test_instances/memory_pool_tester/memory_pool_tester.cpp)
 add_executable(http3_client_backend_tester
     ${COMMON_SOURCES}
@@ -138,6 +139,13 @@ add_executable(catch2_unit_tests
     test_instances/catch2_unit_tests/frontend_cpp_tests.cpp
     test_instances/catch2_unit_tests/yaml_tests.cpp
     test_instances/catch2_unit_tests/tree_node_tests.cpp
+)
+
+target_compile_definitions(library_tester PRIVATE
+    WWATP_USE_QUIC_TRANSPORT=$<BOOL:${BUILD_WWATP_QUIC_C}>
+)
+target_compile_definitions(communicate_tester PRIVATE
+    WWATP_USE_QUIC_TRANSPORT=$<BOOL:${BUILD_WWATP_QUIC_C}>
 )
 
 # Define preprocessor macros
@@ -267,6 +275,7 @@ include(Catch)
 # Ensure executables depend on external libraries
 add_dependencies(wwatp_server ngtcp2 nghttp3 boringssl)
 add_dependencies(library_tester ngtcp2 nghttp3 boringssl)
+add_dependencies(communicate_tester ngtcp2 nghttp3 boringssl)
 add_dependencies(memory_pool_tester ngtcp2 nghttp3 boringssl)
 add_dependencies(http3_client_backend_tester ngtcp2 nghttp3 boringssl Catch2)
 add_dependencies(catch2_unit_tests ngtcp2 nghttp3 boringssl Catch2)
@@ -274,6 +283,7 @@ add_dependencies(catch2_unit_tests ngtcp2 nghttp3 boringssl Catch2)
 # Link libraries (if any)
 target_link_libraries(wwatp_server ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
 target_link_libraries(library_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
+target_link_libraries(communicate_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
 target_link_libraries(memory_pool_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
 target_link_libraries(http3_client_backend_tester PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus Catch2::Catch2 yaml-cpp)
 target_link_libraries(catch2_unit_tests PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus Catch2::Catch2WithMain yaml-cpp)
@@ -286,6 +296,7 @@ target_link_options(http3_client_backend_tester PRIVATE -fsanitize=address,undef
 # Enable testing and have CTest discover Catch2 test cases from our executable
 enable_testing()
 catch_discover_tests(catch2_unit_tests)
+add_test(NAME communicate_tester COMMAND communicate_tester)
 
 # Optional: Build C-compatible QUIC client facade for Node bindings (FFI/N-API)
 option(BUILD_WWATP_QUIC_C "Build C facade shared lib for QuicConnector" ON)
