@@ -26,13 +26,15 @@ From an **MSYS2 MinGW 64-bit** shell:
 ```bash
 cmake -S . -B build-mingw -G "MinGW Makefiles" \
   -DCMAKE_C_COMPILER=/mingw64/bin/gcc \
-  -DCMAKE_CXX_COMPILER=/mingw64/bin/g++
+  -DCMAKE_CXX_COMPILER=/mingw64/bin/g++ \
+  -DBUILD_WWATP_QUIC_C=OFF
 cmake --build build-mingw --parallel
 ctest --test-dir build-mingw --output-on-failure
 ```
 
 Prerequisites in msys64 include a make-compatible toolchain and `libev` for MinGW. If CMake reports missing MinGW prerequisites (for example libev, or make-compatible tooling for external nghttp3/ngtcp2 builds), install the required msys64 packages and reconfigure.
 If `libraries/nghttp3/Makefile` or `libraries/ngtcp2/Makefile` is missing, generate them first under msys64 (for example `autoreconf -i` and `./configure` in each library source tree), then rerun the WWATP configure command above.
+`BUILD_WWATP_QUIC_C` is currently Linux-only in this build; on MinGW it fails at configure time with remediation guidance instead of failing later at link/runtime.
 
 ## Client and Server instances and ecosystem
 

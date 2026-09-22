@@ -16,8 +16,10 @@ if(POLICY CMP0167)
   cmake_policy(SET CMP0167 NEW)
 endif()
 
+
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(yaml-cpp REQUIRED)
+find_package(Threads REQUIRED)
 
 # Checks for header files.
 include(CheckIncludeFile)
@@ -168,17 +170,16 @@ endif()
 
 set(WWATP_DEP_MAKE_PROGRAM "${CMAKE_MAKE_PROGRAM}")
 if(NOT WWATP_DEP_MAKE_PROGRAM)
-  set(WWATP_DEP_MAKE_PROGRAM make)
+  message(FATAL_ERROR
+    "CMAKE_MAKE_PROGRAM is not set. This project's nghttp3/ngtcp2 external builds require a make-compatible tool.")
 endif()
 get_filename_component(WWATP_MAKE_PROGRAM_NAME "${WWATP_DEP_MAKE_PROGRAM}" NAME)
-if(MINGW AND NOT WWATP_MAKE_PROGRAM_NAME MATCHES "make$")
+string(TOLOWER "${WWATP_MAKE_PROGRAM_NAME}" WWATP_MAKE_PROGRAM_NAME_LOWER)
+if(NOT WWATP_MAKE_PROGRAM_NAME_LOWER MATCHES "^(make|gmake|mingw32-make)(\\.exe)?$")
   message(FATAL_ERROR
-    "MinGW builds require a make-compatible tool for nghttp3/ngtcp2 external builds. "
+    "This build requires a make-compatible tool for nghttp3/ngtcp2 external builds. "
     "Detected make tool '${WWATP_DEP_MAKE_PROGRAM}'. "
-    "Use msys64 with a make-compatible generator/tool (e.g., MinGW Makefiles).")
-elseif(NOT WWATP_MAKE_PROGRAM_NAME MATCHES "make$")
-  # Keep existing Linux behavior by using make directly when a non-make generator is selected.
-  set(WWATP_DEP_MAKE_PROGRAM make)
+    "Use a make-compatible generator/tool (e.g., Unix Makefiles on Linux, MinGW Makefiles under msys64).")
 endif()
 
 set(WWATP_LIB_PREFIX "${CMAKE_STATIC_LIBRARY_PREFIX}")
@@ -188,7 +189,11 @@ set(BORINGSSL_CRYPTO_LIB "${PROJECT_SOURCE_DIR}/libraries/boringssl/build/${WWAT
 set(NGHTTP3_STATIC_LIB "${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs/${WWATP_LIB_PREFIX}nghttp3${WWATP_LIB_SUFFIX}")
 set(NGTCP2_STATIC_LIB "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs/${WWATP_LIB_PREFIX}ngtcp2${WWATP_LIB_SUFFIX}")
 set(NGTCP2_CRYPTO_STATIC_LIB "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/${WWATP_LIB_PREFIX}ngtcp2_crypto_boringssl${WWATP_LIB_SUFFIX}")
-set(NGTCP2_CRYPTO_SHARED_LIB "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/.build/${CMAKE_SHARED_LIBRARY_PREFIX}ngtcp2_crypto_boringssl${CMAKE_SHARED_LIBRARY_SUFFIX}")
+set(WWATP_SUPPORTS_QUIC_C_SHARED_DEPS FALSE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(WWATP_SUPPORTS_QUIC_C_SHARED_DEPS TRUE)
+  set(NGTCP2_CRYPTO_SHARED_LIB "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/.build/libngtcp2_crypto_boringssl.so")
+endif()
 
 if(MINGW)
   if(NOT EXISTS "${PROJECT_SOURCE_DIR}/libraries/boringssl/CMakeLists.txt")
@@ -250,7 +255,7 @@ ExternalProject_Add(
     SOURCE_DIR ${PROJECT_SOURCE_DIR}/libraries/nghttp3
     BINARY_DIR ${PROJECT_SOURCE_DIR}/libraries/nghttp3
     CONFIGURE_COMMAND ""
-    BUILD_COMMAND ${WWATP_DEP_MAKE_PROGRAM}
+    BUILD_COMMAND ${WWATP_DEP_MAKE_PROGRAM} -j${WWATP_PROCESSOR_COUNT}
     INSTALL_COMMAND ""
     BUILD_BYPRODUCTS ${NGHTTP3_STATIC_LIB}
 )
@@ -292,7 +297,7 @@ ExternalProject_Add(
     SOURCE_DIR ${PROJECT_SOURCE_DIR}/libraries/ngtcp2
     BINARY_DIR ${PROJECT_SOURCE_DIR}/libraries/ngtcp2
     CONFIGURE_COMMAND ""
-    BUILD_COMMAND ${WWATP_DEP_MAKE_PROGRAM}
+    BUILD_COMMAND ${WWATP_DEP_MAKE_PROGRAM} -j${WWATP_PROCESSOR_COUNT}
     INSTALL_COMMAND ""
     BUILD_BYPRODUCTS ${NGTCP2_STATIC_LIB}
 )
@@ -308,10 +313,12 @@ set_target_properties(ngtcp2_crypto_lib PROPERTIES
 )
 
 # Shared variant of ngtcp2 crypto glue (built in subdir with CMake)
-add_library(ngtcp2_crypto_boringssl_so SHARED IMPORTED)
-set_target_properties(ngtcp2_crypto_boringssl_so PROPERTIES
-    IMPORTED_LOCATION ${NGTCP2_CRYPTO_SHARED_LIB}
-)
+if(WWATP_SUPPORTS_QUIC_C_SHARED_DEPS)
+    add_library(ngtcp2_crypto_boringssl_so SHARED IMPORTED)
+    set_target_properties(ngtcp2_crypto_boringssl_so PROPERTIES
+        IMPORTED_LOCATION ${NGTCP2_CRYPTO_SHARED_LIB}
+    )
+endif()
 
 include(FetchContent)
 FetchContent_Declare(
@@ -357,7 +364,7 @@ if(MINGW)
 elseif(WIN32)
     message(FATAL_ERROR "Native Windows builds are supported only with MinGW in msys64 (MINGW=TRUE).")
 else()
-    set(WWATP_PLATFORM_LINK_LIBS pthread dl m ev)
+    set(WWATP_PLATFORM_LINK_LIBS Threads::Threads dl m ev)
 endif()
 
 target_link_libraries(wwatp_server ${WWATP_COMMON_LINK_LIBS} ${WWATP_PLATFORM_LINK_LIBS})
@@ -382,28 +389,25 @@ add_test(NAME communicate_tester COMMAND communicate_tester)
 # Optional: Build C-compatible QUIC client facade for Node bindings (FFI/N-API)
 option(BUILD_WWATP_QUIC_C "Build C facade shared lib for QuicConnector" ON)
 if(BUILD_WWATP_QUIC_C)
+    if(NOT WWATP_SUPPORTS_QUIC_C_SHARED_DEPS)
+        message(FATAL_ERROR
+            "BUILD_WWATP_QUIC_C=ON is supported only on Linux with the current vendored ngtcp2/nghttp3 shared-library outputs. "
+            "For MinGW/msys64 builds, use -DBUILD_WWATP_QUIC_C=OFF. "
+            "To enable this on other platforms, provide/import compatible ngtcp2/nghttp3 shared artifacts and update this target accordingly.")
+    endif()
     # Build C facade shared library, linking to transport/client sources
     add_library(wwatp_quic_c SHARED ${COMMON_SOURCES}
         ${PROJECT_SOURCE_DIR}/common/transport/src/quic_connector_c.cc
     )
     target_include_directories(wwatp_quic_c PUBLIC ${PROJECT_SOURCE_DIR}/common/transport/include ${Boost_INCLUDE_DIRS})
     add_dependencies(wwatp_quic_c ngtcp2 nghttp3 boringssl)
-    if(MINGW)
-        # MinGW path: link static ngtcp2/nghttp3 artifacts directly.
-        target_link_libraries(wwatp_quic_c PRIVATE ${WWATP_COMMON_LINK_LIBS} ${WWATP_PLATFORM_LINK_LIBS})
-    else()
-        # Prefer shared objects for ngtcp2/nghttp3 to satisfy -fPIC in shared lib
-        set(NGTCP2_SO ${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs/${CMAKE_SHARED_LIBRARY_PREFIX}ngtcp2${CMAKE_SHARED_LIBRARY_SUFFIX})
-        set(NGHTTP3_SO ${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs/${CMAKE_SHARED_LIBRARY_PREFIX}nghttp3${CMAKE_SHARED_LIBRARY_SUFFIX})
-        target_link_libraries(wwatp_quic_c PRIVATE ${NGTCP2_SO} ${NGHTTP3_SO} ngtcp2_crypto_boringssl_so boringssl_lib boringcrypto_lib ${Boost_LIBRARIES} ${WWATP_PLATFORM_LINK_LIBS} FunctionalPlus::fplus yaml-cpp)
-    endif()
+    # Prefer shared objects for ngtcp2/nghttp3 to satisfy -fPIC in shared lib
+    set(NGTCP2_SO ${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs/libngtcp2.so)
+    set(NGHTTP3_SO ${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs/libnghttp3.so)
+    target_link_libraries(wwatp_quic_c PRIVATE ${NGTCP2_SO} ${NGHTTP3_SO} ngtcp2_crypto_boringssl_so boringssl_lib boringcrypto_lib ${Boost_LIBRARIES} ${WWATP_PLATFORM_LINK_LIBS} FunctionalPlus::fplus yaml-cpp)
     # Ensure PIC for any objects we compile into this shared library
     set_target_properties(wwatp_quic_c PROPERTIES POSITION_INDEPENDENT_CODE ON)
     # Help the runtime linker find dependent shared libraries during development.
-    if(MINGW)
-        message(STATUS "BUILD_WWATP_QUIC_C enabled on MinGW: ensure dependent DLLs are on PATH when running binaries.")
-    else()
-        set_target_properties(wwatp_quic_c PROPERTIES BUILD_RPATH "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs;${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs;${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/.build")
-    endif()
+    set_target_properties(wwatp_quic_c PROPERTIES BUILD_RPATH "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs;${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs;${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/.build")
     set_target_properties(wwatp_quic_c PROPERTIES OUTPUT_NAME "wwatp_quic")
 endif()
