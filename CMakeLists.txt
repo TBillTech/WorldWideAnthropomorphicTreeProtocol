@@ -15,12 +15,15 @@ set(CMAKE_BUILD_TYPE Debug)
 if(POLICY CMP0167)
   cmake_policy(SET CMP0167 NEW)
 endif()
+
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(yaml-cpp REQUIRED)
 
 # Checks for header files.
 include(CheckIncludeFile)
 check_include_file("arpa/inet.h"   HAVE_ARPA_INET_H)
+check_include_file("sys/socket.h"  HAVE_SYS_SOCKET_H)
+check_include_file("sys/un.h"      HAVE_SYS_UN_H)
 check_include_file("netinet/in.h"  HAVE_NETINET_IN_H)
 check_include_file("netinet/ip.h"  HAVE_NETINET_IP_H)
 check_include_file("unistd.h"      HAVE_UNISTD_H)
@@ -28,11 +31,15 @@ check_include_file("sys/endian.h"  HAVE_SYS_ENDIAN_H)
 check_include_file("endian.h"      HAVE_ENDIAN_H)
 check_include_file("byteswap.h"    HAVE_BYTESWAP_H)
 check_include_file("asm/types.h"   HAVE_ASM_TYPES_H)
-check_include_file("linux/netlink.h"   HAVE_LINUX_NETLINK_H)
-check_include_file("linux/rtnetlink.h" HAVE_LINUX_RTNETLINK_H)
+if(NOT WIN32)
+  check_include_file("linux/netlink.h"   HAVE_LINUX_NETLINK_H)
+  check_include_file("linux/rtnetlink.h" HAVE_LINUX_RTNETLINK_H)
+endif()
 
 # Print the results of the checks
 message(STATUS "HAVE_ARPA_INET_H: ${HAVE_ARPA_INET_H}")
+message(STATUS "HAVE_SYS_SOCKET_H: ${HAVE_SYS_SOCKET_H}")
+message(STATUS "HAVE_SYS_UN_H: ${HAVE_SYS_UN_H}")
 message(STATUS "HAVE_NETINET_IN_H: ${HAVE_NETINET_IN_H}")
 message(STATUS "HAVE_NETINET_IP_H: ${HAVE_NETINET_IP_H}")
 message(STATUS "HAVE_UNISTD_H: ${HAVE_UNISTD_H}")
@@ -153,6 +160,53 @@ target_compile_definitions(communicate_tester PRIVATE
 
 # Include ExternalProject module
 include(ExternalProject)
+include(ProcessorCount)
+ProcessorCount(WWATP_PROCESSOR_COUNT)
+if(NOT WWATP_PROCESSOR_COUNT)
+  set(WWATP_PROCESSOR_COUNT 1)
+endif()
+
+set(WWATP_DEP_MAKE_PROGRAM "${CMAKE_MAKE_PROGRAM}")
+if(NOT WWATP_DEP_MAKE_PROGRAM)
+  set(WWATP_DEP_MAKE_PROGRAM make)
+endif()
+get_filename_component(WWATP_MAKE_PROGRAM_NAME "${WWATP_DEP_MAKE_PROGRAM}" NAME)
+if(MINGW AND NOT WWATP_MAKE_PROGRAM_NAME MATCHES "make$")
+  message(FATAL_ERROR
+    "MinGW builds require a make-compatible tool for nghttp3/ngtcp2 external builds. "
+    "Detected make tool '${WWATP_DEP_MAKE_PROGRAM}'. "
+    "Use msys64 with a make-compatible generator/tool (e.g., MinGW Makefiles).")
+elseif(NOT WWATP_MAKE_PROGRAM_NAME MATCHES "make$")
+  # Keep existing Linux behavior by using make directly when a non-make generator is selected.
+  set(WWATP_DEP_MAKE_PROGRAM make)
+endif()
+
+set(WWATP_LIB_PREFIX "${CMAKE_STATIC_LIBRARY_PREFIX}")
+set(WWATP_LIB_SUFFIX "${CMAKE_STATIC_LIBRARY_SUFFIX}")
+set(BORINGSSL_SSL_LIB "${PROJECT_SOURCE_DIR}/libraries/boringssl/build/${WWATP_LIB_PREFIX}ssl${WWATP_LIB_SUFFIX}")
+set(BORINGSSL_CRYPTO_LIB "${PROJECT_SOURCE_DIR}/libraries/boringssl/build/${WWATP_LIB_PREFIX}crypto${WWATP_LIB_SUFFIX}")
+set(NGHTTP3_STATIC_LIB "${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs/${WWATP_LIB_PREFIX}nghttp3${WWATP_LIB_SUFFIX}")
+set(NGTCP2_STATIC_LIB "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs/${WWATP_LIB_PREFIX}ngtcp2${WWATP_LIB_SUFFIX}")
+set(NGTCP2_CRYPTO_STATIC_LIB "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/${WWATP_LIB_PREFIX}ngtcp2_crypto_boringssl${WWATP_LIB_SUFFIX}")
+set(NGTCP2_CRYPTO_SHARED_LIB "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/.build/${CMAKE_SHARED_LIBRARY_PREFIX}ngtcp2_crypto_boringssl${CMAKE_SHARED_LIBRARY_SUFFIX}")
+
+if(MINGW)
+  if(NOT EXISTS "${PROJECT_SOURCE_DIR}/libraries/boringssl/CMakeLists.txt")
+    message(FATAL_ERROR
+      "MinGW build requires vendored BoringSSL at libraries/boringssl. "
+      "Initialize/populate the libraries directory before configuring.")
+  endif()
+  if(NOT EXISTS "${PROJECT_SOURCE_DIR}/libraries/nghttp3/Makefile")
+    message(FATAL_ERROR
+      "MinGW build requires libraries/nghttp3/Makefile for the external nghttp3 build. "
+      "Generate it under msys64 first (for example: autoreconf -i && ./configure in libraries/nghttp3), then rerun CMake.")
+  endif()
+  if(NOT EXISTS "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/Makefile")
+    message(FATAL_ERROR
+      "MinGW build requires libraries/ngtcp2/Makefile for the external ngtcp2 build. "
+      "Generate it under msys64 first (for example: autoreconf -i && ./configure ... --with-boringssl in libraries/ngtcp2), then rerun CMake.")
+  endif()
+endif()
 
 # Clone and build BoringSSL
 # git clone https://boringssl.googlesource.com/boringssl
@@ -165,19 +219,19 @@ ExternalProject_Add(
     PREFIX ${PROJECT_SOURCE_DIR}/libraries/boringssl
     SOURCE_DIR ${PROJECT_SOURCE_DIR}/libraries/boringssl
     BINARY_DIR ${PROJECT_SOURCE_DIR}/libraries/boringssl
-    CONFIGURE_COMMAND cmake -B build -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-    BUILD_COMMAND make -j$(nproc) -C build
+    CONFIGURE_COMMAND ${CMAKE_COMMAND} -S ${PROJECT_SOURCE_DIR}/libraries/boringssl -B ${PROJECT_SOURCE_DIR}/libraries/boringssl/build -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+    BUILD_COMMAND ${CMAKE_COMMAND} --build ${PROJECT_SOURCE_DIR}/libraries/boringssl/build --parallel ${WWATP_PROCESSOR_COUNT}
     INSTALL_COMMAND ""
-    BUILD_BYPRODUCTS ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/libssl.a ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/libcrypto.a
+    BUILD_BYPRODUCTS ${BORINGSSL_SSL_LIB} ${BORINGSSL_CRYPTO_LIB}
 )
 # Create an imported target for the BoringSSL library
 add_library(boringssl_lib STATIC IMPORTED)
 set_target_properties(boringssl_lib PROPERTIES
-    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/libssl.a
+    IMPORTED_LOCATION ${BORINGSSL_SSL_LIB}
 )
 add_library(boringcrypto_lib STATIC IMPORTED)
 set_target_properties(boringcrypto_lib PROPERTIES
-    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/boringssl/build/libcrypto.a
+    IMPORTED_LOCATION ${BORINGSSL_CRYPTO_LIB}
 )
 
 
@@ -196,14 +250,14 @@ ExternalProject_Add(
     SOURCE_DIR ${PROJECT_SOURCE_DIR}/libraries/nghttp3
     BINARY_DIR ${PROJECT_SOURCE_DIR}/libraries/nghttp3
     CONFIGURE_COMMAND ""
-    BUILD_COMMAND make
+    BUILD_COMMAND ${WWATP_DEP_MAKE_PROGRAM}
     INSTALL_COMMAND ""
-    BUILD_BYPRODUCTS ${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs/libnghttp3.a
+    BUILD_BYPRODUCTS ${NGHTTP3_STATIC_LIB}
 )
 # Create an imported target for the nghttp3 library
 add_library(nghttp3_lib STATIC IMPORTED)
 set_target_properties(nghttp3_lib PROPERTIES
-    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs/libnghttp3.a
+    IMPORTED_LOCATION ${NGHTTP3_STATIC_LIB}
 )
 
 # Clone and build ngtcp2
@@ -238,25 +292,25 @@ ExternalProject_Add(
     SOURCE_DIR ${PROJECT_SOURCE_DIR}/libraries/ngtcp2
     BINARY_DIR ${PROJECT_SOURCE_DIR}/libraries/ngtcp2
     CONFIGURE_COMMAND ""
-    BUILD_COMMAND make
+    BUILD_COMMAND ${WWATP_DEP_MAKE_PROGRAM}
     INSTALL_COMMAND ""
-    BUILD_BYPRODUCTS ${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs/libngtcp2.a
+    BUILD_BYPRODUCTS ${NGTCP2_STATIC_LIB}
 )
 # Create an imported target for the ngtcp2 library
 add_library(ngtcp2_lib STATIC IMPORTED)
 set_target_properties(ngtcp2_lib PROPERTIES
-    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs/libngtcp2.a
+    IMPORTED_LOCATION ${NGTCP2_STATIC_LIB}
 )
 # Create an imported target for the ngtcp2 library
 add_library(ngtcp2_crypto_lib STATIC IMPORTED)
 set_target_properties(ngtcp2_crypto_lib PROPERTIES
-    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/libngtcp2_crypto_boringssl.a
+    IMPORTED_LOCATION ${NGTCP2_CRYPTO_STATIC_LIB}
 )
 
 # Shared variant of ngtcp2 crypto glue (built in subdir with CMake)
 add_library(ngtcp2_crypto_boringssl_so SHARED IMPORTED)
 set_target_properties(ngtcp2_crypto_boringssl_so PROPERTIES
-    IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/.build/libngtcp2_crypto_boringssl.so
+    IMPORTED_LOCATION ${NGTCP2_CRYPTO_SHARED_LIB}
 )
 
 include(FetchContent)
@@ -281,15 +335,42 @@ add_dependencies(http3_client_backend_tester ngtcp2 nghttp3 boringssl Catch2)
 add_dependencies(catch2_unit_tests ngtcp2 nghttp3 boringssl Catch2)
 
 # Link libraries (if any)
-target_link_libraries(wwatp_server ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
-target_link_libraries(library_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
-target_link_libraries(communicate_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
-target_link_libraries(memory_pool_tester ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
-target_link_libraries(http3_client_backend_tester PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus Catch2::Catch2 yaml-cpp)
-target_link_libraries(catch2_unit_tests PRIVATE ngtcp2_lib nghttp3_lib boringssl_lib boringcrypto_lib ngtcp2_crypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus Catch2::Catch2WithMain yaml-cpp)
+set(WWATP_COMMON_LINK_LIBS
+    ngtcp2_lib
+    nghttp3_lib
+    boringssl_lib
+    boringcrypto_lib
+    ngtcp2_crypto_lib
+    ${Boost_LIBRARIES}
+    FunctionalPlus::fplus
+    yaml-cpp
+)
 
-target_compile_options(http3_client_backend_tester PRIVATE -g -O0 -fsanitize=address,undefined -Wall -Wextra -Wpedantic)
-target_link_options(http3_client_backend_tester PRIVATE -fsanitize=address,undefined)
+if(MINGW)
+    find_library(WWATP_LIBEV_LIBRARY NAMES ev)
+    if(NOT WWATP_LIBEV_LIBRARY)
+        message(FATAL_ERROR
+            "MinGW build requires libev, but it was not found. "
+            "Install mingw-w64-x86_64-libev (msys64) or provide libev via CMAKE_PREFIX_PATH/CMAKE_LIBRARY_PATH.")
+    endif()
+    set(WWATP_PLATFORM_LINK_LIBS ws2_32 iphlpapi "${WWATP_LIBEV_LIBRARY}")
+elseif(WIN32)
+    message(FATAL_ERROR "Native Windows builds are supported only with MinGW in msys64 (MINGW=TRUE).")
+else()
+    set(WWATP_PLATFORM_LINK_LIBS pthread dl m ev)
+endif()
+
+target_link_libraries(wwatp_server ${WWATP_COMMON_LINK_LIBS} ${WWATP_PLATFORM_LINK_LIBS})
+target_link_libraries(library_tester ${WWATP_COMMON_LINK_LIBS} ${WWATP_PLATFORM_LINK_LIBS})
+target_link_libraries(communicate_tester ${WWATP_COMMON_LINK_LIBS} ${WWATP_PLATFORM_LINK_LIBS})
+target_link_libraries(memory_pool_tester ${WWATP_COMMON_LINK_LIBS} ${WWATP_PLATFORM_LINK_LIBS})
+target_link_libraries(http3_client_backend_tester PRIVATE ${WWATP_COMMON_LINK_LIBS} ${WWATP_PLATFORM_LINK_LIBS} Catch2::Catch2)
+target_link_libraries(catch2_unit_tests PRIVATE ${WWATP_COMMON_LINK_LIBS} ${WWATP_PLATFORM_LINK_LIBS} Catch2::Catch2WithMain)
+
+if(NOT MINGW)
+    target_compile_options(http3_client_backend_tester PRIVATE -g -O0 -fsanitize=address,undefined -Wall -Wextra -Wpedantic)
+    target_link_options(http3_client_backend_tester PRIVATE -fsanitize=address,undefined)
+endif()
 # Enable verbose linker output
 # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--verbose")
 
@@ -307,13 +388,22 @@ if(BUILD_WWATP_QUIC_C)
     )
     target_include_directories(wwatp_quic_c PUBLIC ${PROJECT_SOURCE_DIR}/common/transport/include ${Boost_INCLUDE_DIRS})
     add_dependencies(wwatp_quic_c ngtcp2 nghttp3 boringssl)
-    # Prefer shared objects for ngtcp2/nghttp3 to satisfy -fPIC in shared lib
-    set(NGTCP2_SO ${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs/libngtcp2.so)
-    set(NGHTTP3_SO ${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs/libnghttp3.so)
-    target_link_libraries(wwatp_quic_c PRIVATE ${NGTCP2_SO} ${NGHTTP3_SO} ngtcp2_crypto_boringssl_so boringssl_lib boringcrypto_lib ${Boost_LIBRARIES} pthread dl m ev FunctionalPlus::fplus yaml-cpp)
+    if(MINGW)
+        # MinGW path: link static ngtcp2/nghttp3 artifacts directly.
+        target_link_libraries(wwatp_quic_c PRIVATE ${WWATP_COMMON_LINK_LIBS} ${WWATP_PLATFORM_LINK_LIBS})
+    else()
+        # Prefer shared objects for ngtcp2/nghttp3 to satisfy -fPIC in shared lib
+        set(NGTCP2_SO ${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs/${CMAKE_SHARED_LIBRARY_PREFIX}ngtcp2${CMAKE_SHARED_LIBRARY_SUFFIX})
+        set(NGHTTP3_SO ${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs/${CMAKE_SHARED_LIBRARY_PREFIX}nghttp3${CMAKE_SHARED_LIBRARY_SUFFIX})
+        target_link_libraries(wwatp_quic_c PRIVATE ${NGTCP2_SO} ${NGHTTP3_SO} ngtcp2_crypto_boringssl_so boringssl_lib boringcrypto_lib ${Boost_LIBRARIES} ${WWATP_PLATFORM_LINK_LIBS} FunctionalPlus::fplus yaml-cpp)
+    endif()
     # Ensure PIC for any objects we compile into this shared library
     set_target_properties(wwatp_quic_c PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    # Help the runtime linker find dependent .so during development
-    set_target_properties(wwatp_quic_c PROPERTIES BUILD_RPATH "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs;${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs;${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/.build")
+    # Help the runtime linker find dependent shared libraries during development.
+    if(MINGW)
+        message(STATUS "BUILD_WWATP_QUIC_C enabled on MinGW: ensure dependent DLLs are on PATH when running binaries.")
+    else()
+        set_target_properties(wwatp_quic_c PROPERTIES BUILD_RPATH "${PROJECT_SOURCE_DIR}/libraries/ngtcp2/lib/.libs;${PROJECT_SOURCE_DIR}/libraries/nghttp3/lib/.libs;${PROJECT_SOURCE_DIR}/libraries/ngtcp2/crypto/boringssl/.build")
+    endif()
     set_target_properties(wwatp_quic_c PROPERTIES OUTPUT_NAME "wwatp_quic")
 endif()

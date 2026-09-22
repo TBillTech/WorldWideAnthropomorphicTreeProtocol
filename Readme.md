@@ -7,6 +7,33 @@ The World Wide Anthropomorphic Tree Protocol (WWATP) is an agent communication l
 
 What makes this an _anthropomorphic_ tree protocol is that the description node references can be personality prompts to agents templated by the node label rule! And because queries can be agent-like string requests prompted by the Q&A of a node. Another way to look at this is to say that the literal API of clients and servers of the tree protocol is infrastructure only: the content API is implicit and based around LLM friendly two way discussions about capabilities and content descriptions.
 
+## Build and test
+
+Use a fresh build directory per platform/toolchain (do not reuse a Linux build directory for MinGW, or vice versa).
+
+### Linux
+
+```bash
+cmake -S . -B build-linux -G "Unix Makefiles"
+cmake --build build-linux --parallel
+ctest --test-dir build-linux --output-on-failure
+```
+
+### MinGW (msys64, native)
+
+From an **MSYS2 MinGW 64-bit** shell:
+
+```bash
+cmake -S . -B build-mingw -G "MinGW Makefiles" \
+  -DCMAKE_C_COMPILER=/mingw64/bin/gcc \
+  -DCMAKE_CXX_COMPILER=/mingw64/bin/g++
+cmake --build build-mingw --parallel
+ctest --test-dir build-mingw --output-on-failure
+```
+
+Prerequisites in msys64 include a make-compatible toolchain and `libev` for MinGW. If CMake reports missing MinGW prerequisites (for example libev, or make-compatible tooling for external nghttp3/ngtcp2 builds), install the required msys64 packages and reconfigure.
+If `libraries/nghttp3/Makefile` or `libraries/ngtcp2/Makefile` is missing, generate them first under msys64 (for example `autoreconf -i` and `./configure` in each library source tree), then rerun the WWATP configure command above.
+
 ## Client and Server instances and ecosystem
 
 There are multiple software instances attached to the tree protocol with the following typical uses:

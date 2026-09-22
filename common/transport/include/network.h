@@ -29,7 +29,9 @@
 #ifdef HAVE_SYS_SOCKET_H
 #  include <sys/socket.h>
 #endif // defined(HAVE_SYS_SOCKET_H)
-#include <sys/un.h>
+#ifdef HAVE_SYS_UN_H
+#  include <sys/un.h>
+#endif // defined(HAVE_SYS_UN_H)
 #ifdef HAVE_NETINET_IN_H
 #  include <netinet/in.h>
 #endif // defined(HAVE_NETINET_IN_H)
