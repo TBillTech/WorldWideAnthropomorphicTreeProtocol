@@ -161,7 +161,7 @@ pair<size_t, fplus::maybe<TreeNode>> decode_MaybeTreeNode(chunkList encoded) {
     chunkList::iterator start_it = std::next(encoded.begin(), chunk_start);
     chunkList::iterator end_it = std::next(encoded.begin(), chunk_start + contents_count);
     shared_span<> property_data(start_it, end_it);
-    node.setPropertyData(move(property_data));
+    node.setPropertyData(std::move(property_data));
     return {chunk_start+contents_count, fplus::maybe<TreeNode>(node)};
 }
 
@@ -457,7 +457,7 @@ pair<size_t, SubTransaction> decode_SubTransaction(chunkList encoded) {
         new_node_versions.push_back(new_node_version.second);
         newnode_version_offset += new_node_version.first;
     }
-    SubTransaction sub_transaction(base_newnode_value, move(new_node_versions));
+    SubTransaction sub_transaction(base_newnode_value, std::move(new_node_versions));
     return {newnode_version_offset, sub_transaction};
 }
 

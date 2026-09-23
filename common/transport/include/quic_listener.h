@@ -1,7 +1,10 @@
 #pragma once
+// boost/asio.hpp must come before communication.h on Windows: it pulls in
+// Windows COM/RPC headers whose `byte` typedef becomes ambiguous with
+// std::byte once communication.h's `using namespace std;` is in scope.
+#include <boost/asio.hpp>
 #include "communication.h"
 
-#include <boost/asio.hpp>
 #include <string>
 #include <iostream>
 #include <thread>
@@ -133,8 +136,7 @@ public:
     void initializeConfig(const YAML::Node& yaml_config);
     
     QuicListener(boost::asio::io_context& io_context, const YAML::Node& yaml_config)
-        : io_context(io_context), 
-          private_key_file(yaml_config["private_key_file"].as<string>("")), 
+        : private_key_file(yaml_config["private_key_file"].as<string>("")), 
           cert_file(yaml_config["cert_file"].as<string>("")),
           socket(io_context), timer(io_context) {
         if (private_key_file.empty()) {
@@ -287,9 +289,9 @@ public:
         auto incoming = incomingChunks.find(sid);
         if (incoming == incomingChunks.end()) {
             auto inserted = incomingChunks.insert(make_pair(sid, chunks()));
-            inserted.first->second.emplace_back(move(chunk));
+            inserted.first->second.emplace_back(std::move(chunk));
         } else {
-            incoming->second.emplace_back(move(chunk));
+            incoming->second.emplace_back(std::move(chunk));
         }
     }
     
@@ -370,7 +372,6 @@ private:
 
     std::atomic<uint16_t> static_stream_id_counter = 1; // Start from 1, and use odd IDs for static stream logical Ids
 
-    boost::asio::io_context& io_context;
     struct ev_loop* loop;
     Server* server;
     ev_async async_terminate;
@@ -380,7 +381,7 @@ private:
     ServerConfig config;
     boost::asio::ip::tcp::socket socket;
     boost::asio::ip::tcp::endpoint endpoint;
-    boost::asio::deadline_timer timer;
+    boost::asio::steady_timer timer;
     bool timed_out;
     boost::asio::streambuf receive_buffer;
 

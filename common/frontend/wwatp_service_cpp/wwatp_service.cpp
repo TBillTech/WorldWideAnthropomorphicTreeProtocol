@@ -49,9 +49,14 @@ vector<shared_span<>> readFileChunks(string const& file_path) {
         if (size_to_read == 0) {
             break; // No more data to read
         }
-        // use pread, and create a span<const uint8_t> from the data read
+        // Seek before reading because pread is not available on all platforms.
         char memory[shared_span<>::chunk_size];
-        ssize_t bytes_read = pread(fd, memory, size_to_read, offset);
+        if (lseek(fd, static_cast<off_t>(offset), SEEK_SET) < 0) {
+            cerr << "Error seeking file: " << file_path << endl;
+            close(fd);
+            return chunks;
+        }
+        ssize_t bytes_read = read(fd, memory, size_to_read);
         if (bytes_read < 0) {
             cerr << "Error reading file: " << file_path << endl;
             close(fd);

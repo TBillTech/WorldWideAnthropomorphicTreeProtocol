@@ -38,6 +38,11 @@
 #ifdef HAVE_ARPA_INET_H
 #  include <arpa/inet.h>
 #endif // defined(HAVE_ARPA_INET_H)
+#if !defined(HAVE_SYS_SOCKET_H) && defined(_WIN32)
+// No POSIX sockets on Windows; win_socket_compat.h provides Winsock-backed
+// sockaddr/msghdr/recvmsg/sendmsg equivalents used throughout this file.
+#  include "win_socket_compat.h"
+#endif
 
 #include <array>
 

@@ -109,8 +109,8 @@ public:
     const std::string& getConfigLabel() const { return config_label_; }
 
     // Frontend interface implementation
-    std::string getName() const { return name_; }
-    std::string getType() const { return "wwatp_service"; }
+    std::string getName() const override { return name_; }
+    std::string getType() const override { return "wwatp_service"; }
 
     void run(size_t sleep_milli = 100) {
         if (!initialized_) {

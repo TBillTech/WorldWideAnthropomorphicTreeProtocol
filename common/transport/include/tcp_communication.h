@@ -1,12 +1,15 @@
 #pragma once
+// boost/asio.hpp must come before communication.h on Windows: it pulls in
+// Windows COM/RPC headers whose `byte` typedef becomes ambiguous with
+// std::byte once communication.h's `using namespace std;` is in scope.
+#include <boost/asio.hpp>
 #include "communication.h"
 
-#include <boost/asio.hpp>
 #include <string>
 #include <iostream>
 #include <thread>
 
-using namespace std;
+//using namespace std;
 
 class TcpCommunication : public Communication {
 public:
@@ -62,7 +65,7 @@ private:
     boost::asio::ip::tcp::socket receive_socket;
     boost::asio::ip::tcp::endpoint receive_endpoint;
     boost::asio::ip::tcp::endpoint send_endpoint;
-    boost::asio::deadline_timer timer;
+    boost::asio::steady_timer timer;
     bool timed_out;
     boost::asio::streambuf receive_buffer;
 

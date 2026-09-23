@@ -25,11 +25,13 @@
  */
 #include "util.h"
 
-#include <arpa/inet.h>
+#ifndef _WIN32
+#  include <arpa/inet.h>
+#  include <netdb.h>
+#endif // !defined(_WIN32)
 #include <sys/types.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <netdb.h>
 
 #include <cassert>
 #include <cstring>
@@ -692,6 +694,10 @@ std::string normalize_path(const std::string_view &path) {
 }
 
 int make_socket_nonblocking(int fd) {
+#ifdef _WIN32
+  u_long mode = 1;
+  return ioctlsocket(static_cast<SOCKET>(fd), FIONBIO, &mode) == 0 ? 0 : -1;
+#else  // !defined(_WIN32)
   int rv;
   int flags;
 
@@ -705,6 +711,7 @@ int make_socket_nonblocking(int fd) {
     ;
 
   return rv;
+#endif // !defined(_WIN32)
 }
 
 int create_nonblock_socket(int domain, int type, int protocol) {

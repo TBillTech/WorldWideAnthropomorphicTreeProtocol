@@ -1,17 +1,17 @@
 #include <fstream>
 #include <ev.h>
-#include <sys/mman.h>
 
 #include <unistd.h>
-#include <getopt.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <sys/mman.h>
-#include <libgen.h>
-#include <netinet/udp.h>
+#ifndef _WIN32
+#  include <sys/socket.h>
+#  include <netdb.h>
+#  include <netinet/udp.h>
+#else
+#  include "win_socket_compat.h"
+#endif // !defined(_WIN32)
 
 #include <urlparse.h>
 
@@ -28,7 +28,16 @@
 #include "template.h"
 #include "urlparse.h"
 #include "config_yaml.h"
+#include <boost/iostreams/device/mapped_file.hpp>
 #include "../../../libraries/ngtcp2/lib/ngtcp2_pkt.h"
+
+// Windows port note: this file's _WIN32 paths exist so the test frameworks
+// (e.g. http3_client_backend_tester) can build and run a server on Windows;
+// the actual Windows client path is quic_connector.cpp. The multi-homing
+// (IP(V6)_PKTINFO) code below is UNTESTED on Windows -- it has not been
+// verified against real traffic, only made to compile against the Windows
+// SDK's IN_PKTINFO/IN6_PKTINFO shapes. If a Windows-hosted server is ever
+// intended for real use, this multi-homing path needs dedicated testing.
 
 using namespace ngtcp2;
 using namespace std::literals;
@@ -210,6 +219,8 @@ struct FileEntry
     void *map;
     int fd;
     uint8_t flags;
+    // Keeps the memory mapping alive for the lifetime of this cached entry; `map` is a view into it.
+    boost::iostreams::mapped_file_source mapped_file;
 };
 
 namespace
@@ -251,13 +262,17 @@ std::pair<FileEntry, int> Stream::open_file(const std::string &path)
         fe.len = st.st_size;
         if (fe.len)
         {
-            fe.map = mmap(nullptr, fe.len, PROT_READ, MAP_SHARED, fd, 0);
-            if (fe.map == MAP_FAILED)
+            try
             {
-                std::cerr << "Server mmap: " << strerror(errno) << std::endl;
+                fe.mapped_file.open(path, fe.len, 0);
+            }
+            catch (const std::exception &ex)
+            {
+                std::cerr << "Server mmap: " << ex.what() << std::endl;
                 close(fd);
                 return {{}, -1};
             }
+            fe.map = const_cast<char *>(fe.mapped_file.data());
         }
     }
 
@@ -343,7 +358,7 @@ void Stream::append_data(std::span<const uint8_t> data) {
     // Check if the chunk is complete
     if (partial_chunk.stored_size() == partial_chunk.get_wire_size() && partial_chunk.get_wire_size() >= partial_chunk.get_signal_size()) {
         // If so, push it onto the incoming queue
-        handler->push_incoming_chunk(req, move(partial_chunk));
+        handler->push_incoming_chunk(req, std::move(partial_chunk));
         partial_chunk = shared_span<>(global_no_chunk_header, false);
     }
     append_data(remaining_span);
@@ -513,7 +528,7 @@ void Handler::shared_span_decr_rc(uint8_t *locked_ptr)
 void Handler::push_incoming_chunk(const Request& req, shared_span<> &&chunk)
 {
     // Push the chunk into the quic_connector_ requestResolutionQueue
-    server()->listener().pushIncomingChunk(req, get_scid(), move(chunk));
+    server()->listener().pushIncomingChunk(req, get_scid(), std::move(chunk));
 }
 
 
@@ -2797,7 +2812,7 @@ namespace
             fd_set_ip_mtu_discover(fd, rp->ai_family);
             fd_set_ip_dontfrag(fd, family);
 
-            if (bind(fd, rp->ai_addr, rp->ai_addrlen) != -1)
+            if (::bind(fd, rp->ai_addr, rp->ai_addrlen) != -1)
             {
                 break;
             }
@@ -2897,7 +2912,7 @@ namespace
         fd_set_ip_mtu_discover(fd, addr.su.sa.sa_family);
         fd_set_ip_dontfrag(fd, addr.su.sa.sa_family);
 
-        if (bind(fd, &addr.su.sa, addr.len) == -1)
+        if (::bind(fd, &addr.su.sa, addr.len) == -1)
         {
             std::cerr << "Server bind: " << strerror(errno) << std::endl;
             close(fd);
@@ -3044,12 +3059,16 @@ int Server::on_read(Endpoint &ep)
 
             if (!listener().getConfig().quiet)
             {
+#ifndef _WIN32
                 std::array<char, IF_NAMESIZE> ifname;
+#endif
                 std::cerr << "Server Received packet: local="
                           << util::straddr(&local_addr->su.sa, local_addr->len)
                           << " remote=" << util::straddr(&su.sa, msg.msg_namelen)
+#ifndef _WIN32
                           << " if="
                           << if_indextoname(local_addr->ifindex, ifname.data())
+#endif
                           << " ecn=0x" << std::hex << static_cast<uint32_t>(pi.ecn)
                           << std::dec << " " << datalen << " bytes" << std::endl;
             }
@@ -3798,9 +3817,19 @@ Server::send_packet(Endpoint &ep, bool &no_gso, const ngtcp2_addr &local_addr,
         auto addrin = reinterpret_cast<sockaddr_in *>(local_addr.addr);
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#ifdef _WIN32
+        // UNTESTED (server-side multi-homing): Windows' IN_PKTINFO has a single
+        // ipi_addr field that serves as the desired source address on send,
+        // where Linux splits this into ipi_addr (dest, ignored on send) and
+        // ipi_spec_dst (desired source).
+        in_pktinfo pktinfo{
+            .ipi_addr = addrin->sin_addr,
+        };
+#else
         in_pktinfo pktinfo{
             .ipi_spec_dst = addrin->sin_addr,
         };
+#endif // defined(_WIN32)
 #pragma GCC diagnostic pop
         memcpy(CMSG_DATA(cm), &pktinfo, sizeof(pktinfo));
 
@@ -4230,11 +4259,11 @@ bool QuicListener::processResponseStream() {
 
 void QuicListener::check_deadline()
 {
-    if (timer.expires_at() <= boost::asio::deadline_timer::traits_type::now())
+    if (timer.expiry() <= std::chrono::steady_clock::now())
     {
         timed_out = true;
         socket.cancel();
-        timer.expires_at(boost::posix_time::pos_infin);
+        timer.expires_at(std::chrono::steady_clock::time_point::max());
     }
     timer.async_wait([this](const boost::system::error_code &)
                      { check_deadline(); });

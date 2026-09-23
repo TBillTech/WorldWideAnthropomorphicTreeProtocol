@@ -2,6 +2,8 @@
 #include "http3_tree_message.h"
 #include <thread>
 
+using namespace std;
+
 void Http3ClientBackend::awaitResponse()
 {
     std::unique_lock<std::mutex> lock(blockingMutex_);
@@ -621,7 +623,7 @@ void Http3ClientBackend::setNodeChunks(chunks& chunks) {
     std::lock_guard<std::mutex> lock(backendMutex_);
     if (staticNode_.is_just()) {
         shared_span<> concatted(chunks.begin(), chunks.end());
-        staticNode_.unsafe_get_just().setPropertyData(move(concatted));
+        staticNode_.unsafe_get_just().setPropertyData(std::move(concatted));
         localBackend_.upsertNode({staticNode_.unsafe_get_just()});
     } else {
         std::cerr << "Error: Static Node for storing property_data is not defined" << std::endl;

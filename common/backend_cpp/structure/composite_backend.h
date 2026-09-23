@@ -36,7 +36,7 @@ class CompositeBackend : public Backend {
         void deregisterNodeListener(const std::string listener_name, const std::string label_rule) override;
     
         // Notify listeners for a specific label rule.
-        void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node);
+        void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node) override;
     
         void processNotifications() override;
 

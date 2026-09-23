@@ -1,7 +1,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
-#include <sys/mman.h>
+//#include <sys/mman.h>
 #include <yaml-cpp/yaml.h>
 
 #include "util.h"
@@ -12,6 +12,10 @@
 #include "quic_listener.h"
 #endif
 #include "shared_chunk.h"
+
+#ifdef _WIN32
+#define realpath(N,R) _fullpath((R),(N),_MAX_PATH)
+#endif
 
 using namespace std;
 
@@ -85,32 +89,32 @@ int runLibraryTest(const string& protocol) {
         auto client_data_path = std::string(sandbox_path) + "/data.client";
         free(sandbox_path);
 
-        // Attempt to open the client data file
-        auto fd = open(client_data_path.c_str(), O_RDONLY);
-        if (fd == -1) {
-            std::cerr << "data: Could not open file " << client_data_path << ": "
-                      << strerror(errno) << std::endl;
-        } else {
-            struct stat st;
-            if (fstat(fd, &st) != 0) {
-                std::cerr << "data: Could not stat file " << client_data_path << ": "
-                          << strerror(errno) << std::endl;
-                close(fd);
-            } else {
-                auto datalen = st.st_size;
-                if (datalen) {
-                    auto addr = mmap(nullptr, datalen, PROT_READ, MAP_SHARED, fd, 0);
-                    if (addr == MAP_FAILED) {
-                        std::cerr << "data: Could not mmap file " << client_data_path << ": "
-                                  << strerror(errno) << std::endl;
-                        close(fd);
-                    } else {
-                        auto data = static_cast<uint8_t *>(addr);
-                        memset(data, 0, datalen);
-                    }
-                }
-            }
-        }
+        // // Attempt to open the client data file
+        // auto fd = open(client_data_path.c_str(), O_RDONLY);
+        // if (fd == -1) {
+        //     std::cerr << "data: Could not open file " << client_data_path << ": "
+        //               << strerror(errno) << std::endl;
+        // } else {
+        //     struct stat st;
+        //     if (fstat(fd, &st) != 0) {
+        //         std::cerr << "data: Could not stat file " << client_data_path << ": "
+        //                   << strerror(errno) << std::endl;
+        //         close(fd);
+        //     } else {
+        //         auto datalen = st.st_size;
+        //         if (datalen) {
+        //             auto addr = mmap(nullptr, datalen, PROT_READ, MAP_SHARED, fd, 0);
+        //             if (addr == MAP_FAILED) {
+        //                 std::cerr << "data: Could not mmap file " << client_data_path << ": "
+        //                           << strerror(errno) << std::endl;
+        //                 close(fd);
+        //             } else {
+        //                 auto data = static_cast<uint8_t *>(addr);
+        //                 memset(data, 0, datalen);
+        //             }
+        //         }
+        //     }
+        // }
     
     }
     boost::asio::io_context io_context;
@@ -142,7 +146,7 @@ int runLibraryTest(const string& protocol) {
                 response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, payload_chunk_header::SIGNAL_WWATP_RESPONSE_CONTINUE, data_len), span<const uint8_t>(data_block, data_len));
             }
             send_states.server_sent_data = true;
-            return move(response_chunks);
+            return std::move(response_chunks);
         }
         for (auto& chunk : request) {
             if (chunk.size() < 100) {
@@ -178,7 +182,7 @@ int runLibraryTest(const string& protocol) {
                 }
             }
         }
-        return move(response_chunks);
+        return std::move(response_chunks);
     };
     // Add a named_prepare_fn for theServerHandler to the server_communication
     prepare_stream_callback_fn theServerHandlerWrapper = [&theServerHandler](const Request &req) {
@@ -224,7 +228,7 @@ int runLibraryTest(const string& protocol) {
                 response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, payload_chunk_header::SIGNAL_WWATP_REQUEST_CONTINUE, data_len), span<const uint8_t>(data_block, data_len));
             }
             send_states.client_sent_data = true;
-            return move(response_chunks);
+            return std::move(response_chunks);
         }
         if (response.empty() && !send_states.client_sent_greeting) {
             cout << "Client is idle, so sending Hello Server! message" << endl;
@@ -232,7 +236,7 @@ int runLibraryTest(const string& protocol) {
             chunks response_chunks;
             response_chunks.emplace_back(payload_chunk_header(stream_id.logical_id, payload_chunk_header::SIGNAL_WWATP_REQUEST_CONTINUE, hello_str.size()), span<const char>(hello_str.c_str(), hello_str.size()));
             send_states.client_sent_greeting = true;
-            return move(response_chunks);
+            return std::move(response_chunks);
         }
         if (response.empty() && !send_states.client_sent_heartbeat) {
             cout << "Client is idle, and clientState.second is false, so send heartbeat" << endl;
@@ -240,7 +244,7 @@ int runLibraryTest(const string& protocol) {
             auto tag = payload_chunk_header(stream_id.logical_id, payload_chunk_header::SIGNAL_HEARTBEAT, 0);
             response_chunks.emplace_back(tag, span<const char>("", 0));
             send_states.client_sent_heartbeat = true;
-            return move(response_chunks);
+            return std::move(response_chunks);
         }
         for (auto& chunk : response) {
             if (chunk.size() < 100) {
@@ -269,7 +273,7 @@ int runLibraryTest(const string& protocol) {
             }        
         }
         chunks no_chunks;
-        return move(no_chunks);
+        return std::move(no_chunks);
     };
     StreamIdentifier assigned_stream_id = client_communication->getNewRequestStreamIdentifier(theRequest);
     client_communication->registerResponseHandler(assigned_stream_id, theClientHandler);

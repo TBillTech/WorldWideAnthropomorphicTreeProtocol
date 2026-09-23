@@ -5,6 +5,8 @@ libraries/
 build/
 build-contract-default/
 build-quic-off/
+build-mingw
+build-clang64
 
 # Ignore Visual Studio Code settings
 .vscode/
