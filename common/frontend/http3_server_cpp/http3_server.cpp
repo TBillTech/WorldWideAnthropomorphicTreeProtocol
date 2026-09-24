@@ -11,7 +11,7 @@ chunks Http3ServerRoute::processResponseStream(const StreamIdentifier& stream_id
             return response;
         }
         HTTP3TreeMessage state = intializeResponseMessage(stream_id, request);
-        ongoingResponses_.emplace(stream_id, move(state));
+        ongoingResponses_.emplace(stream_id, std::move(state));
         it = ongoingResponses_.find(stream_id);
     }
     if (it->second.isProcessingFinished()) {

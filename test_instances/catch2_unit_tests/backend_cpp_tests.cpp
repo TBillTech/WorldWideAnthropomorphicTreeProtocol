@@ -142,6 +142,7 @@ TEST_CASE("FileBackend test", "[FileBackend]") {
         // This rewrites the files one more time so the human can browse them.
         tester.addAnimalsToBackend();
     }
+#ifndef _WIN32
     {
         // This is a paranoid check to see if inotify works correctly.
         // It will directly create a infotify_fd_, and a wd for the file:
@@ -213,6 +214,7 @@ TEST_CASE("FileBackend test", "[FileBackend]") {
         }
         REQUIRE(notified); // We should have been notified of the modification
     }
+#endif
     {
         FileBackend to_be_notified_backend(base_path);
         BackendTestbed tester(to_be_notified_backend);

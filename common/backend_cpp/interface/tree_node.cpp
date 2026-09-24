@@ -48,7 +48,7 @@ TreeNode::TreeNode(const std::string& label_rule, const std::string& description
         const fplus::maybe<std::string>& query_how_to,
         const fplus::maybe<std::string>& qa_sequence)
     : label_rule(label_rule), description(description), property_infos(property_infos),
-      version(version), child_names(child_names), property_data(move(property_data)), 
+      version(version), child_names(child_names), property_data(std::move(property_data)), 
       query_how_to(query_how_to), qa_sequence(qa_sequence)
     {
         // label_rule cannot have whitespace
@@ -80,7 +80,7 @@ TreeNode& TreeNode::operator=(const TreeNode& other) {
         version = other.version;
         child_names = other.child_names;
         auto content_total_range = make_pair(0, other.property_data.size());
-        property_data = move(other.property_data.restrict(content_total_range));
+        property_data = std::move(other.property_data.restrict(content_total_range));
         query_how_to = other.query_how_to;
         qa_sequence = other.qa_sequence;
     }
@@ -209,7 +209,7 @@ const shared_span<>& TreeNode::getPropertyData() const {
 }
 
 void TreeNode::setPropertyData(shared_span<>&& property_data) {
-    this->property_data = move(property_data);
+    this->property_data = std::move(property_data);
 }
 
 template<typename T>
@@ -238,8 +238,6 @@ tuple<uint64_t, T, shared_span<>> TreeNode::getPropertyValue(const string& name)
         throw std::invalid_argument("Property not found when calling GetPropertyDataAs: " + name);
     }
     shared_span<> remaining_data(property_data);
-    int order = 0;
-    size_t total_size = 0;
     size_t cur_size = 0;
     for (const auto& info : property_infos) {
         if ((info.first == "int64") || (info.first == "uint64"))
@@ -265,9 +263,7 @@ tuple<uint64_t, T, shared_span<>> TreeNode::getPropertyValue(const string& name)
         if (info == property_info) {
             break;            
         }
-        total_size += cur_size;
         remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
-        order++;
     }
     auto cur_span = remaining_data.restrict(pair(0, sizeof(T)));
     return make_tuple(cur_size, *remaining_data.begin<T>(), cur_span);
@@ -289,7 +285,6 @@ tuple<uint64_t, shared_span<>, shared_span<>> TreeNode::getPropertyValueSpan(con
     }
     auto property_info = *it;
     shared_span<> remaining_data(property_data);
-    int order = 0;
     size_t cur_size = 0;
     for (const auto& info : property_infos) {
         if ((info.first == "int64") || (info.first == "uint64"))
@@ -317,7 +312,6 @@ tuple<uint64_t, shared_span<>, shared_span<>> TreeNode::getPropertyValueSpan(con
         }
         assert(cur_size <= remaining_data.size());
         remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
-        order++;
     }
     auto size_span = remaining_data.restrict(pair(0, sizeof(uint64_t)));
     auto just_yaml_text = remaining_data.restrict(pair(sizeof(uint64_t), cur_size - sizeof(uint64_t)));
@@ -333,8 +327,6 @@ void TreeNode::setPropertyValue(const string& name, const T& value)
         throw std::invalid_argument("Property not found when calling SetPropertyDataAs: " + name);
     }
     shared_span<> remaining_data(property_data);
-    int order = 0;
-    size_t total_size = 0;
     size_t cur_size = 0;
     for (const auto& info : property_infos) {
         if ((info.first == "int64") || (info.first == "uint64"))
@@ -360,9 +352,7 @@ void TreeNode::setPropertyValue(const string& name, const T& value)
         if (info == property_info) {
             break;            
         }
-        total_size += cur_size;
         remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
-        order++;
     }
     auto value_span = remaining_data.restrict(pair(0, sizeof(T)));
     value_span.copy_type(value);
@@ -374,7 +364,7 @@ void TreeNode::setPropertyString(const string& name, const string& value)
     payload_chunk_header header(4, payload_chunk_header::SIGNAL_OTHER_CHUNK, value.size());
     shared_span<> data_span(header, std::span<const char>(value.data(), value.size()));
     // set the property data
-    setPropertyValueSpan(name, move(data_span));
+    setPropertyValueSpan(name, std::move(data_span));
 }
 
 void TreeNode::setPropertyValueSpan(const string& name, const shared_span<>&& data)
@@ -387,7 +377,6 @@ void TreeNode::setPropertyValueSpan(const string& name, const shared_span<>&& da
     }
     auto property_info = *it;
     shared_span<> remaining_data(property_data);
-    int order = 0;
     size_t cur_size = 0;
     size_t total_size = 0;
     for (const auto& info : property_infos) {
@@ -416,15 +405,14 @@ void TreeNode::setPropertyValueSpan(const string& name, const shared_span<>&& da
         }
         total_size += cur_size;
         remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
-        order++;
     }
     auto size_span = remaining_data.restrict(pair(0, sizeof(uint64_t)));
     auto prior_span = property_data.restrict(pair(0, total_size + sizeof(uint64_t)));
     size_span.begin<uint64_t>().set(data.size());
     auto following_span = property_data.restrict(pair(total_size + cur_size, property_data.size() - total_size - cur_size));
-    vector<shared_span<>> spans({prior_span, move(data), following_span});
+    vector<shared_span<>> spans({prior_span, std::move(data), following_span});
     shared_span<> concatted(spans.begin(), spans.end());
-    property_data = move(concatted);
+    property_data = std::move(concatted);
     property_data.compress();
 }
 
@@ -440,7 +428,6 @@ void TreeNode::insertProperty(size_t index, const string& name, const T& value)
     pair<string, string> property_info = {typenameToString<T>(), name};
     auto next_it = std::find(property_infos.begin(), property_infos.end(), next_info);
     shared_span<> remaining_data(property_data);
-    int order = 0;
     size_t total_size = 0;
     size_t cur_size = 0;
     for (const auto& info : property_infos) {
@@ -469,7 +456,6 @@ void TreeNode::insertProperty(size_t index, const string& name, const T& value)
         }
         total_size += cur_size;
         remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
-        order++;
     }
     auto prior_span = property_data.restrict(pair(0, total_size));
     vector<shared_span<>> data_spans({prior_span});
@@ -478,7 +464,7 @@ void TreeNode::insertProperty(size_t index, const string& name, const T& value)
     data_spans.emplace_back(header, std::span<const T>(reinterpret_cast<const T*>(&value), 1));
     data_spans.push_back(following_span);
     shared_span<> concatted(data_spans.begin(), data_spans.end());
-    property_data = move(concatted);
+    property_data = std::move(concatted);
     property_infos.insert(next_it, {typenameToString<T>(), name});
     property_data.compress();
 }
@@ -489,7 +475,7 @@ void TreeNode::insertPropertyString(size_t index, const string& name, const stri
     payload_chunk_header header(4, payload_chunk_header::SIGNAL_OTHER_CHUNK, value.size());
     shared_span<> data_span(header, std::span<const char>(value.data(), value.size()));
     // insert the property data
-    insertPropertySpan(index, name, type, move(data_span));
+    insertPropertySpan(index, name, type, std::move(data_span));
 }
 
 void TreeNode::insertPropertySpan(size_t index, const string& name, const string& type, const shared_span<>&& data)
@@ -502,7 +488,6 @@ void TreeNode::insertPropertySpan(size_t index, const string& name, const string
     auto next_info = index <property_infos.size() ? property_infos[min(index, property_infos.size() - 1)] : pair<string, string>();
     auto next_it = std::find(property_infos.begin(), property_infos.end(), next_info);
     shared_span<> remaining_data(property_data);
-    int order = 0;
     size_t cur_size = 0;
     size_t total_size = 0;
     for (const auto& info : property_infos) {
@@ -531,7 +516,6 @@ void TreeNode::insertPropertySpan(size_t index, const string& name, const string
         }
         total_size += cur_size;
         remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
-        order++;
     }
     auto prior_span = property_data.restrict(pair(0, total_size));
     vector<shared_span<>> data_spans({prior_span});
@@ -542,7 +526,7 @@ void TreeNode::insertPropertySpan(size_t index, const string& name, const string
     data_spans.push_back(data);
     data_spans.push_back(property_data.restrict(pair(total_size, property_data.size() - total_size)));
     shared_span<> concatted(data_spans.begin(), data_spans.end());
-    property_data = move(concatted);
+    property_data = std::move(concatted);
     property_infos.insert(next_it, {type, name});
     property_data.compress();
 }
@@ -556,7 +540,6 @@ void TreeNode::deleteProperty(const string& name)
     }
     auto property_info = *it;
     shared_span<> remaining_data(property_data);
-    int order = 0;
     size_t total_size = 0;
     size_t cur_size = 0;
     for (const auto& info : property_infos) {
@@ -585,13 +568,12 @@ void TreeNode::deleteProperty(const string& name)
         }
         total_size += cur_size;
         remaining_data = remaining_data.restrict(pair(cur_size, remaining_data.size() - cur_size));
-        order++;
     }
     auto prior_span = property_data.restrict(pair(0, total_size));
     auto following_span = property_data.restrict(pair(total_size + cur_size, property_data.size() - total_size - cur_size));
     vector<shared_span<>> data_spans({prior_span, following_span});
     shared_span<> concatted(data_spans.begin(), data_spans.end());
-    property_data = move(concatted);
+    property_data = std::move(concatted);
     property_infos.erase(it);
     property_data.compress();
 }
@@ -792,7 +774,6 @@ vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_p
     }
 
     std::vector<shared_span<>> data_spans;
-    size_t order = 0;
     std::vector<TreeNode::PropertyInfo> infos;
     std::vector<std::pair<YAML::Node, std::string>> child_nodes;
     // All the other properties need to be stored in property_infos and contents, unless they match the child_names.
@@ -889,7 +870,6 @@ vector<TreeNode> fromYAMLNode(const YAML::Node& node, const std::string& label_p
                 data_spans.emplace_back(header, std::span<bool>(&the_bool, 1));
             }
         }
-        order++;
     }
 
     auto property_data = shared_span<>(data_spans.begin(), data_spans.end());

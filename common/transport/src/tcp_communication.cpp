@@ -213,10 +213,10 @@ void TcpCommunication::receive() {
 }
 
 void TcpCommunication::check_deadline() {
-    if (timer.expires_at() <= boost::asio::deadline_timer::traits_type::now()) {
+    if (timer.expiry() <= std::chrono::steady_clock::now()) {
         timed_out = true;
         receive_socket.cancel();
-        timer.expires_at(boost::posix_time::pos_infin);
+        timer.expires_at(std::chrono::steady_clock::time_point::max());
     }
     timer.async_wait([this](const boost::system::error_code&) { check_deadline(); });
 }

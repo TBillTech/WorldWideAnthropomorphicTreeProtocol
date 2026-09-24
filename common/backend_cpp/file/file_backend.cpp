@@ -7,6 +7,41 @@
 using namespace std;
 using namespace fplus;
 
+#ifdef _WIN32
+int inotify_init1(int flag) { return -1; }
+int inotify_rm_watch(int fd, int wd) { return -1; }
+int mkdir(const char* dir, int flag) { return -1; }
+int inotify_add_watch(int fd, const char* astr, uint32_t flag) { return -1; }
+bool is_dir_dirent(struct dirent* ent) { return false; }
+#endif
+
+FileBackend::FileBackend(std::string basePath)
+{
+    if (basePath.empty()) {
+        throw std::invalid_argument("Base Path cannot be empty");
+    }
+    basePath_ = basePath;
+    if (basePath_.back() != '/') {
+        basePath_ += '/';
+    }
+    // Initialize inotify for file system notifications
+    inotify_fd_ = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (inotify_fd_ < 0) {
+        throw std::runtime_error("Failed to initialize inotify");
+    }
+}
+
+FileBackend::~FileBackend()
+{
+    for (const auto& it : wd_to_watchchain_)
+    {
+        int wd = it.first;
+        inotify_rm_watch(inotify_fd_, wd);
+    }
+    close(inotify_fd_);
+}
+
+
 std::string getNodeDirectoryPath(const std::string& base_path, const std::string& label_rule)
 {
     if (label_rule.empty()) {
@@ -469,7 +504,7 @@ bool deleteDirectoryRecursively(const std::string& base_path, const std::string&
             continue;
         }
         std::string full_path = dir_path + "/" + entry->d_name;
-        if (entry->d_type == DT_DIR) {
+        if (is_dir_dirent(entry)) {
             // Recursively delete subdirectories
             if (!deleteDirectoryRecursively(base_path, full_path)) {
                 closedir(dir);
@@ -662,7 +697,7 @@ std::vector<TreeNode> FileBackend::queryNodesFromPath(const std::string& base_di
     std::vector<std::string> subdirs_to_recurse; // To store subdirectories for later recursion
     struct dirent* entry;
     while ((entry = readdir(dir))) {
-        if (entry->d_type == DT_DIR) {
+        if (is_dir_dirent(entry)) {
             // Skip the "." and ".." directories
             if (entry->d_name == std::string(".") || entry->d_name == std::string("..")) {
                 continue;

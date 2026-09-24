@@ -25,7 +25,12 @@
  */
 #pragma once
 
-#include <sys/socket.h>
+#ifdef HAVE_SYS_SOCKET_H
+#  include <sys/socket.h>
+#endif // defined(HAVE_SYS_SOCKET_H)
+#if !defined(HAVE_SYS_SOCKET_H) && defined(_WIN32)
+#  include "win_socket_compat.h"
+#endif
 
 #include <cassert>
 #include <optional>

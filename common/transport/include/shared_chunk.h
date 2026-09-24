@@ -8,6 +8,7 @@
 #include <boost/core/demangle.hpp>
 #include <type_traits>
 #include <iomanip>
+#include <sstream>
 
 #include "memory_pool.h"
 
@@ -80,7 +81,7 @@ struct payload_chunk_header {
         return *this;
     }
     void copy_partial_data(const uint8_t* data, size_t length) {
-        memcpy(this, data, min(length, sizeof(payload_chunk_header)));
+        memcpy((void*)this, data, min(length, sizeof(payload_chunk_header)));
     }
     size_t get_wire_size() const {
         return sizeof(payload_chunk_header) + data_length;
@@ -145,7 +146,7 @@ struct signal_chunk_header {
         return *this;
     }
     void copy_partial_data(const uint8_t* data, size_t length) {
-        memcpy(this, data, min(length, sizeof(signal_chunk_header)));
+        memcpy((void*)this, data, min(length, sizeof(signal_chunk_header)));
     }
     constexpr size_t get_wire_size() const {
         return sizeof(signal_chunk_header);
@@ -204,7 +205,7 @@ public:
         }
     }
     // Move constructor
-    shared_span(shared_span &&other) : chunks(move(other.chunks)), signal_type(other.signal_type) {
+    shared_span(shared_span &&other) : chunks(std::move(other.chunks)), signal_type(other.signal_type) {
         // No need to clear other.chunks here, because the object moved should shortly go out of scope
     }
     // Constructor that takes a span of bytes and copies them into the shared_span
@@ -225,7 +226,7 @@ public:
         }
     }
     shared_span(const span<const uint8_t> data)
-    : shared_span(move(create_from_data(data))) {}
+    : shared_span(std::move(create_from_data(data))) {}
 
     void compress() {        
         // Remove empty chunks
@@ -243,7 +244,7 @@ public:
                 // no_chunk_header is always complete.
                 auto remaining_data = data.subspan(sizeof(no_chunk_header));
                 shared_span span(*reinterpret_cast<const no_chunk_header*>(data.data()), remaining_data);
-                return move(span);
+                return std::move(span);
             }
             case signal_chunk_header::GLOBAL_SIGNAL_TYPE: {
                 size_t header_data_length = min(sizeof(signal_chunk_header), data.size());
@@ -253,12 +254,12 @@ public:
                 {
                     auto remaining_data = data.subspan(sizeof(signal_chunk_header));
                     shared_span span(header, remaining_data);
-                    return move(span);
+                    return std::move(span);
                 }
                 shared_span partial_span(header, std::span<uint8_t>{});
                 // Doctor the the span start so that expand_use will accept the remaining header data later:
                 partial_span.chunks.back().second.first = header_data_length;
-                return move(partial_span);
+                return std::move(partial_span);
             }
             case payload_chunk_header::GLOBAL_SIGNAL_TYPE: {
                 size_t header_data_length = min(sizeof(payload_chunk_header), data.size());
@@ -268,12 +269,12 @@ public:
                 {
                     auto remaining_data = data.subspan(sizeof(payload_chunk_header));
                     shared_span span(header, remaining_data);
-                    return move(span);
+                    return std::move(span);
                 }
                 shared_span partial_span(header, std::span<uint8_t>{});
                 // Doctor the the span start so that expand_use will accept the remaining header data later:
                 partial_span.chunks.back().second.first = header_data_length;
-                return move(partial_span);
+                return std::move(partial_span);
                 // Now there are a couple cases where things appear dangerous with the wire size, which is data_length.
                 // * The condition where data_length is really 0, but less than the whole header has arrived would
                 //       be alarming, but this cannot happen, because payload_chunk_header is invalid with 0 payload chunks. 
@@ -303,7 +304,7 @@ public:
 
     constexpr shared_span<ChunkType>& operator=(const shared_span<ChunkType>&& other) {
         chunks.clear();
-        chunks = move(other.chunks);
+        chunks = std::move(other.chunks);
         signal_type = other.signal_type;
         return *this;
     }
@@ -333,7 +334,7 @@ public:
                 chunk.second.first = chunk.second.first + restricted_start;
                 chunk.second.second = restricted_length;
                 new_span.chunks.resize(current_chunk + 1);
-                return move(new_span);
+                return std::move(new_span);
             }
             if (restricted_start >= chunk.second.second) {
                 // The restricted range is not in this chunk
@@ -350,7 +351,7 @@ public:
         }
         assert(new_span.chunks.size() == 0 || new_span.chunks.back().second.second < ChunkType::chunk_size);
         // The loop ran out of chunks, and so the resulting span will be shorter than the requested range
-        return move(new_span);
+        return std::move(new_span);
     }
 
     // Method to copy a span of bytes into the shared_span.  Will overwrite data, but NEVER exceed the bounds of the span.
@@ -533,7 +534,7 @@ public:
     shared_span append(shared_span &other) const {
         shared_span new_span(*this);
         new_span.chunks.insert(new_span.chunks.end(), other.chunks.begin(), other.chunks.end());
-        return move(new_span);
+        return std::move(new_span);
     }
 
     template <typename PODType>
@@ -909,7 +910,7 @@ public:
             // so in fact it needs to skip over the signal size for the chunk
             size_t signal_size = new_span.get_signal_size();
             shared_span restricted_span = new_span.restrict(make_pair(span_index-signal_size, new_span.size()));
-            return move(restricted_span);
+            return std::move(restricted_span);
         }
         // Conversion operator to const_iterator
         template <typename PODType2>
@@ -1075,7 +1076,8 @@ std::istream& shared_span<ChunkType>::read(std::istream& is) {
             throw std::runtime_error("Unexpected end of stream while reading UUEncoded bytes");
         }
         int byte;
-        std::istringstream(hex_byte) >> std::hex >> byte;
+        std::istringstream hex_stream(hex_byte);
+        hex_stream >> std::hex >> byte;
         data[i] = static_cast<uint8_t>(byte);
     }
 
@@ -1087,7 +1089,7 @@ std::istream& shared_span<ChunkType>::read(std::istream& is) {
         signal_type = 0;
         return is;
     }
-    *this = move(shared_span<ChunkType>(std::span<const uint8_t>(data.data(), data.size())));
+    *this = std::move(shared_span<ChunkType>(std::span<const uint8_t>(data.data(), data.size())));
     return is;
 }
 

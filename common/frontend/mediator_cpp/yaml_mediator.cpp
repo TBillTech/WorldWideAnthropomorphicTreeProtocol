@@ -111,7 +111,7 @@ void toYAMLCallback(Backend& yamlBackend, Backend& backend, YAML::Node yaml, Pro
             { {specifier.getPropertyType(), specifier.getPropertyName()} },
             DEFAULT_TREE_NODE_VERSION, // Default version for YAML nodes
             {},
-            move(concatted), 
+            std::move(concatted), 
             maybe<string>(), // No query how-to for YAML nodes
             maybe<string>() // No QA sequence for YAML nodes
         );
@@ -125,9 +125,9 @@ void toYAMLCallback(Backend& yamlBackend, Backend& backend, YAML::Node yaml, Pro
         auto findit = find(property_infos.begin(), property_infos.end(), property_info);
         shared_span<> value_span = yaml_data[1];
         if (findit != property_infos.end()) {
-            toNode.setPropertyValueSpan(specifier.getPropertyName(), move(value_span));
+            toNode.setPropertyValueSpan(specifier.getPropertyName(), std::move(value_span));
         } else {
-            toNode.insertPropertySpan(property_infos.size(), specifier.getPropertyName(), specifier.getPropertyType(), move(value_span));
+            toNode.insertPropertySpan(property_infos.size(), specifier.getPropertyName(), specifier.getPropertyType(), std::move(value_span));
             property_infos.push_back(property_info);
             toNode.setPropertyInfo(property_infos);
         }
