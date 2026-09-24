@@ -42,7 +42,7 @@ public:
     // To make sure that no further notifications are processed for a deregistered listener, you should call processNotifications after deregistering the listener.
     void deregisterNodeListener(const std::string listener_name, const std::string label_rule) override;
 
-    void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node);
+    void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node) override;
 
     // Process one notification for a specific label rule.  
     void processNotifications() override;

@@ -25,8 +25,8 @@ public:
     std::vector<TreeNode> queryNodes(const std::string& label_rule) const override;
     std::vector<TreeNode> relativeQueryNodes(const TreeNode& node, const std::string& label_rule) const override;
 
-    bool openTransactionLayer(const TreeNode& node);
-    bool closeTransactionLayers(void);
+    bool openTransactionLayer(const TreeNode& node) override;
+    bool closeTransactionLayers(void) override;
     bool applyTransaction(const Transaction& transaction) override;
 
     // Retrieve the entire tree structure (for debugging or full sync purposes).
@@ -35,7 +35,7 @@ public:
     void registerNodeListener(const std::string listener_name, const std::string label_rule, bool child_notify, NodeListenerCallback callback) override;
     void deregisterNodeListener(const std::string listener_name, const std::string label_rule) override;
 
-    void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node);
+    void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node) override;
 
     void processNotifications() override { tree_.processNotifications(); };
 

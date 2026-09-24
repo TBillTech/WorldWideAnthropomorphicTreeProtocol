@@ -1,7 +1,25 @@
 #pragma once
 
 #include <map>
+#ifndef _WIN32
 #include <sys/inotify.h>
+bool is_dir_dirent(struct dirent* ent) { ent->d_type == DT_DIR; }
+#else
+// Includes for ReadDirectoryChangesW
+// But for now, stubs
+struct inotify_event {
+    int wd;
+    int mask;
+    int len;
+    std::string name;
+};
+const int IN_NONBLOCK = 0;
+const int IN_CLOEXEC = 0;
+const int IN_MODIFY = 0;
+const int IN_CREATE = 0;
+const int IN_DELETE = 0;
+const int IN_IGNORED = 0;
+#endif
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -63,30 +81,8 @@ bool deleteNodeFiles(const std::string& base_path, const std::string& label_rule
 
 class FileBackend : public Backend {
     public:
-        FileBackend(std::string basePath)
-        {
-            if (basePath.empty()) {
-                throw std::invalid_argument("Base Path cannot be empty");
-            }
-            basePath_ = basePath;
-            if (basePath_.back() != '/') {
-                basePath_ += '/';
-            }
-            // Initialize inotify for file system notifications
-            inotify_fd_ = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
-            if (inotify_fd_ < 0) {
-                throw std::runtime_error("Failed to initialize inotify");
-            }
-        };
-        ~FileBackend() override
-        {
-            for (const auto& it : wd_to_watchchain_)
-            {
-                int wd = it.first;
-                inotify_rm_watch(inotify_fd_, wd);
-            }
-            close(inotify_fd_);
-        }
+        FileBackend(std::string basePath);
+        ~FileBackend() override;
     
         // Retrieve a node by its label rule.
         fplus::maybe<TreeNode> getNode(const std::string& label_rule) const override;
@@ -115,7 +111,7 @@ class FileBackend : public Backend {
         void deregisterNodeListener(const std::string listener_name, const std::string label_rule) override;
     
         // Notify listeners for a specific label rule.
-        void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node);
+        void notifyListeners(const std::string& label_rule, const fplus::maybe<TreeNode>& node) override;
     
         // processNotifications will check on the inotify file descriptor for any events and process them accordingly, without a dedicated thread.
         void processNotifications() override;

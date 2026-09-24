@@ -13,7 +13,10 @@
 #include "config_base.h"
 #include "shared_chunk.h"
 
-using namespace std;
+// Deliberately no `using namespace std;` here: this header is included very widely
+// (including transitively before <boost/asio.hpp> in some translation units), and a
+// namespace-scope using-directive here can make Windows SDK headers pulled in later
+// ambiguous against std:: names (e.g. byte vs std::byte). Use std:: explicitly below.
 
 // Server and Client Connection IDs:
 //
@@ -72,7 +75,7 @@ class StreamIdentifier {
         return cid == other.cid && logical_id == other.logical_id;
     }
 
-    friend ostream& operator<<(ostream& os, const StreamIdentifier& si) {
+    friend std::ostream& operator<<(std::ostream& os, const StreamIdentifier& si) {
         using namespace ngtcp2;
         os << "StreamIdentifier: cid=" << si.cid << ", logical_id=" << si.logical_id;
         return os;
@@ -80,19 +83,19 @@ class StreamIdentifier {
 };
 
 // The stream callback function is generally used by both sides to process incoming and outgoing data for bidirectional streams.
-using stream_callback_fn = function<chunks(const StreamIdentifier&, chunks&)>;
+using stream_callback_fn = std::function<chunks(const StreamIdentifier&, chunks&)>;
 
 // On Client side, the initial outgoing request is first logged into the requestResolutionQueue (because it has no response callbacks yet)
 // And because the StreamIdentifier is not yet known.
-typedef pair<Request, stream_callback_fn> RequestCallback;
+typedef std::pair<Request, stream_callback_fn> RequestCallback;
 // RequestCallback Vector needs to sort by the Request object, so redirect < operator on RequestCallback to Request:
 inline bool operator<(RequestCallback& lhs, RequestCallback& rhs) {
     return lhs.first < rhs.first;
 }
-typedef vector<RequestCallback> request_resolutions;
+typedef std::vector<RequestCallback> request_resolutions;
 
 // And for processing of the stream data, the StreamIdentifier is attached to a callback function
-typedef pair<StreamIdentifier, stream_callback_fn> stream_callback;
+typedef std::pair<StreamIdentifier, stream_callback_fn> stream_callback;
 struct uri_response_info {
     bool can_handle;
     bool is_live_stream;
@@ -100,22 +103,22 @@ struct uri_response_info {
     size_t dyn_length;
 };
 
-typedef pair<uri_response_info, stream_callback_fn> prepared_stream_callback;
+typedef std::pair<uri_response_info, stream_callback_fn> prepared_stream_callback;
 
 // While a round robin queue for load balancing is done (for now) with a simple vector.
-typedef vector<stream_callback> stream_callbacks;
+typedef std::vector<stream_callback> stream_callbacks;
 
 // Also, it is necessary to map StreamIdentifiers to actually received/sent data chunks to the stream for it.
 // And prepared but not yet sent-on-the-wire data chunks can use the same mapping.
-typedef map<StreamIdentifier, chunks> stream_data_chunks;
+typedef std::map<StreamIdentifier, chunks> stream_data_chunks;
 
 // Define a callback function type for preparing stream callbacks
-using prepare_stream_callback_fn = function<prepared_stream_callback(const Request &)>;
-typedef pair<string, prepare_stream_callback_fn> named_prepare_fn;
-typedef vector<named_prepare_fn> named_prepare_fns;
+using prepare_stream_callback_fn = std::function<prepared_stream_callback(const Request &)>;
+typedef std::pair<std::string, prepare_stream_callback_fn> named_prepare_fn;
+typedef std::vector<named_prepare_fn> named_prepare_fns;
 
 // Track the return path for a StreamIdentifier
-typedef map<StreamIdentifier, Request> stream_return_paths;
+typedef std::map<StreamIdentifier, Request> stream_return_paths;
 
 class Communication {
 public:
@@ -171,7 +174,7 @@ public:
     // 4. named_prepare_fns preparersStack: For mapping URL/Request to callbacks
     // 5. stream_return_paths returnPaths: For mapping StreamIdentifiers to URL/Requests. 
     virtual void registerRequestHandler(named_prepare_fn preparer) = 0;
-    virtual void deregisterRequestHandler(string preparer_name) = 0;
+    virtual void deregisterRequestHandler(std::string preparer_name) = 0;
     // In order to separate the nominally server side handler threads from the Communication IO thread, a handler thread can call 
     // this function to make the callback from a worker thread and take as much time as necessary without interrupting the 
     // Communication IO.
@@ -182,10 +185,10 @@ public:
     // virtual void receive() = 0;
 
     // Listen is for servicing the protocol server side.
-    virtual void listen(const string &local_name, const string& local_ip_addr, int local_port) = 0;
+    virtual void listen(const std::string &local_name, const std::string& local_ip_addr, int local_port) = 0;
     // Close is for shutting down the protocol thread.
     virtual void close() = 0;
     // Connect is for servicing the protocol client side.
-    virtual void connect(const string &peer_name, const string& peer_ip_addr, int peer_port) = 0;
+    virtual void connect(const std::string &peer_name, const std::string& peer_ip_addr, int peer_port) = 0;
     virtual ~Communication() = default;
 };

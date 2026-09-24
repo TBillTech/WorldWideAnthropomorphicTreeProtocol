@@ -33,7 +33,7 @@ public:
     Http3ServerRoute(const Http3ServerRoute&& other) :
         backend_(other.backend_), lastNotificationIndex_(other.lastNotificationIndex_),
         journal_(std::move(other.journal_)), maxJournalSize_(other.maxJournalSize_),
-        url_(move(other.url_)), mutablePageLabelRule_(move(other.mutablePageLabelRule_)) {
+        url_(std::move(other.url_)), mutablePageLabelRule_(std::move(other.mutablePageLabelRule_)) {
         };
 
     // A some things of note:

@@ -7,6 +7,70 @@ The World Wide Anthropomorphic Tree Protocol (WWATP) is an agent communication l
 
 What makes this an _anthropomorphic_ tree protocol is that the description node references can be personality prompts to agents templated by the node label rule! And because queries can be agent-like string requests prompted by the Q&A of a node. Another way to look at this is to say that the literal API of clients and servers of the tree protocol is infrastructure only: the content API is implicit and based around LLM friendly two way discussions about capabilities and content descriptions.
 
+## Build and test
+
+Use a fresh build directory per platform/toolchain (do not reuse a Linux build directory for MinGW, or vice versa).
+
+### Linux
+
+```bash
+cmake -S . -B build-linux -G "Unix Makefiles"
+cmake --build build-linux --parallel
+ctest --test-dir build-linux --output-on-failure
+```
+
+### MinGW (msys64, native)
+
+Use the **clang64** MSYS2 environment (`mingw-w64-clang-x86_64-toolchain`), not `mingw64`/GCC: the GCC packaged in `mingw64` (a GCC 16 dev snapshot at the time of writing) has a non-deterministic internal compiler error parsing AVX-512 intrinsic headers whenever `<windows.h>` is included, with no stable flag workaround across all vendored sources. Clang does not hit this bug.
+
+From an **MSYS2 CLANG64** shell (or the `MSYS2 CLANG64` VS Code terminal profile in `.vscode/settings.json`):
+
+```bash
+cmake -S . -B build-clang64 -G "MinGW Makefiles" \
+  -DCMAKE_C_COMPILER=/clang64/bin/clang \
+  -DCMAKE_CXX_COMPILER=/clang64/bin/clang++ \
+  -DBUILD_WWATP_QUIC_C=OFF
+cmake --build build-clang64 --parallel
+ctest --test-dir build-clang64 --output-on-failure
+```
+
+(Equivalently: `cmake --preset clang64` using the repo's `CMakePresets.json`.)
+
+Prerequisites (install via `pacman` in the clang64 shell): `mingw-w64-clang-x86_64-toolchain`, `mingw-w64-clang-x86_64-cmake`, `autoconf`, `automake`, `libtool`. **`libev` is not packaged for MinGW/clang64 in MSYS2** (only `libevent`, a different API) and must be built from source (`http://dist.schmorp.de/libev/`) with `./configure --prefix=/clang64 --host=x86_64-w64-mingw32 && make && make install`.
+
+The vendored `boringssl`, `ngtcp2`, and `nghttp3` under `libraries/` must be built manually before the top-level configure above will succeed (the top-level `ExternalProject_Add` steps assume these are already buildable/built):
+
+- **BoringSSL**: configure with `-DOPENSSL_NO_ASM=1`. This vendored snapshot has no Windows/PE variant of its ADX-optimized P-256 assembly (`fiat_p256_adx_mul`/`fiat_p256_adx_sqr`), so linking fails with those symbols undefined unless assembly is disabled entirely (a real perf tradeoff worth revisiting upstream).
+  ```bash
+  cmake -S libraries/boringssl -B libraries/boringssl/build -G "MinGW Makefiles" \
+    -DCMAKE_C_COMPILER=/clang64/bin/clang -DCMAKE_CXX_COMPILER=/clang64/bin/clang++ \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DOPENSSL_NO_ASM=1
+  cmake --build libraries/boringssl/build --target ssl crypto
+  ```
+- **ngtcp2**: this vendored version's `./configure` supports `--with-boringssl` directly (no `.pc` file is produced by the BoringSSL build above, so point at it explicitly via `BORINGSSL_CFLAGS`/`BORINGSSL_LIBS`). `-lws2_32 -lwinpthread` are required in `BORINGSSL_LIBS` for Winsock and pthread-emulation symbols used by BoringSSL.
+  ```bash
+  cd libraries/ngtcp2
+  CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
+  BORINGSSL_CFLAGS='-I<repo>/libraries/boringssl/include' \
+  BORINGSSL_LIBS='-L<repo>/libraries/boringssl/build -lssl -lcrypto -lws2_32 -lwinpthread' \
+  ./configure --host=x86_64-w64-mingw32 --with-boringssl --disable-shared --enable-static \
+    --disable-dependency-tracking
+  make
+  ```
+- **nghttp3**: crypto-agnostic; only needs `--enable-lib-only` to skip its POSIX-only (`arpa/inet.h`) example programs, which don't build on MinGW and aren't needed.
+  ```bash
+  cd libraries/nghttp3
+  CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
+  ./configure --host=x86_64-w64-mingw32 --enable-lib-only --disable-shared --enable-static \
+    --disable-dependency-tracking
+  make
+  ```
+
+Notes:
+- `--disable-dependency-tracking` is required because clang64's `mingw32-make` doesn't set `$(MAKE)` the way these autotools scripts expect.
+- Avoid `make -j`: parallel jobs were observed to hang under this MSYS2 `make`/libtool combination; build serially.
+- `BUILD_WWATP_QUIC_C` is currently Linux-only in this build; on MinGW it fails at configure time with remediation guidance instead of failing later at link/runtime.
+
 ## Client and Server instances and ecosystem
 
 There are multiple software instances attached to the tree protocol with the following typical uses:

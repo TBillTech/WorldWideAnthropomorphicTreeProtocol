@@ -287,7 +287,6 @@ private:
   struct ev_loop *loop_;
   std::vector<Endpoint> endpoints_;
   TLSServerContext &tls_ctx_;
-  ev_signal sigintev_;
   ev_timer stateless_reset_regen_timer_;
   size_t stateless_reset_bucket_;
   QuicListener &listener_;

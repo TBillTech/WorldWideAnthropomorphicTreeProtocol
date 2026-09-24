@@ -90,7 +90,6 @@ public:
         auto type = type_index(typeid(T));
         auto find_max_allocation = max_allocations.find(type);
         auto find_allocation_count = allocation_counts.find(type);
-        auto find_pool = pools.find(type);
         size_t max_allocation = 0;
         if (find_max_allocation != max_allocations.end()) {
             max_allocation = find_max_allocation->second;

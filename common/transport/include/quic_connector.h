@@ -1,7 +1,10 @@
 #pragma once
+// boost/asio.hpp must come before communication.h on Windows: it pulls in
+// Windows COM/RPC headers whose `byte` typedef becomes ambiguous with
+// std::byte once communication.h's `using namespace std;` is in scope.
+#include <boost/asio.hpp>
 #include "communication.h"
 
-#include <boost/asio.hpp>
 #include <string>
 #include <iostream>
 #include <thread>
@@ -166,8 +169,7 @@ public:
     void initializeConfig(const YAML::Node& yaml_config);
 
     QuicConnector(boost::asio::io_context& io_context, const YAML::Node& yaml_config)
-        : io_context(io_context), 
-          private_key_file(yaml_config["private_key_file"].as<string>("")), 
+        : private_key_file(yaml_config["private_key_file"].as<string>("")), 
           cert_file(yaml_config["cert_file"].as<string>("")),
           socket(io_context), timer(io_context) {
         if (private_key_file.empty()) {
@@ -313,9 +315,9 @@ public:
         auto incoming = incomingChunks.find(stream_id);
         if (incoming == incomingChunks.end()) {
             auto inserted = incomingChunks.insert(make_pair(stream_id, chunks()));
-            inserted.first->second.emplace_back(move(chunk));
+            inserted.first->second.emplace_back(std::move(chunk));
         } else {
-            incoming->second.emplace_back(move(chunk));
+            incoming->second.emplace_back(std::move(chunk));
         }
     }
     set<Request> getCurrentRequests();
@@ -398,7 +400,6 @@ private:
         }
     }
 
-    boost::asio::io_context& io_context;
     struct ev_loop* loop;
     Client* client;
     ev_async async_terminate;
@@ -408,14 +409,13 @@ private:
     ClientConfig config;
     boost::asio::ip::tcp::socket socket;
     boost::asio::ip::tcp::endpoint endpoint;
-    boost::asio::deadline_timer timer;
+    boost::asio::steady_timer timer;
     bool timed_out;
     boost::asio::streambuf receive_buffer;
 
     thread reqrep_thread_;
     std::atomic<bool> terminate_ = false;
     string received_so_far;  // This is a buffer for partially read messages
-    bool is_server = false;
     std::atomic<uint16_t> stream_id_counter = 2; // Start from 2, and use even IDs for client stream logical Ids
 
     stream_callbacks requestorQueue;

@@ -31,12 +31,20 @@
 #include <iostream>
 
 #include <unistd.h>
-#include <netinet/in.h>
-#include <netinet/udp.h>
-#include <netinet/ip.h>
-#include <asm/types.h>
-#include <linux/netlink.h>
-#include <linux/rtnetlink.h>
+#ifdef HAVE_NETINET_IN_H
+#  include <netinet/in.h>
+#endif // defined(HAVE_NETINET_IN_H)
+#ifndef _WIN32
+#  include <netinet/udp.h>
+#  include <netinet/ip.h>
+#  include <asm/types.h>
+#  include <linux/netlink.h>
+#  include <linux/rtnetlink.h>
+#else
+// IPTOS_ECN_MASK is an RFC 3168 constant (the low 2 bits of the TOS/TCLASS
+// byte), not exposed by the Windows SDK headers.
+#  define IPTOS_ECN_MASK 0x03
+#endif // !defined(_WIN32)
 
 #include "template.h"
 #include "util.h"
@@ -79,16 +87,20 @@ void fd_set_recv_ecn(int fd, int family) {
   unsigned int tos = 1;
   switch (family) {
   case AF_INET:
+#ifdef IP_RECVTOS
     if (setsockopt(fd, IPPROTO_IP, IP_RECVTOS, &tos,
                    static_cast<socklen_t>(sizeof(tos))) == -1) {
       std::cerr << "setsockopt: " << strerror(errno) << std::endl;
     }
+#endif // defined(IP_RECVTOS) -- not available on Windows; ECN then always reads as 0 there (untested).
     break;
   case AF_INET6:
+#ifdef IPV6_RECVTCLASS
     if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &tos,
                    static_cast<socklen_t>(sizeof(tos))) == -1) {
       std::cerr << "setsockopt: " << strerror(errno) << std::endl;
     }
+#endif // defined(IPV6_RECVTCLASS) -- not available on Windows; ECN then always reads as 0 there (untested).
     break;
   }
 }
@@ -107,12 +119,14 @@ void fd_set_ip_mtu_discover(int fd, int family) {
     }
     break;
   case AF_INET6:
+#ifdef IPV6_PMTUDISC_DO
     val = IPV6_PMTUDISC_DO;
     if (setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &val,
                    static_cast<socklen_t>(sizeof(val))) == -1) {
       std::cerr << "setsockopt: IPV6_MTU_DISCOVER: " << strerror(errno)
                 << std::endl;
     }
+#endif // defined(IPV6_PMTUDISC_DO) -- Windows SDK doesn't define an IPv6 PMTUD "DO" enum value (untested gap).
     break;
   }
 #endif // defined(IP_MTU_DISCOVER) && defined(IPV6_MTU_DISCOVER)

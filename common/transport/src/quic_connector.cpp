@@ -9,15 +9,16 @@
 #include <iomanip>
 
 #include <unistd.h>
-#include <getopt.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <sys/mman.h>
-#include <libgen.h>
-#include <netinet/udp.h>
+#ifndef _WIN32
+#  include <sys/socket.h>
+#  include <netdb.h>
+#  include <netinet/udp.h>
+#else
+#  include "win_socket_compat.h"
+#endif // !defined(_WIN32)
 
 #include <urlparse.h>
 
@@ -34,10 +35,6 @@ using namespace std::literals;
 
 namespace {
 auto randgen = util::make_mt19937();
-} // namespace
-
-namespace {
-constexpr size_t max_preferred_versionslen = 4;
 } // namespace
 
 
@@ -59,7 +56,7 @@ ClientStream::~ClientStream() {
 void ClientStream::append_data(std::span<const uint8_t> data) {
     if (!req.isWWATP()) {
         shared_span<> other_chunk(global_no_chunk_header, data);
-        handler->push_incoming_chunk(move(other_chunk), req);
+        handler->push_incoming_chunk(std::move(other_chunk), req);
         return;
     }
     if (data.empty()) {
@@ -110,7 +107,7 @@ void ClientStream::append_data(std::span<const uint8_t> data) {
     // Check if the chunk is complete
     if (partial_chunk.stored_size() == partial_chunk.get_wire_size() && partial_chunk.get_wire_size() >= partial_chunk.get_signal_size()) {
         // If so, push it onto the incoming queue
-        handler->push_incoming_chunk(move(partial_chunk), req);
+        handler->push_incoming_chunk(std::move(partial_chunk), req);
         partial_chunk = shared_span<>(global_no_chunk_header, false);
     }
     append_data(remaining_span);
@@ -132,7 +129,7 @@ pair<size_t, vector<StreamIdentifier>> ClientStream::get_pending_chunks_size(int
 void ClientStream::sendCloseSignal() {
     auto signal = signal_chunk_header(0, signal_chunk_header::SIGNAL_CLOSE_STREAM);
     shared_span<> chunk(signal, true);
-    handler->push_incoming_chunk(move(chunk), req);
+    handler->push_incoming_chunk(std::move(chunk), req);
 }
 
 
@@ -2011,7 +2008,7 @@ void Client::push_incoming_chunk(shared_span<> &&chunk, Request const &req)
 {
     auto sid = get_dcid();
     // Push the chunk into the quic_connector_ requestResolutionQueue
-    quic_connector_.pushIncomingChunk(sid, move(chunk), req);
+    quic_connector_.pushIncomingChunk(sid, std::move(chunk), req);
 }
 
 namespace {
@@ -2754,10 +2751,10 @@ bool QuicConnector::processResponseStream() {
 }
 
 void QuicConnector::check_deadline() {
-    if (timer.expires_at() <= boost::asio::deadline_timer::traits_type::now()) {
+    if (timer.expiry() <= std::chrono::steady_clock::now()) {
         timed_out = true;
         socket.cancel();
-        timer.expires_at(boost::posix_time::pos_infin);
+        timer.expires_at(std::chrono::steady_clock::time_point::max());
     }
     timer.async_wait([this](const boost::system::error_code&) { check_deadline(); });
 }

@@ -1,7 +1,6 @@
 #include <iostream>
 #include <memory>
 #include <string>
-#include <sys/mman.h>
 #include <yaml-cpp/yaml.h>
 
 #include "util.h"
